@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -16,12 +15,12 @@ import {
   CalendarDays,
   DollarSign,
   MapPin,
-  Package,
-  Handshake,
-  Megaphone,
-  Users,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { KpiCards } from "@/components/events/kpi-cards";
+import { InventoryTable } from "@/components/events/inventory-table";
+import { SoldDealsTable } from "@/components/events/sold-deals-table";
+import { EventCharts } from "@/components/events/event-charts";
 import type { Database } from "@/types/database";
 
 type Event = Database["public"]["Tables"]["events"]["Row"];
@@ -46,25 +45,45 @@ export default async function EventDetailPage({
 
   const event: Event = data;
 
-  // Fetch counts for each module
-  const [inventory, deals, campaigns, roster] = await Promise.all([
+  // Fetch all data in parallel
+  const [inventoryRes, dealsRes, dailyLogRes] = await Promise.all([
     supabase
       .from("inventory")
-      .select("id", { count: "exact", head: true })
-      .eq("event_id", eventId),
+      .select("*")
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: false }),
     supabase
       .from("deals")
-      .select("id", { count: "exact", head: true })
-      .eq("event_id", eventId),
+      .select("*")
+      .eq("event_id", eventId)
+      .order("closed_at", { ascending: false }),
     supabase
-      .from("campaigns")
-      .select("id", { count: "exact", head: true })
-      .eq("event_id", eventId),
-    supabase
-      .from("roster")
-      .select("id", { count: "exact", head: true })
-      .eq("event_id", eventId),
+      .from("daily_log")
+      .select("*")
+      .eq("event_id", eventId)
+      .order("log_date", { ascending: true }),
   ]);
+
+  const inventory = inventoryRes.data ?? [];
+  const deals = dealsRes.data ?? [];
+  const dailyLogs = dailyLogRes.data ?? [];
+
+  // Compute KPIs
+  const vehicles = inventory.filter((i) => i.category === "vehicle");
+  const totalVehicles = vehicles.length;
+  const availableVehicles = vehicles.filter(
+    (v) => v.status === "available",
+  ).length;
+  const soldVehicles = vehicles.filter((v) => v.status === "retired").length;
+
+  const soldDeals = deals.filter((d) => d.stage === "paid");
+  const totalRevenue = soldDeals.reduce((sum, d) => sum + (d.value ?? 0), 0);
+  const avgSalePrice = soldDeals.length > 0 ? totalRevenue / soldDeals.length : 0;
+
+  const totalCost = vehicles
+    .filter((v) => v.status === "retired")
+    .reduce((sum, v) => sum + (v.unit_cost ?? 0), 0);
+  const grossProfit = totalRevenue - totalCost;
 
   const statusColor: Record<string, string> = {
     draft: "bg-yellow-100 text-yellow-800",
@@ -72,33 +91,6 @@ export default async function EventDetailPage({
     completed: "bg-blue-100 text-blue-800",
     cancelled: "bg-red-100 text-red-800",
   };
-
-  const modules = [
-    {
-      name: "Inventory",
-      count: inventory.count ?? 0,
-      icon: Package,
-      description: "Vehicles, equipment, and swag",
-    },
-    {
-      name: "Deals",
-      count: deals.count ?? 0,
-      icon: Handshake,
-      description: "Sponsorships and partnerships",
-    },
-    {
-      name: "Campaigns",
-      count: campaigns.count ?? 0,
-      icon: Megaphone,
-      description: "Marketing campaigns",
-    },
-    {
-      name: "Roster",
-      count: roster.count ?? 0,
-      icon: Users,
-      description: "Staff and volunteer schedule",
-    },
-  ];
 
   return (
     <div className="space-y-6">
@@ -151,40 +143,38 @@ export default async function EventDetailPage({
 
       <Separator />
 
-      {/* Notes */}
-      {event.notes && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Notes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-              {event.notes}
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      {/* KPI Cards */}
+      <KpiCards
+        totalVehicles={totalVehicles}
+        availableVehicles={availableVehicles}
+        soldVehicles={soldVehicles}
+        totalRevenue={totalRevenue}
+        avgSalePrice={avgSalePrice}
+        grossProfit={grossProfit}
+      />
 
-      {/* Modules Grid */}
-      <div>
-        <h2 className="mb-4 text-lg font-semibold">Event Modules</h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {modules.map((mod) => (
-            <Card key={mod.name}>
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-2">
-                  <mod.icon className="h-4 w-4 text-muted-foreground" />
-                  <CardTitle className="text-base">{mod.name}</CardTitle>
-                </div>
-                <CardDescription>{mod.description}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-3xl font-bold">{mod.count}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
+      {/* Inventory Grid */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle>Inventory</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <InventoryTable items={inventory} eventId={eventId} />
+        </CardContent>
+      </Card>
+
+      {/* Sold Deals */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle>Sold Deals</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SoldDealsTable deals={soldDeals} />
+        </CardContent>
+      </Card>
+
+      {/* Charts */}
+      <EventCharts deals={deals} dailyLogs={dailyLogs} />
     </div>
   );
 }
