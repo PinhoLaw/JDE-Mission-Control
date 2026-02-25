@@ -9,9 +9,10 @@ import {
   Package,
   Handshake,
   Megaphone,
-  ClipboardList,
   Users,
   Settings,
+  BarChart3,
+  DollarSign,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
@@ -20,22 +21,17 @@ const navigation = [
   { name: "Events", href: "/dashboard/events", icon: CalendarDays },
 ];
 
-const eventModules = [
-  { name: "Inventory", icon: Package },
-  { name: "Deals", icon: Handshake },
-  { name: "Campaigns", icon: Megaphone },
-  { name: "Daily Log", icon: ClipboardList },
-  { name: "Roster", icon: Users },
+const moduleNav = [
+  { name: "Inventory", href: "/dashboard/inventory", icon: Package },
+  { name: "Deal Log", href: "/dashboard/deals", icon: Handshake },
+  { name: "Roster", href: "/dashboard/roster", icon: Users },
+  { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
+  { name: "Commissions", href: "/dashboard/commissions", icon: DollarSign },
+  { name: "Performance", href: "/dashboard/performance", icon: BarChart3 },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
-
-  // Detect if we're inside an event detail page
-  const eventMatch = pathname.match(
-    /^\/dashboard\/events\/([a-f0-9-]+)/,
-  );
-  const activeEventId = eventMatch ? eventMatch[1] : null;
 
   return (
     <aside className="flex h-full w-64 flex-col border-r bg-sidebar">
@@ -81,40 +77,26 @@ export function Sidebar() {
         <Separator className="my-4" />
 
         <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Event Modules
+          Modules
         </p>
-        {activeEventId ? (
-          eventModules.map((item) => {
-            const href = `/dashboard/events/${activeEventId}`;
-            const isActive = pathname === href;
-            return (
-              <Link
-                key={item.name}
-                href={href}
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.name}
-              </Link>
-            );
-          })
-        ) : (
-          eventModules.map((item) => (
-            <span
+        {moduleNav.map((item) => {
+          const isActive = pathname.startsWith(item.href);
+          return (
+            <Link
               key={item.name}
-              className="flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground/50"
-              title="Select an event first"
+              href={item.href}
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                isActive
+                  ? "bg-sidebar-accent text-sidebar-foreground"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+              )}
             >
               <item.icon className="h-4 w-4" />
               {item.name}
-            </span>
-          ))
-        )}
+            </Link>
+          );
+        })}
       </nav>
 
       {/* Footer */}

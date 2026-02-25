@@ -47,7 +47,7 @@ export type Database = {
           end_date: string | null;
           budget: number | null;
           notes: string | null;
-          created_by: string;
+          created_by: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -61,7 +61,7 @@ export type Database = {
           end_date?: string | null;
           budget?: number | null;
           notes?: string | null;
-          created_by: string;
+          created_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -75,19 +75,11 @@ export type Database = {
           end_date?: string | null;
           budget?: number | null;
           notes?: string | null;
-          created_by?: string;
+          created_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "events_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       event_members: {
         Row: {
@@ -111,22 +103,7 @@ export type Database = {
           role?: "owner" | "manager" | "member" | "viewer";
           joined_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "event_members_event_id_fkey";
-            columns: ["event_id"];
-            isOneToOne: false;
-            referencedRelation: "events";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "event_members_user_id_fkey";
-            columns: ["user_id"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       inventory: {
         Row: {
@@ -168,15 +145,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "inventory_event_id_fkey";
-            columns: ["event_id"];
-            isOneToOne: false;
-            referencedRelation: "events";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       deals: {
         Row: {
@@ -224,22 +193,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "deals_event_id_fkey";
-            columns: ["event_id"];
-            isOneToOne: false;
-            referencedRelation: "events";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "deals_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       campaigns: {
         Row: {
@@ -296,22 +250,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "campaigns_event_id_fkey";
-            columns: ["event_id"];
-            isOneToOne: false;
-            referencedRelation: "events";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "campaigns_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       daily_log: {
         Row: {
@@ -359,23 +298,12 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "daily_log_event_id_fkey";
-            columns: ["event_id"];
-            isOneToOne: false;
-            referencedRelation: "events";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "daily_log_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
+      /* ===========================
+       * V1 Roster (original schema)
+       * + V2 columns (team, confirmed, commission_pct)
+       * =========================== */
       roster: {
         Row: {
           id: string;
@@ -384,11 +312,14 @@ export type Database = {
           name: string;
           email: string | null;
           phone: string | null;
-          role: "lead" | "coordinator" | "staff" | "volunteer" | "vendor" | "security" | "medical";
+          role: string;
           shift_start: string | null;
           shift_end: string | null;
           zone: string | null;
-          checked_in: boolean;
+          checked_in: boolean | null;
+          team: string | null;
+          confirmed: boolean | null;
+          commission_pct: number | null;
           notes: string | null;
           created_at: string;
           updated_at: string;
@@ -400,11 +331,14 @@ export type Database = {
           name: string;
           email?: string | null;
           phone?: string | null;
-          role?: "lead" | "coordinator" | "staff" | "volunteer" | "vendor" | "security" | "medical";
+          role?: string;
           shift_start?: string | null;
           shift_end?: string | null;
           zone?: string | null;
-          checked_in?: boolean;
+          checked_in?: boolean | null;
+          team?: string | null;
+          confirmed?: boolean | null;
+          commission_pct?: number | null;
           notes?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -416,31 +350,625 @@ export type Database = {
           name?: string;
           email?: string | null;
           phone?: string | null;
-          role?: "lead" | "coordinator" | "staff" | "volunteer" | "vendor" | "security" | "medical";
+          role?: string;
           shift_start?: string | null;
           shift_end?: string | null;
           zone?: string | null;
-          checked_in?: boolean;
+          checked_in?: boolean | null;
+          team?: string | null;
+          confirmed?: boolean | null;
+          commission_pct?: number | null;
           notes?: string | null;
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [
-          {
-            foreignKeyName: "roster_event_id_fkey";
-            columns: ["event_id"];
-            isOneToOne: false;
-            referencedRelation: "events";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "roster_user_id_fkey";
-            columns: ["user_id"];
-            isOneToOne: false;
-            referencedRelation: "profiles";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
+      };
+      /* ===========================
+       * V2 Tables — Lincoln CDJR
+       * =========================== */
+      event_config: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          dealer_name: string | null;
+          franchise: string | null;
+          city: string | null;
+          state: string | null;
+          zip: string | null;
+          sale_days: number | null;
+          doc_fee: number | null;
+          tax_rate: number | null;
+          pack: number | null;
+          mail_title: string | null;
+          mail_pieces: number | null;
+          jde_commission_pct: number | null;
+          rep_commission_pct: number | null;
+          target_units: number | null;
+          target_avg_gross: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          dealer_name?: string | null;
+          franchise?: string | null;
+          city?: string | null;
+          state?: string | null;
+          zip?: string | null;
+          sale_days?: number | null;
+          doc_fee?: number | null;
+          tax_rate?: number | null;
+          pack?: number | null;
+          mail_title?: string | null;
+          mail_pieces?: number | null;
+          jde_commission_pct?: number | null;
+          rep_commission_pct?: number | null;
+          target_units?: number | null;
+          target_avg_gross?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          dealer_name?: string | null;
+          franchise?: string | null;
+          city?: string | null;
+          state?: string | null;
+          zip?: string | null;
+          sale_days?: number | null;
+          doc_fee?: number | null;
+          tax_rate?: number | null;
+          pack?: number | null;
+          mail_title?: string | null;
+          mail_pieces?: number | null;
+          jde_commission_pct?: number | null;
+          rep_commission_pct?: number | null;
+          target_units?: number | null;
+          target_avg_gross?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      lenders: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          name: string;
+          buy_rate_pct: number | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          name: string;
+          buy_rate_pct?: number | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          name?: string;
+          buy_rate_pct?: number | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      dealership_credentials: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          system_name: string;
+          username: string | null;
+          password: string | null;
+          email: string | null;
+          url: string | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          system_name: string;
+          username?: string | null;
+          password?: string | null;
+          email?: string | null;
+          url?: string | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          system_name?: string;
+          username?: string | null;
+          password?: string | null;
+          email?: string | null;
+          url?: string | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      vehicle_inventory: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          hat_number: number | null;
+          status_label: string | null;
+          sold_status: string | null;
+          stock_number: string | null;
+          year: number | null;
+          make: string | null;
+          model: string | null;
+          class: string | null;
+          color: string | null;
+          odometer: number | null;
+          vin: string | null;
+          series_trim: string | null;
+          age_days: number | null;
+          drivetrain: string | null;
+          jd_trade_clean: number | null;
+          jd_retail_clean: number | null;
+          unit_cost: number | null;
+          cost_diff: number | null;
+          price_115: number | null;
+          profit_115: number | null;
+          price_120: number | null;
+          profit_120: number | null;
+          price_125: number | null;
+          profit_125: number | null;
+          price_130: number | null;
+          profit_130: number | null;
+          retail_spread: number | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          hat_number?: number | null;
+          status_label?: string | null;
+          sold_status?: string | null;
+          stock_number?: string | null;
+          year?: number | null;
+          make?: string | null;
+          model?: string | null;
+          class?: string | null;
+          color?: string | null;
+          odometer?: number | null;
+          vin?: string | null;
+          series_trim?: string | null;
+          age_days?: number | null;
+          drivetrain?: string | null;
+          jd_trade_clean?: number | null;
+          jd_retail_clean?: number | null;
+          unit_cost?: number | null;
+          cost_diff?: number | null;
+          price_115?: number | null;
+          profit_115?: number | null;
+          price_120?: number | null;
+          profit_120?: number | null;
+          price_125?: number | null;
+          profit_125?: number | null;
+          price_130?: number | null;
+          profit_130?: number | null;
+          retail_spread?: number | null;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          hat_number?: number | null;
+          status_label?: string | null;
+          sold_status?: string | null;
+          stock_number?: string | null;
+          year?: number | null;
+          make?: string | null;
+          model?: string | null;
+          class?: string | null;
+          color?: string | null;
+          odometer?: number | null;
+          vin?: string | null;
+          series_trim?: string | null;
+          age_days?: number | null;
+          drivetrain?: string | null;
+          jd_trade_clean?: number | null;
+          jd_retail_clean?: number | null;
+          unit_cost?: number | null;
+          cost_diff?: number | null;
+          price_115?: number | null;
+          profit_115?: number | null;
+          price_120?: number | null;
+          profit_120?: number | null;
+          price_125?: number | null;
+          profit_125?: number | null;
+          price_130?: number | null;
+          profit_130?: number | null;
+          retail_spread?: number | null;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      deals_v2: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          deal_number: number | null;
+          sale_day: number | null;
+          sale_date: string | null;
+          funded: boolean | null;
+          store: string | null;
+          stock_number: string | null;
+          customer_name: string | null;
+          zip_code: string | null;
+          new_used: string | null;
+          purchase_year: number | null;
+          purchase_make: string | null;
+          purchase_model: string | null;
+          purchase_type: string | null;
+          vehicle_cost: number | null;
+          vehicle_age: number | null;
+          trade_year: number | null;
+          trade_make: string | null;
+          trade_model: string | null;
+          trade_type: string | null;
+          trade_miles: number | null;
+          trade_acv: number | null;
+          trade_payoff: number | null;
+          salesperson: string | null;
+          salesperson_pct: number | null;
+          second_salesperson: string | null;
+          second_salesperson_pct: number | null;
+          front_gross: number | null;
+          lender: string | null;
+          rate: number | null;
+          reserve: number | null;
+          warranty: number | null;
+          aft1: number | null;
+          aft2: number | null;
+          gap: number | null;
+          doc_fee: number | null;
+          fi_total: number | null;
+          total_gross: number | null;
+          daily_gross: number | null;
+          add_gross: number | null;
+          dealer_gross: number | null;
+          jde_pay: number | null;
+          source: string | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          deal_number?: number | null;
+          sale_day?: number | null;
+          sale_date?: string | null;
+          funded?: boolean | null;
+          store?: string | null;
+          stock_number?: string | null;
+          customer_name?: string | null;
+          zip_code?: string | null;
+          new_used?: string | null;
+          purchase_year?: number | null;
+          purchase_make?: string | null;
+          purchase_model?: string | null;
+          purchase_type?: string | null;
+          vehicle_cost?: number | null;
+          vehicle_age?: number | null;
+          trade_year?: number | null;
+          trade_make?: string | null;
+          trade_model?: string | null;
+          trade_type?: string | null;
+          trade_miles?: number | null;
+          trade_acv?: number | null;
+          trade_payoff?: number | null;
+          salesperson?: string | null;
+          salesperson_pct?: number | null;
+          second_salesperson?: string | null;
+          second_salesperson_pct?: number | null;
+          front_gross?: number | null;
+          lender?: string | null;
+          rate?: number | null;
+          reserve?: number | null;
+          warranty?: number | null;
+          aft1?: number | null;
+          aft2?: number | null;
+          gap?: number | null;
+          doc_fee?: number | null;
+          fi_total?: number | null;
+          total_gross?: number | null;
+          daily_gross?: number | null;
+          add_gross?: number | null;
+          dealer_gross?: number | null;
+          jde_pay?: number | null;
+          source?: string | null;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          deal_number?: number | null;
+          sale_day?: number | null;
+          sale_date?: string | null;
+          funded?: boolean | null;
+          store?: string | null;
+          stock_number?: string | null;
+          customer_name?: string | null;
+          zip_code?: string | null;
+          new_used?: string | null;
+          purchase_year?: number | null;
+          purchase_make?: string | null;
+          purchase_model?: string | null;
+          purchase_type?: string | null;
+          vehicle_cost?: number | null;
+          vehicle_age?: number | null;
+          trade_year?: number | null;
+          trade_make?: string | null;
+          trade_model?: string | null;
+          trade_type?: string | null;
+          trade_miles?: number | null;
+          trade_acv?: number | null;
+          trade_payoff?: number | null;
+          salesperson?: string | null;
+          salesperson_pct?: number | null;
+          second_salesperson?: string | null;
+          second_salesperson_pct?: number | null;
+          front_gross?: number | null;
+          lender?: string | null;
+          rate?: number | null;
+          reserve?: number | null;
+          warranty?: number | null;
+          aft1?: number | null;
+          aft2?: number | null;
+          gap?: number | null;
+          doc_fee?: number | null;
+          fi_total?: number | null;
+          total_gross?: number | null;
+          daily_gross?: number | null;
+          add_gross?: number | null;
+          dealer_gross?: number | null;
+          jde_pay?: number | null;
+          source?: string | null;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      mail_tracking: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          campaign_name: string | null;
+          zip_code: string | null;
+          town: string | null;
+          pieces_sent: number | null;
+          day1_responses: number;
+          day2_responses: number;
+          day3_responses: number;
+          day4_responses: number;
+          day5_responses: number;
+          day6_responses: number;
+          day7_responses: number;
+          total_responses: number;
+          response_rate: number | null;
+          sold_count: number | null;
+          sold_pct: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          campaign_name?: string | null;
+          zip_code?: string | null;
+          town?: string | null;
+          pieces_sent?: number | null;
+          day1_responses?: number;
+          day2_responses?: number;
+          day3_responses?: number;
+          day4_responses?: number;
+          day5_responses?: number;
+          day6_responses?: number;
+          day7_responses?: number;
+          total_responses?: number;
+          response_rate?: number | null;
+          sold_count?: number | null;
+          sold_pct?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          campaign_name?: string | null;
+          zip_code?: string | null;
+          town?: string | null;
+          pieces_sent?: number | null;
+          day1_responses?: number;
+          day2_responses?: number;
+          day3_responses?: number;
+          day4_responses?: number;
+          day5_responses?: number;
+          day6_responses?: number;
+          day7_responses?: number;
+          total_responses?: number;
+          response_rate?: number | null;
+          sold_count?: number | null;
+          sold_pct?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      daily_performance: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          salesperson: string;
+          sale_day: number;
+          sale_date: string | null;
+          ups: number;
+          sold: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          salesperson: string;
+          sale_day: number;
+          sale_date?: string | null;
+          ups?: number;
+          sold?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          salesperson?: string;
+          sale_day?: number;
+          sale_date?: string | null;
+          ups?: number;
+          sold?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      commission_summary: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          salesperson: string;
+          full_deals: number;
+          split_deals: number;
+          total_front_gross: number | null;
+          commission_amount: number | null;
+          pack_total: number | null;
+          bonus: number | null;
+          chargebacks: number | null;
+          net_pay: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          salesperson: string;
+          full_deals?: number;
+          split_deals?: number;
+          total_front_gross?: number | null;
+          commission_amount?: number | null;
+          pack_total?: number | null;
+          bonus?: number | null;
+          chargebacks?: number | null;
+          net_pay?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          salesperson?: string;
+          full_deals?: number;
+          split_deals?: number;
+          total_front_gross?: number | null;
+          commission_amount?: number | null;
+          pack_total?: number | null;
+          bonus?: number | null;
+          chargebacks?: number | null;
+          net_pay?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      chargebacks: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          deal_number: string | null;
+          description: string | null;
+          amount: number | null;
+          salesperson: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          deal_number?: string | null;
+          description?: string | null;
+          amount?: number | null;
+          salesperson?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          deal_number?: string | null;
+          description?: string | null;
+          amount?: number | null;
+          salesperson?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      zip_analytics: {
+        Row: {
+          id: string;
+          event_id: string | null;
+          zip_code: string;
+          town: string | null;
+          distance_miles: number | null;
+          total_ups: number;
+          total_sold: number;
+          ups_pct: number | null;
+          sold_pct: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id?: string | null;
+          zip_code: string;
+          town?: string | null;
+          distance_miles?: number | null;
+          total_ups?: number;
+          total_sold?: number;
+          ups_pct?: number | null;
+          sold_pct?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string | null;
+          zip_code?: string;
+          town?: string | null;
+          distance_miles?: number | null;
+          total_ups?: number;
+          total_sold?: number;
+          ups_pct?: number | null;
+          sold_pct?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
       };
     };
     Views: Record<string, never>;
