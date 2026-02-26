@@ -11,6 +11,10 @@ try {
 }
 
 const nextConfig: NextConfig = {
+  // Exclude heavy Node.js packages from serverless function bundling.
+  // ExcelJS uses streams/crypto that break when bundled by Turbopack.
+  serverExternalPackages: ["@protobi/exceljs"],
+
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",

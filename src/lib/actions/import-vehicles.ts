@@ -2,7 +2,9 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
-import ExcelJS from "@protobi/exceljs";
+// NOTE: ExcelJS is loaded via dynamic import() inside parseExcel() only.
+// Top-level import crashes Vercel serverless functions because ExcelJS
+// pulls in Node.js stream/crypto modules that fail to bundle.
 
 // ────────────────────────────────────────────────────────
 // Cell value → string helper (handles ExcelJS rich types)
@@ -74,6 +76,11 @@ async function parseExcel(
   arrayBuffer: ArrayBuffer,
   fileName: string,
 ): Promise<ParsedSpreadsheet> {
+  // Dynamic import — only loaded when actually parsing Excel.
+  // This prevents ExcelJS from crashing Vercel serverless functions
+  // that never touch this code path (e.g., /dashboard, /deals).
+  const ExcelJS = (await import("@protobi/exceljs")).default;
+
   const workbook = new ExcelJS.Workbook();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await workbook.xlsx.load(arrayBuffer as any);
