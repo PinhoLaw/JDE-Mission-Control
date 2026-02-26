@@ -4,6 +4,11 @@ import { Header } from "@/components/layout/header";
 import { EventProvider } from "@/providers/event-provider";
 import { ErrorBoundary } from "@/components/error-boundary";
 
+// All dashboard routes need cookies/auth — never prerender them.
+// This prevents build failures when NEXT_PUBLIC_ env vars aren't
+// available during Vercel's static generation phase.
+export const dynamic = "force-dynamic";
+
 export default function DashboardLayout({
   children,
 }: {
