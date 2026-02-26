@@ -20,3 +20,21 @@ export function formatCurrency(amount: number): string {
     currency: "USD",
   }).format(amount);
 }
+
+/**
+ * Get the base URL for the current environment.
+ * Handles: local dev, Vercel preview, Vercel production.
+ * Use in server-side code for auth redirect URLs.
+ */
+export function getBaseUrl(): string {
+  // Explicit override (set in Vercel Production env vars if needed)
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL;
+  }
+  // Vercel preview/production auto-set
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  // Local dev fallback
+  return "http://localhost:3000";
+}
