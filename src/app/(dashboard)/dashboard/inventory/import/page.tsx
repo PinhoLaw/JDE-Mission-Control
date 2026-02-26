@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  parseSpreadsheet,
   validateImportRows,
   executeImport,
   type ImportValidationResult,
@@ -124,38 +125,35 @@ export default function ImportPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  // ── File parsing ──
+  // ── File parsing (server-side via @protobi/exceljs) ──
+  const [isParsing, setIsParsing] = useState(false);
+
   const parseFile = useCallback(async (file: File) => {
-    setFileName(file.name);
+    setIsParsing(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-    const XLSX = (await import("xlsx")).default;
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const json: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, {
-      defval: null,
-      raw: false,
-    });
+      const result = await parseSpreadsheet(formData);
 
-    if (json.length === 0) {
-      toast.error("Spreadsheet is empty");
-      return;
+      setFileName(result.fileName);
+      setHeaders(result.headers);
+      setRawRows(result.rows);
+
+      // Auto-map columns
+      const autoMap: Record<string, string> = {};
+      for (const col of result.headers) {
+        autoMap[col] = autoMapColumn(col);
+      }
+      setColumnMap(autoMap);
+
+      setStep("map");
+      toast.success(`Loaded ${result.rowCount} rows from "${result.fileName}"`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to parse file");
+    } finally {
+      setIsParsing(false);
     }
-
-    const cols = Object.keys(json[0]);
-    setHeaders(cols);
-    setRawRows(json);
-
-    // Auto-map columns
-    const autoMap: Record<string, string> = {};
-    for (const col of cols) {
-      autoMap[col] = autoMapColumn(col);
-    }
-    setColumnMap(autoMap);
-
-    setStep("map");
-    toast.success(`Loaded ${json.length} rows from "${file.name}"`);
   }, []);
 
   const handleDrop = useCallback(
@@ -261,26 +259,43 @@ export default function ImportPage() {
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !isParsing && fileInputRef.current?.click()}
               className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 cursor-pointer transition-colors ${
-                dragOver
-                  ? "border-primary bg-primary/5"
-                  : "border-muted-foreground/25 hover:border-primary/50"
+                isParsing
+                  ? "border-primary/50 bg-primary/5 cursor-wait"
+                  : dragOver
+                    ? "border-primary bg-primary/5"
+                    : "border-muted-foreground/25 hover:border-primary/50"
               }`}
             >
-              <Upload className="h-10 w-10 text-muted-foreground mb-4" />
-              <p className="text-sm font-medium mb-1">
-                Drop your spreadsheet here
-              </p>
-              <p className="text-xs text-muted-foreground">
-                .xlsx or .csv — up to 1,000 rows
-              </p>
+              {isParsing ? (
+                <>
+                  <Loader2 className="h-10 w-10 text-primary mb-4 animate-spin" />
+                  <p className="text-sm font-medium mb-1">
+                    Parsing spreadsheet...
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Reading columns and rows from your file
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Upload className="h-10 w-10 text-muted-foreground mb-4" />
+                  <p className="text-sm font-medium mb-1">
+                    Drop your spreadsheet here
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    .xlsx or .csv — up to 1,000 rows
+                  </p>
+                </>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 className="hidden"
                 onChange={handleFileSelect}
+                disabled={isParsing}
               />
             </div>
           </CardContent>

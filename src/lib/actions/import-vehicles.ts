@@ -2,6 +2,194 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
+import ExcelJS from "@protobi/exceljs";
+
+// ────────────────────────────────────────────────────────
+// Cell value → string helper (handles ExcelJS rich types)
+// ────────────────────────────────────────────────────────
+function cellToString(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    // Return ISO string for dates so Zod coerce can parse them
+    return value.toISOString();
+  }
+  if (typeof value === "object") {
+    // ExcelJS rich text: { richText: [{ text: "..." }, ...] }
+    if ("richText" in (value as Record<string, unknown>)) {
+      const rt = (value as { richText: { text: string }[] }).richText;
+      return rt.map((segment) => segment.text).join("");
+    }
+    // ExcelJS hyperlink: { text: "...", hyperlink: "..." }
+    if ("text" in (value as Record<string, unknown>)) {
+      return String((value as { text: unknown }).text);
+    }
+    // ExcelJS formula: { formula: "...", result: ... }
+    if ("result" in (value as Record<string, unknown>)) {
+      const result = (value as { result: unknown }).result;
+      return result != null ? String(result) : null;
+    }
+  }
+  return String(value);
+}
+
+// ────────────────────────────────────────────────────────
+// Parse spreadsheet (server action — accepts FormData)
+// Supports .xlsx and .csv files
+// ────────────────────────────────────────────────────────
+export interface ParsedSpreadsheet {
+  headers: string[];
+  rows: Record<string, unknown>[];
+  fileName: string;
+  rowCount: number;
+}
+
+export async function parseSpreadsheet(
+  formData: FormData,
+): Promise<ParsedSpreadsheet> {
+  const file = formData.get("file") as File | null;
+  if (!file || file.size === 0) {
+    throw new Error("No file provided");
+  }
+
+  const fileName = file.name.toLowerCase();
+  const arrayBuffer = await file.arrayBuffer();
+
+  // Max 10 MB guard
+  if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+    throw new Error("File too large — maximum 10 MB");
+  }
+
+  if (fileName.endsWith(".csv")) {
+    return parseCSV(Buffer.from(arrayBuffer), file.name);
+  }
+
+  if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
+    return parseExcel(arrayBuffer, file.name);
+  }
+
+  throw new Error("Unsupported file type — upload .xlsx or .csv");
+}
+
+async function parseExcel(
+  arrayBuffer: ArrayBuffer,
+  fileName: string,
+): Promise<ParsedSpreadsheet> {
+  const workbook = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await workbook.xlsx.load(arrayBuffer as any);
+
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet || worksheet.rowCount < 2) {
+    throw new Error("Spreadsheet is empty or has no data rows");
+  }
+
+  // Extract headers from row 1 (ExcelJS row.values is 1-indexed → slot 0 is undefined)
+  const rawHeaderValues = worksheet.getRow(1).values;
+  const headers: string[] = [];
+  if (Array.isArray(rawHeaderValues)) {
+    for (let i = 1; i < rawHeaderValues.length; i++) {
+      const val = rawHeaderValues[i];
+      headers.push(val?.toString().trim() || `col${i}`);
+    }
+  }
+
+  if (headers.length === 0) {
+    throw new Error("No column headers found in the first row");
+  }
+
+  // Extract data rows
+  const rows: Record<string, unknown>[] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header row
+
+    const rowValues = Array.isArray(row.values) ? row.values.slice(1) : [];
+    const rowObj: Record<string, unknown> = {};
+
+    // Map each cell to its header, converting ExcelJS cell values to strings
+    headers.forEach((header, index) => {
+      rowObj[header] = cellToString(rowValues[index]) ?? null;
+    });
+
+    // Only include rows that have at least one non-null value
+    const hasData = Object.values(rowObj).some((v) => v != null && v !== "");
+    if (hasData) {
+      rows.push(rowObj);
+    }
+  });
+
+  if (rows.length === 0) {
+    throw new Error("Spreadsheet has headers but no data rows");
+  }
+
+  return { headers, rows, fileName, rowCount: rows.length };
+}
+
+function parseCSV(buffer: Buffer, fileName: string): ParsedSpreadsheet {
+  const text = buffer.toString("utf-8");
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+
+  if (lines.length < 2) {
+    throw new Error("CSV is empty or has no data rows");
+  }
+
+  // Simple CSV parser that handles quoted fields
+  function parseLine(line: string): string[] {
+    const cells: string[] = [];
+    let current = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (inQuotes) {
+        if (char === '"' && line[i + 1] === '"') {
+          current += '"';
+          i++; // skip escaped quote
+        } else if (char === '"') {
+          inQuotes = false;
+        } else {
+          current += char;
+        }
+      } else {
+        if (char === '"') {
+          inQuotes = true;
+        } else if (char === ",") {
+          cells.push(current.trim());
+          current = "";
+        } else {
+          current += char;
+        }
+      }
+    }
+    cells.push(current.trim());
+    return cells;
+  }
+
+  const headers = parseLine(lines[0]);
+  if (headers.length === 0 || headers.every((h) => h === "")) {
+    throw new Error("No column headers found in the first row");
+  }
+
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = parseLine(lines[i]);
+    const rowObj: Record<string, unknown> = {};
+    headers.forEach((header, index) => {
+      const val = cells[index]?.trim();
+      rowObj[header] = val && val !== "" ? val : null;
+    });
+
+    const hasData = Object.values(rowObj).some((v) => v != null);
+    if (hasData) {
+      rows.push(rowObj);
+    }
+  }
+
+  if (rows.length === 0) {
+    throw new Error("CSV has headers but no data rows");
+  }
+
+  return { headers, rows, fileName, rowCount: rows.length };
+}
 
 // ────────────────────────────────────────────────────────
 // Zod schema for a single vehicle row
