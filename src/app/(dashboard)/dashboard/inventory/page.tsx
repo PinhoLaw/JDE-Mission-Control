@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
@@ -10,12 +10,12 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getSortedRowModel,
-  getPaginationRowModel,
   type ColumnDef,
   type SortingState,
   type RowSelectionState,
   flexRender,
 } from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Table,
   TableBody,
@@ -59,6 +59,7 @@ import {
   Handshake,
   Loader2,
   ChevronDown,
+  ImageIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
@@ -66,6 +67,7 @@ import {
   updateVehicleStatus,
   deleteVehicles,
 } from "@/lib/actions/inventory";
+import { uploadVehiclePhoto } from "@/lib/actions/photos";
 
 const STATUS_COLORS: Record<string, string> = {
   available: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
@@ -74,6 +76,8 @@ const STATUS_COLORS: Record<string, string> = {
   pending: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
   wholesale: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
 };
+
+const ROW_HEIGHT = 40;
 
 export default function InventoryPage() {
   const { currentEvent } = useEvent();
@@ -85,6 +89,9 @@ export default function InventoryPage() {
   const [makeFilter, setMakeFilter] = useState("all");
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkLoading, setBulkLoading] = useState(false);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingPhotoId, setUploadingPhotoId] = useState<string | null>(null);
 
   // Load vehicles for current event
   useEffect(() => {
@@ -160,6 +167,35 @@ export default function InventoryPage() {
     return { total, available, sold, totalCost, avgCost };
   }, [filteredVehicles]);
 
+  // Photo upload handler
+  const handlePhotoUpload = useCallback(
+    async (vehicleId: string, file: File) => {
+      if (!currentEvent) return;
+      setUploadingPhotoId(vehicleId);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("vehicleId", vehicleId);
+        formData.append("eventId", currentEvent.id);
+        const result = await uploadVehiclePhoto(formData);
+        if (result.success) {
+          toast.success("Photo uploaded");
+          // Optimistic update
+          setVehicles((prev) =>
+            prev.map((v) =>
+              v.id === vehicleId ? { ...v, photo_url: result.url } : v,
+            ),
+          );
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Photo upload failed");
+      } finally {
+        setUploadingPhotoId(null);
+      }
+    },
+    [currentEvent],
+  );
+
   // Columns
   const columns: ColumnDef<Vehicle>[] = useMemo(
     () => [
@@ -167,8 +203,8 @@ export default function InventoryPage() {
         id: "select",
         header: ({ table: t }) => (
           <Checkbox
-            checked={t.getIsAllPageRowsSelected()}
-            onCheckedChange={(value) => t.toggleAllPageRowsSelected(!!value)}
+            checked={t.getIsAllRowsSelected()}
+            onCheckedChange={(value) => t.toggleAllRowsSelected(!!value)}
             aria-label="Select all"
           />
         ),
@@ -181,6 +217,43 @@ export default function InventoryPage() {
         ),
         enableSorting: false,
         size: 40,
+      },
+      {
+        id: "photo",
+        header: "",
+        size: 44,
+        cell: ({ row }) => {
+          const v = row.original;
+          const isUploading = uploadingPhotoId === v.id;
+          return (
+            <div className="flex items-center justify-center">
+              {isUploading ? (
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              ) : v.photo_url ? (
+                <img
+                  src={v.photo_url}
+                  alt={`${v.year} ${v.make} ${v.model}`}
+                  className="h-8 w-8 rounded object-cover cursor-pointer"
+                  onClick={() => {
+                    photoInputRef.current?.setAttribute("data-vehicle-id", v.id);
+                    photoInputRef.current?.click();
+                  }}
+                />
+              ) : (
+                <button
+                  className="h-8 w-8 rounded border border-dashed border-muted-foreground/30 flex items-center justify-center hover:border-primary/50 transition-colors"
+                  onClick={() => {
+                    photoInputRef.current?.setAttribute("data-vehicle-id", v.id);
+                    photoInputRef.current?.click();
+                  }}
+                  title="Upload photo"
+                >
+                  <ImageIcon className="h-3.5 w-3.5 text-muted-foreground/50" />
+                </button>
+              )}
+            </div>
+          );
+        },
       },
       { accessorKey: "hat_number", header: "#", size: 50 },
       {
@@ -199,7 +272,6 @@ export default function InventoryPage() {
       { accessorKey: "year", header: "Year", size: 60 },
       { accessorKey: "make", header: "Make" },
       { accessorKey: "model", header: "Model" },
-      { accessorKey: "trim", header: "Trim" },
       { accessorKey: "color", header: "Color" },
       {
         accessorKey: "mileage",
@@ -316,7 +388,7 @@ export default function InventoryPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [uploadingPhotoId],
   );
 
   const table = useReactTable({
@@ -329,64 +401,83 @@ export default function InventoryPage() {
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: 50 } },
     enableRowSelection: true,
+  });
+
+  const { rows } = table.getRowModel();
+
+  // Virtualization for 300+ rows
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    estimateSize: () => ROW_HEIGHT,
+    getScrollElement: () => tableContainerRef.current,
+    overscan: 20,
   });
 
   const selectedIds = Object.keys(rowSelection)
     .filter((key) => rowSelection[key])
     .map((key) => {
-      const row = table.getRowModel().rows[parseInt(key)];
+      const row = rows[parseInt(key)];
       return row?.original?.id;
     })
     .filter(Boolean) as string[];
 
-  // ── Bulk actions ──
+  // ── Bulk actions with optimistic updates ──
   const handleStatusChange = useCallback(
     async (ids: string[], status: "available" | "sold" | "hold" | "pending" | "wholesale") => {
       if (!currentEvent) return;
       setBulkLoading(true);
+      // Optimistic update
+      const previousVehicles = vehicles;
+      setVehicles((prev) =>
+        prev.map((v) => (ids.includes(v.id) ? { ...v, status } : v)),
+      );
       try {
         await updateVehicleStatus(ids, status, currentEvent.id);
         toast.success(`${ids.length} vehicle(s) marked as ${status}`);
         setRowSelection({});
       } catch (err) {
+        // Rollback on error
+        setVehicles(previousVehicles);
         toast.error(err instanceof Error ? err.message : "Failed to update");
       } finally {
         setBulkLoading(false);
       }
     },
-    [currentEvent],
+    [currentEvent, vehicles],
   );
 
   const handleBulkDelete = useCallback(async () => {
     if (!currentEvent || selectedIds.length === 0) return;
     setBulkLoading(true);
+    // Optimistic update
+    const previousVehicles = vehicles;
+    setVehicles((prev) => prev.filter((v) => !selectedIds.includes(v.id)));
     try {
       await deleteVehicles(selectedIds, currentEvent.id);
       toast.success(`${selectedIds.length} vehicle(s) deleted`);
       setRowSelection({});
     } catch (err) {
+      setVehicles(previousVehicles);
       toast.error(err instanceof Error ? err.message : "Failed to delete");
     } finally {
       setBulkLoading(false);
     }
-  }, [currentEvent, selectedIds]);
+  }, [currentEvent, selectedIds, vehicles]);
 
   const exportCSV = useCallback(() => {
     const csvHeaders = [
       "Hat #", "Status", "Stock #", "Year", "Make", "Model", "Trim", "Color",
       "Mileage", "Cost", "Ask 120%", "Profit 20%", "Spread",
     ];
-    const rows = filteredVehicles.map((v) =>
+    const csvRows = filteredVehicles.map((v) =>
       [
         v.hat_number, v.status, v.stock_number, v.year, v.make, v.model,
         v.trim, v.color, v.mileage, v.acquisition_cost, v.asking_price_120,
         v.profit_120, v.retail_spread,
       ].join(","),
     );
-    const csv = [csvHeaders.join(","), ...rows].join("\n");
+    const csv = [csvHeaders.join(","), ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -407,6 +498,22 @@ export default function InventoryPage() {
 
   return (
     <div className="space-y-6">
+      {/* Hidden photo input */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          const vehicleId = photoInputRef.current?.getAttribute("data-vehicle-id");
+          if (file && vehicleId) {
+            handlePhotoUpload(vehicleId, file);
+          }
+          e.target.value = "";
+        }}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
@@ -414,8 +521,8 @@ export default function InventoryPage() {
             Inventory
           </h1>
           <p className="text-sm text-muted-foreground">
-            {currentEvent.dealer_name ?? currentEvent.name} — Vehicle inventory
-            with pricing tiers
+            {currentEvent.dealer_name ?? currentEvent.name} — {stats.total} vehicles
+            {stats.total > 100 && " (virtualized)"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -550,16 +657,36 @@ export default function InventoryPage() {
         )}
       </div>
 
-      {/* Table */}
+      {/* Virtualized Table */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-md border">
+          <div className="flex flex-col items-center gap-2 py-16">
+            {vehicles.length === 0 ? (
+              <>
+                <Package className="h-8 w-8 text-muted-foreground" />
+                <p className="text-muted-foreground">No vehicles yet.</p>
+                <Button size="sm" asChild>
+                  <Link href="/dashboard/inventory/import">Import Inventory</Link>
+                </Button>
+              </>
+            ) : (
+              <p className="text-muted-foreground">No vehicles match your filters.</p>
+            )}
+          </div>
+        </div>
       ) : (
         <>
-          <div className="rounded-md border overflow-x-auto">
+          <div
+            ref={tableContainerRef}
+            className="rounded-md border overflow-auto"
+            style={{ maxHeight: "calc(100vh - 380px)", minHeight: 300 }}
+          >
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 {table.getHeaderGroups().map((hg) => (
                   <TableRow key={hg.id}>
                     {hg.headers.map((header) => (
@@ -576,17 +703,25 @@ export default function InventoryPage() {
                 ))}
               </TableHeader>
               <TableBody>
-                {table.getRowModel().rows.length ? (
-                  table.getRowModel().rows.map((row) => (
+                {rowVirtualizer.getVirtualItems().length > 0 && (
+                  <tr>
+                    <td
+                      colSpan={columns.length}
+                      style={{ height: rowVirtualizer.getVirtualItems()[0]?.start ?? 0, padding: 0 }}
+                    />
+                  </tr>
+                )}
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const row = rows[virtualRow.index];
+                  return (
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
-                      className={
-                        row.original.status === "sold" ? "opacity-60" : ""
-                      }
+                      className={row.original.status === "sold" ? "opacity-60" : ""}
+                      style={{ height: ROW_HEIGHT }}
                     >
                       {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id} className="whitespace-nowrap">
+                        <TableCell key={cell.id} className="whitespace-nowrap py-1">
                           {flexRender(
                             cell.column.columnDef.cell,
                             cell.getContext(),
@@ -594,63 +729,33 @@ export default function InventoryPage() {
                         </TableCell>
                       ))}
                     </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
+                  );
+                })}
+                {rowVirtualizer.getVirtualItems().length > 0 && (
+                  <tr>
+                    <td
                       colSpan={columns.length}
-                      className="h-24 text-center"
-                    >
-                      {vehicles.length === 0 ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <Package className="h-8 w-8 text-muted-foreground" />
-                          <p className="text-muted-foreground">
-                            No vehicles yet.
-                          </p>
-                          <Button size="sm" asChild>
-                            <Link href="/dashboard/inventory/import">
-                              Import Inventory
-                            </Link>
-                          </Button>
-                        </div>
-                      ) : (
-                        "No vehicles match your filters."
-                      )}
-                    </TableCell>
-                  </TableRow>
+                      style={{
+                        height:
+                          rowVirtualizer.getTotalSize() -
+                          (rowVirtualizer.getVirtualItems().at(-1)?.end ?? 0),
+                        padding: 0,
+                      }}
+                    />
+                  </tr>
                 )}
               </TableBody>
             </Table>
           </div>
 
-          {/* Pagination */}
           <div className="flex items-center justify-between text-sm text-muted-foreground">
             <span>
-              Showing {table.getRowModel().rows.length} of {filteredVehicles.length}{" "}
-              vehicles
+              Showing {rows.length} vehicles
+              {selectedIds.length > 0 && ` (${selectedIds.length} selected)`}
             </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
-              >
-                Previous
-              </Button>
-              <span className="flex items-center text-xs">
-                Page {table.getState().pagination.pageIndex + 1} of{" "}
-                {table.getPageCount()}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
-              >
-                Next
-              </Button>
-            </div>
+            <span className="text-xs">
+              Virtualized — all {rows.length} rows rendered efficiently
+            </span>
           </div>
         </>
       )}

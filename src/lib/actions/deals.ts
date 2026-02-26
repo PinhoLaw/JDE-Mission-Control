@@ -189,6 +189,16 @@ export async function lookupVehicle(stockNumber: string, eventId: string) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
+  // Verify membership before allowing vehicle lookup
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", eventId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership) throw new Error("Not a member of this event");
+
   const { data: vehicle } = await supabase
     .from("vehicle_inventory")
     .select("*")

@@ -296,6 +296,7 @@ export type Database = {
           status: "available" | "sold" | "hold" | "pending" | "wholesale";
           label: string | null;
           notes: string | null;
+          photo_url: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -333,6 +334,7 @@ export type Database = {
           status?: "available" | "sold" | "hold" | "pending" | "wholesale";
           label?: string | null;
           notes?: string | null;
+          photo_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -370,6 +372,7 @@ export type Database = {
           status?: "available" | "sold" | "hold" | "pending" | "wholesale";
           label?: string | null;
           notes?: string | null;
+          photo_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -762,6 +765,45 @@ export type Database = {
         };
         Relationships: [];
       };
+      audit_logs: {
+        Row: {
+          id: string;
+          event_id: string;
+          user_id: string | null;
+          action: string;
+          entity_type: string;
+          entity_id: string | null;
+          old_values: Record<string, unknown> | null;
+          new_values: Record<string, unknown> | null;
+          ip_address: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id: string;
+          user_id?: string | null;
+          action: string;
+          entity_type: string;
+          entity_id?: string | null;
+          old_values?: Record<string, unknown> | null;
+          new_values?: Record<string, unknown> | null;
+          ip_address?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string;
+          user_id?: string | null;
+          action?: string;
+          entity_type?: string;
+          entity_id?: string | null;
+          old_values?: Record<string, unknown> | null;
+          new_values?: Record<string, unknown> | null;
+          ip_address?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       v_event_kpis: {
@@ -876,6 +918,7 @@ export type MailTracking = Tables<"mail_tracking">;
 export type DailyMetric = Tables<"daily_metrics">;
 export type Commission = Tables<"commissions">;
 export type Chargeback = Tables<"chargebacks">;
+export type AuditLog = Tables<"audit_logs">;
 export type EventKPI = Views<"v_event_kpis">;
 export type SalespersonStat = Views<"v_salesperson_stats">;
 export type MailResponseStat = Views<"v_mail_response_stats">;

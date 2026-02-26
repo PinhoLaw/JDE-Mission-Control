@@ -80,12 +80,28 @@ export async function deleteVehicles(vehicleIds: string[], eventId: string) {
 // ────────────────────────────────────────────────────────
 // Update a single vehicle field (inline edit)
 // ────────────────────────────────────────────────────────
+// Allowlist of fields that can be inline-edited to prevent arbitrary field injection
+const EDITABLE_VEHICLE_FIELDS = new Set([
+  "hat_number", "stock_number", "vin", "year", "make", "model", "trim",
+  "body_style", "color", "mileage", "age_days", "drivetrain",
+  "acquisition_cost", "jd_trade_clean", "jd_retail_clean",
+  "asking_price_115", "asking_price_120", "asking_price_125", "asking_price_130",
+  "profit_115", "profit_120", "profit_125", "profit_130",
+  "retail_spread", "sold_price", "sold_date", "sold_to",
+  "status", "label", "notes", "photo_url",
+]);
+
 export async function updateVehicleField(
   vehicleId: string,
   eventId: string,
   field: string,
   value: unknown,
 ) {
+  // Input sanitization: only allow known fields
+  if (!EDITABLE_VEHICLE_FIELDS.has(field)) {
+    throw new Error(`Field "${field}" is not editable`);
+  }
+
   const supabase = await createClient();
 
   const {

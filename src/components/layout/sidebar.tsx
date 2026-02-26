@@ -13,6 +13,7 @@ import {
   Settings,
   BarChart3,
   DollarSign,
+  ScrollText,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
@@ -28,6 +29,7 @@ const moduleNav = [
   { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
   { name: "Commissions", href: "/dashboard/commissions", icon: DollarSign },
   { name: "Performance", href: "/dashboard/performance", icon: BarChart3 },
+  { name: "Audit Log", href: "/dashboard/audit", icon: ScrollText },
 ];
 
 export function Sidebar() {

@@ -62,9 +62,20 @@ export async function validateImportRows(
 ): Promise<ImportValidationResult[]> {
   const supabase = await createClient();
 
-  // Check membership
+  // Auth + membership check (must be owner/manager to validate imports)
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
+
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", eventId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership || !["owner", "manager"].includes(membership.role)) {
+    throw new Error("You must be an owner or manager to validate imports");
+  }
 
   // Get existing stock numbers for duplicate detection
   const { data: existing } = await supabase

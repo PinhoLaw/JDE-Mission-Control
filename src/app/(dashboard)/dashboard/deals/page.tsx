@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
@@ -10,11 +10,11 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getSortedRowModel,
-  getPaginationRowModel,
   type ColumnDef,
   type SortingState,
   flexRender,
 } from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Table,
   TableBody,
@@ -56,6 +56,8 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
 };
 
+const ROW_HEIGHT = 40;
+
 export default function DealsPage() {
   const { currentEvent } = useEvent();
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -63,6 +65,7 @@ export default function DealsPage() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!currentEvent) return;
@@ -235,8 +238,16 @@ export default function DealsPage() {
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: 50 } },
+  });
+
+  const { rows } = table.getRowModel();
+
+  // Virtualization for large deal lists
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    estimateSize: () => ROW_HEIGHT,
+    getScrollElement: () => tableContainerRef.current,
+    overscan: 20,
   });
 
   const exportCSV = () => {
@@ -244,7 +255,7 @@ export default function DealsPage() {
       "Deal #", "Status", "Day", "Stock #", "Customer", "Vehicle", "Sales",
       "Lender", "Front", "Back", "Total", "Washout",
     ];
-    const rows = filteredDeals.map((d) =>
+    const csvRows = filteredDeals.map((d) =>
       [
         d.deal_number, d.status, d.sale_day, d.stock_number, d.customer_name,
         `${d.vehicle_year ?? ""} ${d.vehicle_make ?? ""} ${d.vehicle_model ?? ""}`.trim(),
@@ -252,7 +263,7 @@ export default function DealsPage() {
         d.is_washout ? "Y" : "N",
       ].join(","),
     );
-    const csv = [csvHeaders.join(","), ...rows].join("\n");
+    const csv = [csvHeaders.join(","), ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -280,8 +291,7 @@ export default function DealsPage() {
             Deal Log
           </h1>
           <p className="text-sm text-muted-foreground">
-            {currentEvent.dealer_name ?? currentEvent.name} — All deals with
-            front/back gross and F&I breakdown
+            {currentEvent.dealer_name ?? currentEvent.name} — {stats.count} deals
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -368,16 +378,36 @@ export default function DealsPage() {
         </Select>
       </div>
 
-      {/* Table */}
+      {/* Virtualized Table */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-md border">
+          <div className="flex flex-col items-center gap-2 py-16">
+            {deals.length === 0 ? (
+              <>
+                <Handshake className="h-8 w-8 text-muted-foreground" />
+                <p className="text-muted-foreground">No deals yet.</p>
+                <Button size="sm" asChild>
+                  <Link href="/dashboard/deals/new">Log First Deal</Link>
+                </Button>
+              </>
+            ) : (
+              <p className="text-muted-foreground">No deals match your filters.</p>
+            )}
+          </div>
+        </div>
       ) : (
         <>
-          <div className="rounded-md border overflow-x-auto">
+          <div
+            ref={tableContainerRef}
+            className="rounded-md border overflow-auto"
+            style={{ maxHeight: "calc(100vh - 380px)", minHeight: 300 }}
+          >
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background">
                 {table.getHeaderGroups().map((hg) => (
                   <TableRow key={hg.id}>
                     {hg.headers.map((header) => (
@@ -394,11 +424,20 @@ export default function DealsPage() {
                 ))}
               </TableHeader>
               <TableBody>
-                {table.getRowModel().rows.length ? (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow key={row.id}>
+                {rowVirtualizer.getVirtualItems().length > 0 && (
+                  <tr>
+                    <td
+                      colSpan={columns.length}
+                      style={{ height: rowVirtualizer.getVirtualItems()[0]?.start ?? 0, padding: 0 }}
+                    />
+                  </tr>
+                )}
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const row = rows[virtualRow.index];
+                  return (
+                    <TableRow key={row.id} style={{ height: ROW_HEIGHT }}>
                       {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id} className="whitespace-nowrap">
+                        <TableCell key={cell.id} className="whitespace-nowrap py-1">
                           {flexRender(
                             cell.column.columnDef.cell,
                             cell.getContext(),
@@ -406,34 +445,26 @@ export default function DealsPage() {
                         </TableCell>
                       ))}
                     </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
+                  );
+                })}
+                {rowVirtualizer.getVirtualItems().length > 0 && (
+                  <tr>
+                    <td
                       colSpan={columns.length}
-                      className="h-24 text-center"
-                    >
-                      {deals.length === 0 ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <Handshake className="h-8 w-8 text-muted-foreground" />
-                          <p className="text-muted-foreground">No deals yet.</p>
-                          <Button size="sm" asChild>
-                            <Link href="/dashboard/deals/new">
-                              Log First Deal
-                            </Link>
-                          </Button>
-                        </div>
-                      ) : (
-                        "No deals match your filters."
-                      )}
-                    </TableCell>
-                  </TableRow>
+                      style={{
+                        height:
+                          rowVirtualizer.getTotalSize() -
+                          (rowVirtualizer.getVirtualItems().at(-1)?.end ?? 0),
+                        padding: 0,
+                      }}
+                    />
+                  </tr>
                 )}
               </TableBody>
             </Table>
           </div>
 
-          {/* Totals + Pagination */}
+          {/* Totals footer */}
           <div className="flex items-center justify-between text-sm">
             <div className="flex gap-6 font-medium">
               <span>
@@ -455,24 +486,9 @@ export default function DealsPage() {
                 </span>
               </span>
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
-              >
-                Next
-              </Button>
-            </div>
+            <span className="text-xs text-muted-foreground">
+              {rows.length} deals (virtualized)
+            </span>
           </div>
         </>
       )}
