@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { EventProvider } from "@/providers/event-provider";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export default function DashboardLayout({
   children,
@@ -19,7 +20,7 @@ export default function DashboardLayout({
           <div className="flex flex-1 flex-col overflow-hidden">
             <Header />
             <main className="flex-1 overflow-y-auto p-4 md:p-6">
-              {children}
+              <ErrorBoundary>{children}</ErrorBoundary>
             </main>
           </div>
         </div>

@@ -1,0 +1,546 @@
+"use client";
+
+import { useState, useCallback, useRef } from "react";
+import Link from "next/link";
+import { useEvent } from "@/providers/event-provider";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  ArrowLeft,
+  Upload,
+  FileSpreadsheet,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Loader2,
+} from "lucide-react";
+import { toast } from "sonner";
+import {
+  validateImportRows,
+  executeImport,
+  type ImportValidationResult,
+  type ImportResult,
+} from "@/lib/actions/import-vehicles";
+
+// DB fields the user can map to
+const DB_FIELDS = [
+  { value: "__skip__", label: "— Skip —" },
+  { value: "hat_number", label: "Hat #" },
+  { value: "stock_number", label: "Stock #" },
+  { value: "vin", label: "VIN" },
+  { value: "year", label: "Year" },
+  { value: "make", label: "Make" },
+  { value: "model", label: "Model" },
+  { value: "trim", label: "Trim" },
+  { value: "body_style", label: "Body Style" },
+  { value: "color", label: "Color" },
+  { value: "mileage", label: "Mileage" },
+  { value: "age_days", label: "Age (days)" },
+  { value: "drivetrain", label: "Drivetrain" },
+  { value: "acquisition_cost", label: "Acquisition Cost" },
+  { value: "jd_trade_clean", label: "JD Trade Clean" },
+  { value: "jd_retail_clean", label: "JD Retail Clean" },
+  { value: "asking_price_115", label: "Ask 115%" },
+  { value: "asking_price_120", label: "Ask 120%" },
+  { value: "asking_price_125", label: "Ask 125%" },
+  { value: "asking_price_130", label: "Ask 130%" },
+  { value: "profit_115", label: "Profit 115%" },
+  { value: "profit_120", label: "Profit 120%" },
+  { value: "profit_125", label: "Profit 125%" },
+  { value: "profit_130", label: "Profit 130%" },
+  { value: "retail_spread", label: "Retail Spread" },
+  { value: "label", label: "Label" },
+  { value: "notes", label: "Notes" },
+];
+
+// Best-effort auto-mapping from header text to DB field
+function autoMapColumn(header: string): string {
+  const h = header.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+  const map: Record<string, string> = {
+    hat: "hat_number", hatnumber: "hat_number", hatno: "hat_number",
+    stock: "stock_number", stocknumber: "stock_number", stockno: "stock_number", stk: "stock_number",
+    vin: "vin",
+    year: "year", yr: "year",
+    make: "make",
+    model: "model",
+    trim: "trim",
+    bodystyle: "body_style", body: "body_style", class: "body_style", type: "body_style",
+    color: "color", ext: "color", extcolor: "color",
+    mileage: "mileage", miles: "mileage", odometer: "mileage", odo: "mileage",
+    age: "age_days", agedays: "age_days", days: "age_days",
+    drivetrain: "drivetrain", drive: "drivetrain",
+    cost: "acquisition_cost", acqcost: "acquisition_cost", acquisitioncost: "acquisition_cost", unitcost: "acquisition_cost",
+    jdtradeclean: "jd_trade_clean", tradeclean: "jd_trade_clean", jdtrade: "jd_trade_clean",
+    jdretailclean: "jd_retail_clean", retailclean: "jd_retail_clean", jdretail: "jd_retail_clean",
+    ask115: "asking_price_115", price115: "asking_price_115",
+    ask120: "asking_price_120", price120: "asking_price_120",
+    ask125: "asking_price_125", price125: "asking_price_125",
+    ask130: "asking_price_130", price130: "asking_price_130",
+    profit115: "profit_115", profit120: "profit_120",
+    profit125: "profit_125", profit130: "profit_130",
+    retailspread: "retail_spread", spread: "retail_spread",
+    label: "label", status: "label",
+    notes: "notes", note: "notes",
+  };
+  return map[h] ?? "__skip__";
+}
+
+type Step = "upload" | "map" | "preview" | "importing" | "done";
+
+export default function ImportPage() {
+  const { currentEvent } = useEvent();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [step, setStep] = useState<Step>("upload");
+  const [fileName, setFileName] = useState("");
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
+  const [columnMap, setColumnMap] = useState<Record<string, string>>({});
+  const [validationResults, setValidationResults] = useState<ImportValidationResult[]>([]);
+  const [isValidating, setIsValidating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  // ── File parsing ──
+  const parseFile = useCallback(async (file: File) => {
+    setFileName(file.name);
+
+    const XLSX = (await import("xlsx")).default;
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const json: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, {
+      defval: null,
+      raw: false,
+    });
+
+    if (json.length === 0) {
+      toast.error("Spreadsheet is empty");
+      return;
+    }
+
+    const cols = Object.keys(json[0]);
+    setHeaders(cols);
+    setRawRows(json);
+
+    // Auto-map columns
+    const autoMap: Record<string, string> = {};
+    for (const col of cols) {
+      autoMap[col] = autoMapColumn(col);
+    }
+    setColumnMap(autoMap);
+
+    setStep("map");
+    toast.success(`Loaded ${json.length} rows from "${file.name}"`);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files[0];
+      if (file) parseFile(file);
+    },
+    [parseFile],
+  );
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) parseFile(file);
+    },
+    [parseFile],
+  );
+
+  // ── Validation (dry run) ──
+  const handleValidate = useCallback(async () => {
+    if (!currentEvent) return;
+    setIsValidating(true);
+    try {
+      const results = await validateImportRows(rawRows, columnMap, currentEvent.id);
+      setValidationResults(results);
+      setStep("preview");
+
+      const validCount = results.filter((r) => r.valid).length;
+      const errorCount = results.filter((r) => !r.valid).length;
+      if (errorCount > 0) {
+        toast.warning(`${errorCount} row(s) have errors. ${validCount} valid.`);
+      } else {
+        toast.success(`All ${validCount} rows valid and ready to import!`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Validation failed");
+    } finally {
+      setIsValidating(false);
+    }
+  }, [currentEvent, rawRows, columnMap]);
+
+  // ── Execute import ──
+  const handleImport = useCallback(async () => {
+    if (!currentEvent) return;
+    setIsImporting(true);
+    setStep("importing");
+    try {
+      const result = await executeImport(rawRows, columnMap, currentEvent.id);
+      setImportResult(result);
+      setStep("done");
+      if (result.success) {
+        toast.success(`Successfully imported ${result.imported} vehicles!`);
+      } else {
+        toast.warning(
+          `Imported ${result.imported} vehicles. ${result.errors} errors, ${result.duplicatesSkipped} duplicates skipped.`,
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Import failed");
+      setStep("preview");
+    } finally {
+      setIsImporting(false);
+    }
+  }, [currentEvent, rawRows, columnMap]);
+
+  const validCount = validationResults.filter((r) => r.valid).length;
+  const errorCount = validationResults.filter((r) => !r.valid).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <Button variant="ghost" size="sm" asChild className="mb-2">
+          <Link href="/dashboard/inventory">
+            <ArrowLeft className="h-4 w-4" />
+            Back to Inventory
+          </Link>
+        </Button>
+        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
+          Import Inventory
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Upload an Excel or CSV file to bulk-add vehicles to{" "}
+          <span className="font-medium">
+            {currentEvent?.dealer_name ?? currentEvent?.name ?? "this event"}
+          </span>
+        </p>
+      </div>
+
+      {/* ── STEP 1: UPLOAD ── */}
+      {step === "upload" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Upload Spreadsheet</CardTitle>
+            <CardDescription>
+              Drag and drop an .xlsx or .csv file, or click to browse
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 cursor-pointer transition-colors ${
+                dragOver
+                  ? "border-primary bg-primary/5"
+                  : "border-muted-foreground/25 hover:border-primary/50"
+              }`}
+            >
+              <Upload className="h-10 w-10 text-muted-foreground mb-4" />
+              <p className="text-sm font-medium mb-1">
+                Drop your spreadsheet here
+              </p>
+              <p className="text-xs text-muted-foreground">
+                .xlsx or .csv — up to 1,000 rows
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── STEP 2: COLUMN MAPPING ── */}
+      {step === "map" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5" />
+              Column Mapping
+            </CardTitle>
+            <CardDescription>
+              {fileName} — {rawRows.length} rows detected. Map each spreadsheet
+              column to a database field.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {headers.map((header) => (
+                <div key={header} className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground truncate">
+                    {header}
+                  </label>
+                  <Select
+                    value={columnMap[header] ?? "__skip__"}
+                    onValueChange={(val) =>
+                      setColumnMap((prev) => ({ ...prev, [header]: val }))
+                    }
+                  >
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DB_FIELDS.map((f) => (
+                        <SelectItem key={f.value} value={f.value}>
+                          {f.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+
+            {/* Preview first 3 rows */}
+            <div className="rounded-md border overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {headers.map((h) => (
+                      <TableHead key={h} className="whitespace-nowrap text-xs">
+                        {h}
+                        <br />
+                        <span className="text-[10px] text-muted-foreground">
+                          → {DB_FIELDS.find((f) => f.value === columnMap[h])?.label ?? "Skip"}
+                        </span>
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rawRows.slice(0, 3).map((row, i) => (
+                    <TableRow key={i}>
+                      {headers.map((h) => (
+                        <TableCell key={h} className="text-xs whitespace-nowrap">
+                          {String(row[h] ?? "—")}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setStep("upload")}>
+                Back
+              </Button>
+              <Button onClick={handleValidate} disabled={isValidating}>
+                {isValidating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Validating...
+                  </>
+                ) : (
+                  <>Validate {rawRows.length} Rows</>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── STEP 3: PREVIEW / DRY RUN ── */}
+      {step === "preview" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Validation Results</CardTitle>
+            <CardDescription>
+              <span className="text-green-600 font-medium">{validCount} valid</span>
+              {errorCount > 0 && (
+                <>
+                  {" · "}
+                  <span className="text-red-600 font-medium">{errorCount} errors</span>
+                </>
+              )}
+              {" · "}{rawRows.length} total rows
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-md border overflow-x-auto max-h-[400px] overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-16">Row</TableHead>
+                    <TableHead className="w-16">Status</TableHead>
+                    <TableHead>Stock #</TableHead>
+                    <TableHead>Year</TableHead>
+                    <TableHead>Make</TableHead>
+                    <TableHead>Model</TableHead>
+                    <TableHead>Cost</TableHead>
+                    <TableHead>Errors</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {validationResults.map((r) => (
+                    <TableRow
+                      key={r.row}
+                      className={r.valid ? "" : "bg-red-50 dark:bg-red-950/20"}
+                    >
+                      <TableCell className="text-xs">{r.row}</TableCell>
+                      <TableCell>
+                        {r.valid ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-600" />
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {String(r.data.stock_number ?? "—")}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {String(r.data.year ?? "—")}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {String(r.data.make ?? "—")}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {String(r.data.model ?? "—")}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {r.data.acquisition_cost
+                          ? `$${Number(r.data.acquisition_cost).toLocaleString()}`
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-red-600">
+                        {r.errors.join("; ")}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setStep("map")}>
+                Back to Mapping
+              </Button>
+              <Button
+                onClick={handleImport}
+                disabled={validCount === 0}
+              >
+                Import {validCount} Vehicles
+              </Button>
+              {errorCount > 0 && (
+                <p className="flex items-center gap-1 text-xs text-amber-600">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  {errorCount} invalid row(s) will be skipped
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── STEP 4: IMPORTING ── */}
+      {step === "importing" && (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+            <p className="text-lg font-medium">Importing vehicles...</p>
+            <p className="text-sm text-muted-foreground">
+              Processing {rawRows.length} rows in batches of 250
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── STEP 5: DONE ── */}
+      {step === "done" && importResult && (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            {importResult.success ? (
+              <CheckCircle2 className="h-16 w-16 text-green-600 mb-4" />
+            ) : (
+              <AlertTriangle className="h-16 w-16 text-amber-500 mb-4" />
+            )}
+            <h2 className="text-2xl font-bold mb-2">Import Complete</h2>
+            <div className="flex gap-4 mb-6">
+              <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-sm px-3 py-1">
+                {importResult.imported} imported
+              </Badge>
+              {importResult.duplicatesSkipped > 0 && (
+                <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 text-sm px-3 py-1">
+                  {importResult.duplicatesSkipped} duplicates skipped
+                </Badge>
+              )}
+              {importResult.errors > 0 && (
+                <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 text-sm px-3 py-1">
+                  {importResult.errors} errors
+                </Badge>
+              )}
+            </div>
+            {importResult.errorDetails.length > 0 && (
+              <div className="w-full max-w-lg mb-6 rounded-md border p-4 text-xs space-y-1 max-h-40 overflow-y-auto">
+                {importResult.errorDetails.slice(0, 20).map((e, i) => (
+                  <p key={i} className="text-red-600">
+                    Row {e.row}: {e.message}
+                  </p>
+                ))}
+                {importResult.errorDetails.length > 20 && (
+                  <p className="text-muted-foreground">
+                    ...and {importResult.errorDetails.length - 20} more
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="flex gap-3">
+              <Button variant="outline" asChild>
+                <Link href="/dashboard/inventory">View Inventory</Link>
+              </Button>
+              <Button
+                onClick={() => {
+                  setStep("upload");
+                  setRawRows([]);
+                  setHeaders([]);
+                  setColumnMap({});
+                  setValidationResults([]);
+                  setImportResult(null);
+                }}
+              >
+                Import Another File
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
