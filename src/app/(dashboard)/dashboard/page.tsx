@@ -18,8 +18,10 @@ interface DashboardPageProps {
 export default async function DashboardPage({
   searchParams,
 }: DashboardPageProps) {
+  console.log("[DashboardPage] render start");
   const params = await searchParams;
   const supabase = await createClient();
+  console.log("[DashboardPage] createClient OK, resolving event...");
 
   // Resolve the event ID: URL param → first active event → first event
   let eventId = params.event;
