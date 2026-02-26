@@ -75,10 +75,12 @@ export default async function EventsPage() {
                       {event.status}
                     </Badge>
                   </div>
-                  {event.location && (
+                  {(event.dealer_name || event.address) && (
                     <CardDescription className="flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
-                      {event.location}
+                      {event.dealer_name ?? event.address}
+                      {event.city && `, ${event.city}`}
+                      {event.state && `, ${event.state}`}
                     </CardDescription>
                   )}
                 </CardHeader>

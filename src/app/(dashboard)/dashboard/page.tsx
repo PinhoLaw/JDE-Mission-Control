@@ -26,12 +26,13 @@ export default async function DashboardPage() {
   const supabase = await createClient();
 
   // Fetch all data in parallel
-  const [inventoryRes, dealsRes, rosterRes, mailRes, configRes] =
+  const [inventoryRes, dealsRes, rosterRes, mailRes, eventRes, configRes] =
     await Promise.all([
       supabase.from("vehicle_inventory").select("*"),
-      supabase.from("deals_v2").select("*"),
+      supabase.from("sales_deals").select("*"),
       supabase.from("roster").select("*"),
       supabase.from("mail_tracking").select("*"),
+      supabase.from("events").select("*").limit(1).single(),
       supabase.from("event_config").select("*").limit(1).single(),
     ]);
 
@@ -39,15 +40,16 @@ export default async function DashboardPage() {
   const deals = dealsRes.data ?? [];
   const roster = rosterRes.data ?? [];
   const mail = mailRes.data ?? [];
+  const event = eventRes.data;
   const config = configRes.data;
 
   // Compute KPIs
   const totalVehicles = inventory.length;
   const availableVehicles = inventory.filter(
-    (v) => v.sold_status === "available",
+    (v) => v.status === "available",
   ).length;
   const soldVehicles = inventory.filter(
-    (v) => v.sold_status === "sold",
+    (v) => v.status === "sold",
   ).length;
 
   const totalDeals = deals.length;
@@ -60,7 +62,7 @@ export default async function DashboardPage() {
     0,
   );
   const totalBackGross = deals.reduce(
-    (sum, d) => sum + (d.fi_total ?? 0),
+    (sum, d) => sum + (d.back_gross ?? 0),
     0,
   );
   const avgFrontGross =
@@ -160,12 +162,12 @@ export default async function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
-            {config?.dealer_name ?? "Mission Control"}
+            {event?.dealer_name ?? "Mission Control"}
           </h1>
           <p className="text-muted-foreground">
-            {config?.city}, {config?.state} {config?.zip} •{" "}
-            {config?.franchise} •{" "}
-            {config?.sale_days} sale days
+            {event?.city}, {event?.state} {event?.zip} •{" "}
+            {event?.franchise} •{" "}
+            {event?.sale_days} sale days
           </p>
         </div>
         <Button asChild>
@@ -231,8 +233,8 @@ export default async function DashboardPage() {
                 >
                   <div className="space-y-1">
                     <p className="font-medium">
-                      {deal.purchase_year} {deal.purchase_make}{" "}
-                      {deal.purchase_model}
+                      {deal.vehicle_year} {deal.vehicle_make}{" "}
+                      {deal.vehicle_model}
                     </p>
                     <p className="text-sm text-muted-foreground">
                       {deal.customer_name} • {deal.salesperson} •{" "}
@@ -248,7 +250,7 @@ export default async function DashboardPage() {
                       </p>
                       <p className="text-xs text-muted-foreground">
                         F: {deal.front_gross != null ? formatCurrency(deal.front_gross) : "—"}{" "}
-                        B: {deal.fi_total != null ? formatCurrency(deal.fi_total) : "—"}
+                        B: {deal.back_gross != null ? formatCurrency(deal.back_gross) : "—"}
                       </p>
                     </div>
                     <Badge

@@ -35,23 +35,31 @@ interface Deal {
   sale_day: number | null;
   stock_number: string | null;
   customer_name: string | null;
-  zip_code: string | null;
+  customer_zip: string | null;
   new_used: string | null;
-  purchase_year: number | null;
-  purchase_make: string | null;
-  purchase_model: string | null;
+  vehicle_year: number | null;
+  vehicle_make: string | null;
+  vehicle_model: string | null;
+  vehicle_type: string | null;
   vehicle_cost: number | null;
   salesperson: string | null;
   second_salesperson: string | null;
   front_gross: number | null;
+  back_gross: number | null;
   lender: string | null;
   reserve: number | null;
   warranty: number | null;
-  aft1: number | null;
+  aftermarket_1: number | null;
+  aftermarket_2: number | null;
   gap: number | null;
   fi_total: number | null;
   total_gross: number | null;
-  jde_pay: number | null;
+  selling_price: number | null;
+  pvr: number | null;
+  is_washout: boolean | null;
+  washout_amount: number | null;
+  finance_type: string | null;
+  status: string | null;
   source: string | null;
 }
 
@@ -65,7 +73,7 @@ export function DealLogGrid({ deals }: DealLogGridProps) {
 
   const totalGross = deals.reduce((s, d) => s + (d.total_gross ?? 0), 0);
   const totalFront = deals.reduce((s, d) => s + (d.front_gross ?? 0), 0);
-  const totalBack = deals.reduce((s, d) => s + (d.fi_total ?? 0), 0);
+  const totalBack = deals.reduce((s, d) => s + (d.back_gross ?? 0), 0);
   const avgPVR = deals.length > 0 ? totalGross / deals.length : 0;
 
   const columns: ColumnDef<Deal>[] = useMemo(
@@ -73,12 +81,12 @@ export function DealLogGrid({ deals }: DealLogGridProps) {
       { accessorKey: "deal_number", header: "Deal #", size: 60 },
       { accessorKey: "stock_number", header: "Stock #" },
       { accessorKey: "customer_name", header: "Customer" },
-      { accessorKey: "zip_code", header: "Zip" },
+      { accessorKey: "customer_zip", header: "Zip" },
       {
         id: "vehicle",
         header: "Vehicle",
         cell: ({ row }) =>
-          `${row.original.purchase_year ?? ""} ${row.original.purchase_make ?? ""} ${row.original.purchase_model ?? ""}`.trim() ||
+          `${row.original.vehicle_year ?? ""} ${row.original.vehicle_make ?? ""} ${row.original.vehicle_model ?? ""}`.trim() ||
           "—",
       },
       { accessorKey: "salesperson", header: "Sales" },

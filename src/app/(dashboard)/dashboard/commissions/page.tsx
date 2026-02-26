@@ -19,7 +19,7 @@ import { formatCurrency } from "@/lib/utils";
 export default async function CommissionsPage() {
   const supabase = await createClient();
 
-  const { data: deals } = await supabase.from("deals_v2").select("*");
+  const { data: deals } = await supabase.from("sales_deals").select("*");
 
   // Compute commissions from deals (25% of front gross)
   const commByPerson: Record<
@@ -49,7 +49,7 @@ export default async function CommissionsPage() {
           frontGross: 0,
           commission: 0,
         };
-      const pct2 = deal.second_salesperson_pct ?? 0.5;
+      const pct2 = deal.second_sp_pct ?? 0.5;
       commByPerson[sp2].splits += 1;
       commByPerson[sp2].frontGross += front * pct2;
       commByPerson[sp2].commission += front * 0.25 * pct2;

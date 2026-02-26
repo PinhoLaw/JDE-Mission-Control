@@ -41,35 +41,70 @@ export function CreateEventForm() {
       <CardHeader>
         <CardTitle>Create New Event</CardTitle>
         <CardDescription>
-          Set up a new event to start managing everything in one place.
+          Set up a new pop-up sale event for a dealership.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form action={action} className="space-y-6">
-          {/* Name */}
+          {/* Event Name */}
           <div className="space-y-2">
             <Label htmlFor="name">Event Name *</Label>
             <Input
               id="name"
               name="name"
-              placeholder="Cars & Coffee Downtown"
+              placeholder="Lincoln CDJR Feb/March 2026"
               required
               autoFocus
             />
           </div>
 
-          {/* Location */}
+          {/* Dealer Info */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="dealer_name">Dealer Name</Label>
+              <Input
+                id="dealer_name"
+                name="dealer_name"
+                placeholder="Lincoln CDJR"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="franchise">Franchise</Label>
+              <Input
+                id="franchise"
+                name="franchise"
+                placeholder="Chrysler/Dodge/Jeep/Ram"
+              />
+            </div>
+          </div>
+
+          {/* Address */}
           <div className="space-y-2">
-            <Label htmlFor="location">Location</Label>
+            <Label htmlFor="address">Address</Label>
             <Input
-              id="location"
-              name="location"
-              placeholder="123 Main St, Austin TX"
+              id="address"
+              name="address"
+              placeholder="123 Main St"
             />
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="city">City</Label>
+              <Input id="city" name="city" placeholder="Lincoln" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="state">State</Label>
+              <Input id="state" name="state" placeholder="NE" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="zip">Zip</Label>
+              <Input id="zip" name="zip" placeholder="68501" />
+            </div>
+          </div>
+
           {/* Dates */}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="start_date">Start Date</Label>
               <Input id="start_date" name="start_date" type="date" />
@@ -77,6 +112,16 @@ export function CreateEventForm() {
             <div className="space-y-2">
               <Label htmlFor="end_date">End Date</Label>
               <Input id="end_date" name="end_date" type="date" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sale_days">Sale Days</Label>
+              <Input
+                id="sale_days"
+                name="sale_days"
+                type="number"
+                min="1"
+                placeholder="12"
+              />
             </div>
           </div>
 

@@ -5,7 +5,7 @@ export default async function DealsPage() {
   const supabase = await createClient();
 
   const { data: deals } = await supabase
-    .from("deals_v2")
+    .from("sales_deals")
     .select("*")
     .order("created_at", { ascending: false });
 

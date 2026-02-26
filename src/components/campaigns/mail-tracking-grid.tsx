@@ -23,15 +23,16 @@ interface MailEntry {
   zip_code: string | null;
   town: string | null;
   pieces_sent: number | null;
-  day1_responses: number;
-  day2_responses: number;
-  day3_responses: number;
-  day4_responses: number;
-  day5_responses: number;
-  day6_responses: number;
-  day7_responses: number;
+  day_1: number;
+  day_2: number;
+  day_3: number;
+  day_4: number;
+  day_5: number;
+  day_6: number;
+  day_7: number;
   total_responses: number;
   response_rate: number | null;
+  sold_from_mail: number;
 }
 
 interface MailTrackingGridProps {
@@ -42,17 +43,18 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
   const stats = useMemo(() => {
     const totalPieces = data.reduce((s, d) => s + (d.pieces_sent ?? 0), 0);
     const totalResponses = data.reduce((s, d) => s + d.total_responses, 0);
+    const totalSoldFromMail = data.reduce((s, d) => s + (d.sold_from_mail ?? 0), 0);
     const rate = totalPieces > 0 ? (totalResponses / totalPieces) * 100 : 0;
     const topZips = [...data]
       .sort((a, b) => b.total_responses - a.total_responses)
       .slice(0, 5);
-    return { totalPieces, totalResponses, rate, topZips };
+    return { totalPieces, totalResponses, totalSoldFromMail, rate, topZips };
   }, [data]);
 
   return (
     <div className="space-y-6">
       {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Total Pieces Sent</CardDescription>
@@ -69,6 +71,16 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">{stats.totalResponses}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Sold from Mail</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-blue-700">
+              {stats.totalSoldFromMail}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -143,6 +155,7 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
                   <TableHead className="text-center">Day 6</TableHead>
                   <TableHead className="text-center">Day 7</TableHead>
                   <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Sold</TableHead>
                   <TableHead className="text-right">Rate</TableHead>
                 </TableRow>
               </TableHeader>
@@ -157,13 +170,13 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
                       {row.pieces_sent?.toLocaleString()}
                     </TableCell>
                     {[
-                      row.day1_responses,
-                      row.day2_responses,
-                      row.day3_responses,
-                      row.day4_responses,
-                      row.day5_responses,
-                      row.day6_responses,
-                      row.day7_responses,
+                      row.day_1,
+                      row.day_2,
+                      row.day_3,
+                      row.day_4,
+                      row.day_5,
+                      row.day_6,
+                      row.day_7,
                     ].map((val, idx) => (
                       <TableCell key={idx} className="text-center">
                         {val > 0 ? (
@@ -180,6 +193,9 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
                     ))}
                     <TableCell className="text-right font-bold">
                       {row.total_responses}
+                    </TableCell>
+                    <TableCell className="text-right font-medium text-blue-700">
+                      {row.sold_from_mail}
                     </TableCell>
                     <TableCell className="text-right">
                       {row.response_rate != null

@@ -21,7 +21,7 @@ export default async function PerformancePage() {
   const supabase = await createClient();
 
   const [dealsRes, rosterRes] = await Promise.all([
-    supabase.from("deals_v2").select("*"),
+    supabase.from("sales_deals").select("*"),
     supabase.from("roster").select("*"),
   ]);
 
@@ -64,7 +64,7 @@ export default async function PerformancePage() {
     stats[sp].deals += 1;
     stats[sp].totalGross += deal.total_gross ?? 0;
     stats[sp].frontGross += deal.front_gross ?? 0;
-    stats[sp].backGross += deal.fi_total ?? 0;
+    stats[sp].backGross += deal.back_gross ?? 0;
   }
 
   const sorted = Object.entries(stats).sort(

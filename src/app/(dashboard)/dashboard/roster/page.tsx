@@ -4,10 +4,11 @@ import { RosterGrid } from "@/components/roster/roster-grid";
 export default async function RosterPage() {
   const supabase = await createClient();
 
-  const [rosterRes, lendersRes, configRes] = await Promise.all([
+  const [rosterRes, lendersRes, configRes, eventRes] = await Promise.all([
     supabase.from("roster").select("*").order("name"),
     supabase.from("lenders").select("*").order("name"),
     supabase.from("event_config").select("*").limit(1).single(),
+    supabase.from("events").select("*").limit(1).single(),
   ]);
 
   return (
@@ -22,6 +23,7 @@ export default async function RosterPage() {
         roster={rosterRes.data ?? []}
         lenders={lendersRes.data ?? []}
         config={configRes.data}
+        event={eventRes.data}
       />
     </div>
   );

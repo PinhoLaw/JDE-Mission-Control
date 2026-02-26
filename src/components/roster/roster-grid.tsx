@@ -16,14 +16,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 
 interface RosterMember {
   id: string;
   name: string;
   phone: string | null;
+  email: string | null;
   role: string;
   confirmed: boolean | null;
+  active: boolean;
 }
 
 interface Lender {
@@ -32,28 +33,32 @@ interface Lender {
   buy_rate_pct: number | null;
 }
 
-interface EventConfig {
+interface Event {
   dealer_name: string | null;
   franchise: string | null;
   city: string | null;
   state: string | null;
   zip: string | null;
   sale_days: number | null;
+}
+
+interface EventConfig {
   doc_fee: number | null;
   tax_rate: number | null;
   pack: number | null;
-  mail_title: string | null;
-  mail_pieces: number | null;
+  mail_campaign_name: string | null;
+  mail_pieces_sent: number | null;
   jde_commission_pct: number | null;
   rep_commission_pct: number | null;
   target_units: number | null;
-  target_avg_gross: number | null;
+  target_pvr: number | null;
 }
 
 interface RosterGridProps {
   roster: RosterMember[];
   lenders: Lender[];
   config: EventConfig | null;
+  event: Event | null;
 }
 
 const roleColors: Record<string, string> = {
@@ -63,16 +68,16 @@ const roleColors: Record<string, string> = {
   closer: "bg-orange-100 text-orange-800",
 };
 
-export function RosterGrid({ roster, lenders, config }: RosterGridProps) {
+export function RosterGrid({ roster, lenders, config, event }: RosterGridProps) {
   return (
     <div className="space-y-6">
       {/* Event Config */}
-      {config && (
+      {(config || event) && (
         <Card>
           <CardHeader>
             <CardTitle>Event Configuration</CardTitle>
             <CardDescription>
-              {config.dealer_name} — {config.franchise}
+              {event?.dealer_name} — {event?.franchise}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -80,35 +85,35 @@ export function RosterGrid({ roster, lenders, config }: RosterGridProps) {
               <div>
                 <p className="text-xs text-muted-foreground">Location</p>
                 <p className="font-medium">
-                  {config.city}, {config.state} {config.zip}
+                  {event?.city}, {event?.state} {event?.zip}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Sale Days</p>
-                <p className="font-medium">{config.sale_days}</p>
+                <p className="font-medium">{event?.sale_days}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Doc Fee</p>
                 <p className="font-medium">
-                  ${config.doc_fee?.toFixed(2)}
+                  ${config?.doc_fee?.toFixed(2)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Tax Rate</p>
                 <p className="font-medium">
-                  {((config.tax_rate ?? 0) * 100).toFixed(2)}%
+                  {((config?.tax_rate ?? 0) * 100).toFixed(2)}%
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Pack</p>
-                <p className="font-medium">${config.pack?.toFixed(2)}</p>
+                <p className="font-medium">${config?.pack?.toFixed(2)}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">
                   JDE Commission
                 </p>
                 <p className="font-medium">
-                  {((config.jde_commission_pct ?? 0) * 100).toFixed(0)}%
+                  {((config?.jde_commission_pct ?? 0) * 100).toFixed(0)}%
                 </p>
               </div>
               <div>
@@ -116,7 +121,7 @@ export function RosterGrid({ roster, lenders, config }: RosterGridProps) {
                   Rep Commission
                 </p>
                 <p className="font-medium">
-                  {((config.rep_commission_pct ?? 0) * 100).toFixed(0)}%
+                  {((config?.rep_commission_pct ?? 0) * 100).toFixed(0)}%
                 </p>
               </div>
               <div>
@@ -124,20 +129,20 @@ export function RosterGrid({ roster, lenders, config }: RosterGridProps) {
                   Mail Campaign
                 </p>
                 <p className="font-medium">
-                  {config.mail_title} —{" "}
-                  {config.mail_pieces?.toLocaleString()} pieces
+                  {config?.mail_campaign_name} —{" "}
+                  {config?.mail_pieces_sent?.toLocaleString()} pieces
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Target Units</p>
-                <p className="font-medium">{config.target_units}</p>
+                <p className="font-medium">{config?.target_units}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">
-                  Target Avg Gross
+                  Target PVR
                 </p>
                 <p className="font-medium">
-                  ${config.target_avg_gross?.toLocaleString()}
+                  ${config?.target_pvr?.toLocaleString()}
                 </p>
               </div>
             </div>
@@ -156,8 +161,10 @@ export function RosterGrid({ roster, lenders, config }: RosterGridProps) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Email</TableHead>
                   <TableHead>Phone</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>Active</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -165,6 +172,9 @@ export function RosterGrid({ roster, lenders, config }: RosterGridProps) {
                 {roster.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {r.email ?? "—"}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {r.phone ?? "—"}
                     </TableCell>
@@ -175,6 +185,17 @@ export function RosterGrid({ roster, lenders, config }: RosterGridProps) {
                       >
                         {r.role.replace("_", " ")}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {r.active ? (
+                        <Badge className="bg-green-100 text-green-800">
+                          Active
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="bg-red-100 text-red-800">
+                          Inactive
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       {r.confirmed ? (

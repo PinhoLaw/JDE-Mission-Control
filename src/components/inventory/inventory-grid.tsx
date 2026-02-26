@@ -42,29 +42,29 @@ import { formatCurrency } from "@/lib/utils";
 interface VehicleItem {
   id: string;
   hat_number: number | null;
-  status_label: string | null;
-  sold_status: string | null;
+  label: string | null;
+  status: string | null;
   stock_number: string | null;
   year: number | null;
   make: string | null;
   model: string | null;
-  class: string | null;
+  body_style: string | null;
   color: string | null;
-  odometer: number | null;
+  mileage: number | null;
   vin: string | null;
   age_days: number | null;
   drivetrain: string | null;
-  unit_cost: number | null;
+  trim: string | null;
+  acquisition_cost: number | null;
   jd_trade_clean: number | null;
   jd_retail_clean: number | null;
-  cost_diff: number | null;
-  price_115: number | null;
+  asking_price_115: number | null;
   profit_115: number | null;
-  price_120: number | null;
+  asking_price_120: number | null;
   profit_120: number | null;
-  price_125: number | null;
+  asking_price_125: number | null;
   profit_125: number | null;
-  price_130: number | null;
+  asking_price_130: number | null;
   profit_130: number | null;
   retail_spread: number | null;
 }
@@ -77,24 +77,24 @@ export function InventoryGrid({ items }: InventoryGridProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [classFilter, setClassFilter] = useState("all");
+  const [bodyStyleFilter, setBodyStyleFilter] = useState("all");
 
   const filteredItems = useMemo(() => {
     let filtered = items;
     if (statusFilter !== "all")
-      filtered = filtered.filter((i) => i.sold_status === statusFilter);
-    if (classFilter !== "all")
-      filtered = filtered.filter((i) => i.class === classFilter);
+      filtered = filtered.filter((i) => i.status === statusFilter);
+    if (bodyStyleFilter !== "all")
+      filtered = filtered.filter((i) => i.body_style === bodyStyleFilter);
     return filtered;
-  }, [items, statusFilter, classFilter]);
+  }, [items, statusFilter, bodyStyleFilter]);
 
-  const classes = useMemo(
-    () => [...new Set(items.map((i) => i.class).filter(Boolean))],
+  const bodyStyles = useMemo(
+    () => [...new Set(items.map((i) => i.body_style).filter(Boolean))],
     [items],
   );
 
   // Stats
-  const totalCost = filteredItems.reduce((s, i) => s + (i.unit_cost ?? 0), 0);
+  const totalCost = filteredItems.reduce((s, i) => s + (i.acquisition_cost ?? 0), 0);
   const avgCost = filteredItems.length > 0 ? totalCost / filteredItems.length : 0;
   const avgAge =
     filteredItems.length > 0
@@ -110,10 +110,10 @@ export function InventoryGrid({ items }: InventoryGridProps) {
         size: 50,
       },
       {
-        accessorKey: "sold_status",
+        accessorKey: "status",
         header: "Status",
         cell: ({ row }) => {
-          const st = row.getValue("sold_status") as string;
+          const st = row.getValue("status") as string;
           return (
             <Badge
               variant="secondary"
@@ -132,10 +132,10 @@ export function InventoryGrid({ items }: InventoryGridProps) {
       { accessorKey: "year", header: "Year" },
       { accessorKey: "make", header: "Make" },
       { accessorKey: "model", header: "Model" },
-      { accessorKey: "class", header: "Class" },
+      { accessorKey: "body_style", header: "Body Style" },
       { accessorKey: "color", header: "Color" },
       {
-        accessorKey: "odometer",
+        accessorKey: "mileage",
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -149,7 +149,7 @@ export function InventoryGrid({ items }: InventoryGridProps) {
           </Button>
         ),
         cell: ({ row }) => {
-          const v = row.getValue("odometer") as number | null;
+          const v = row.getValue("mileage") as number | null;
           return v != null ? v.toLocaleString() : "—";
         },
       },
@@ -169,7 +169,7 @@ export function InventoryGrid({ items }: InventoryGridProps) {
         ),
       },
       {
-        accessorKey: "unit_cost",
+        accessorKey: "acquisition_cost",
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -183,7 +183,7 @@ export function InventoryGrid({ items }: InventoryGridProps) {
           </Button>
         ),
         cell: ({ row }) => {
-          const v = row.getValue("unit_cost") as number | null;
+          const v = row.getValue("acquisition_cost") as number | null;
           return v != null ? formatCurrency(v) : "—";
         },
       },
@@ -302,7 +302,7 @@ export function InventoryGrid({ items }: InventoryGridProps) {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold text-green-700">
-              {filteredItems.filter((i) => i.sold_status === "available").length}
+              {filteredItems.filter((i) => i.status === "available").length}
             </p>
           </CardContent>
         </Card>
@@ -342,13 +342,13 @@ export function InventoryGrid({ items }: InventoryGridProps) {
             <SelectItem value="sold">Sold</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={classFilter} onValueChange={setClassFilter}>
-          <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="Class" />
+        <Select value={bodyStyleFilter} onValueChange={setBodyStyleFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Body Style" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Classes</SelectItem>
-            {classes.map((c) => (
+            <SelectItem value="all">All Body Styles</SelectItem>
+            {bodyStyles.map((c) => (
               <SelectItem key={c!} value={c!}>
                 {c}
               </SelectItem>
@@ -386,7 +386,7 @@ export function InventoryGrid({ items }: InventoryGridProps) {
                 <TableRow
                   key={row.id}
                   className={
-                    row.original.sold_status === "sold" ? "opacity-60" : ""
+                    row.original.status === "sold" ? "opacity-60" : ""
                   }
                 >
                   {row.getVisibleCells().map((cell) => (

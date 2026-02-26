@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
-export async function addInventoryItem(formData: FormData) {
+export async function addVehicle(formData: FormData) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -11,31 +11,56 @@ export async function addInventoryItem(formData: FormData) {
   if (!user) throw new Error("Not authenticated");
 
   const eventId = formData.get("event_id") as string;
-  const name = formData.get("name") as string;
-  const category = formData.get("category") as string;
-  const quantity = parseInt(formData.get("quantity") as string) || 1;
-  const unitCost = formData.get("unit_cost") as string;
-  const description = (formData.get("description") as string) || null;
+  const stockNumber = (formData.get("stock_number") as string) || null;
+  const vin = (formData.get("vin") as string) || null;
+  const year = formData.get("year") as string;
+  const make = (formData.get("make") as string) || null;
+  const model = (formData.get("model") as string) || null;
+  const trim = (formData.get("trim") as string) || null;
+  const bodyStyle = (formData.get("body_style") as string) || null;
+  const color = (formData.get("color") as string) || null;
+  const mileage = formData.get("mileage") as string;
+  const acquisitionCost = formData.get("acquisition_cost") as string;
   const notes = (formData.get("notes") as string) || null;
 
-  if (!name || !eventId) throw new Error("Name and event are required");
+  if (!eventId) throw new Error("Event ID is required");
 
-  const { error } = await supabase.from("inventory").insert({
+  const { error } = await supabase.from("vehicle_inventory").insert({
     event_id: eventId,
-    name,
-    category: category as "vehicle" | "equipment" | "swag" | "signage" | "other",
-    quantity,
-    unit_cost: unitCost ? parseFloat(unitCost) : null,
-    description,
+    stock_number: stockNumber,
+    vin,
+    year: year ? parseInt(year) : null,
+    make,
+    model,
+    trim,
+    body_style: bodyStyle,
+    color,
+    mileage: mileage ? parseInt(mileage) : null,
+    acquisition_cost: acquisitionCost ? parseFloat(acquisitionCost) : null,
     notes,
-    status: "available",
+    status: "available" as const,
   });
 
   if (error) throw new Error(error.message);
   revalidatePath(`/dashboard/events/${eventId}`);
 }
 
-export async function markAsSold(formData: FormData) {
+export async function updateVehicleStatus(
+  vehicleId: string,
+  status: "available" | "sold" | "hold" | "pending" | "wholesale",
+  eventId: string,
+) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("vehicle_inventory")
+    .update({ status })
+    .eq("id", vehicleId);
+
+  if (error) throw new Error(error.message);
+  revalidatePath(`/dashboard/events/${eventId}`);
+}
+
+export async function addDeal(formData: FormData) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -43,55 +68,35 @@ export async function markAsSold(formData: FormData) {
   if (!user) throw new Error("Not authenticated");
 
   const eventId = formData.get("event_id") as string;
-  const inventoryId = formData.get("inventory_id") as string;
-  const vehicleName = formData.get("vehicle_name") as string;
-  const salePrice = parseFloat(formData.get("sale_price") as string);
-  const buyerName = (formData.get("buyer_name") as string) || null;
-  const buyerEmail = (formData.get("buyer_email") as string) || null;
+  const customerName = (formData.get("customer_name") as string) || null;
+  const customerZip = (formData.get("customer_zip") as string) || null;
+  const stockNumber = (formData.get("stock_number") as string) || null;
+  const vehicleYear = formData.get("vehicle_year") as string;
+  const vehicleMake = (formData.get("vehicle_make") as string) || null;
+  const vehicleModel = (formData.get("vehicle_model") as string) || null;
+  const salesperson = (formData.get("salesperson") as string) || null;
+  const sellingPrice = formData.get("selling_price") as string;
+  const frontGross = formData.get("front_gross") as string;
+  const lender = (formData.get("lender") as string) || null;
   const notes = (formData.get("notes") as string) || null;
 
-  if (!eventId || !inventoryId || isNaN(salePrice)) {
-    throw new Error("Missing required fields");
-  }
+  if (!eventId) throw new Error("Event ID is required");
 
-  // Create a deal record for the sale
-  const { error: dealError } = await supabase.from("deals").insert({
+  const { error } = await supabase.from("sales_deals").insert({
     event_id: eventId,
-    company_name: vehicleName,
-    contact_name: buyerName,
-    contact_email: buyerEmail,
-    stage: "paid",
-    value: salePrice,
-    deal_type: "vendor",
-    notes: notes ? `Inventory: ${inventoryId}\n${notes}` : `Inventory: ${inventoryId}`,
-    closed_at: new Date().toISOString(),
-    created_by: user.id,
+    customer_name: customerName,
+    customer_zip: customerZip,
+    stock_number: stockNumber,
+    vehicle_year: vehicleYear ? parseInt(vehicleYear) : null,
+    vehicle_make: vehicleMake,
+    vehicle_model: vehicleModel,
+    salesperson,
+    selling_price: sellingPrice ? parseFloat(sellingPrice) : null,
+    front_gross: frontGross ? parseFloat(frontGross) : null,
+    lender,
+    notes,
+    status: "pending" as const,
   });
-
-  if (dealError) throw new Error(dealError.message);
-
-  // Mark inventory item as sold (retired)
-  const { error: invError } = await supabase
-    .from("inventory")
-    .update({ status: "retired" })
-    .eq("id", inventoryId);
-
-  if (invError) throw new Error(invError.message);
-  revalidatePath(`/dashboard/events/${eventId}`);
-}
-
-type InventoryStatus = "available" | "in_use" | "reserved" | "damaged" | "retired";
-
-export async function updateInventoryStatus(
-  inventoryId: string,
-  status: InventoryStatus,
-  eventId: string,
-) {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("inventory")
-    .update({ status })
-    .eq("id", inventoryId);
 
   if (error) throw new Error(error.message);
   revalidatePath(`/dashboard/events/${eventId}`);
