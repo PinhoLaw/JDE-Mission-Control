@@ -21,48 +21,71 @@ interface KpiCardsProps {
 }
 
 export async function KpiCards({ eventId }: KpiCardsProps) {
-  const supabase = await createClient();
+  let kpi: Record<string, unknown> | null = null;
+  let config: Record<string, unknown> | null = null;
+  let teamSize = 0;
 
-  // Parallel fetches for KPI data
-  const [kpiRes, configRes, rosterRes] = await Promise.all([
-    supabase
-      .from("v_event_kpis")
-      .select("*")
-      .eq("event_id", eventId)
-      .single(),
-    supabase
-      .from("event_config")
-      .select("target_units, target_gross, target_pvr")
-      .eq("event_id", eventId)
-      .single(),
-    supabase
-      .from("roster")
-      .select("id")
-      .eq("event_id", eventId)
-      .eq("active", true),
-  ]);
+  try {
+    const supabase = await createClient();
 
-  const kpi = kpiRes.data;
-  const config = configRes.data;
-  const teamSize = rosterRes.data?.length ?? 0;
+    // Parallel fetches for KPI data
+    const [kpiRes, configRes, rosterRes] = await Promise.all([
+      supabase
+        .from("v_event_kpis")
+        .select("*")
+        .eq("event_id", eventId)
+        .single(),
+      supabase
+        .from("event_config")
+        .select("target_units, target_gross, target_pvr")
+        .eq("event_id", eventId)
+        .single(),
+      supabase
+        .from("roster")
+        .select("id")
+        .eq("event_id", eventId)
+        .eq("active", true),
+    ]);
+
+    if (kpiRes.error) {
+      console.warn("[KpiCards] v_event_kpis query error:", kpiRes.error.message);
+    }
+    if (configRes.error) {
+      console.warn("[KpiCards] event_config query error:", configRes.error.message);
+    }
+    if (rosterRes.error) {
+      console.warn("[KpiCards] roster query error:", rosterRes.error.message);
+    }
+
+    kpi = kpiRes.data;
+    config = configRes.data;
+    teamSize = rosterRes.data?.length ?? 0;
+  } catch (error) {
+    console.error("[KpiCards] CRASH:", error);
+    // Render with zero values — better than crashing the page
+  }
 
   // Fallback to zero if view has no data
-  const totalDeals = kpi?.total_deals ?? 0;
-  const totalGross = kpi?.total_gross ?? 0;
-  const avgFront = kpi?.avg_front_gross ?? 0;
-  const avgBack = kpi?.avg_back_gross ?? 0;
-  const avgPvr = kpi?.avg_pvr ?? 0;
-  const totalVehicles = kpi?.total_vehicles ?? 0;
-  const availableVehicles = kpi?.available_vehicles ?? 0;
-  const mailPieces = kpi?.mail_pieces_sent ?? 0;
-  const mailResponses = kpi?.mail_total_responses ?? 0;
-  const mailPct = kpi?.mail_response_pct ?? 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const k = kpi as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = config as any;
+  const totalDeals = k?.total_deals ?? 0;
+  const totalGross = k?.total_gross ?? 0;
+  const avgFront = k?.avg_front_gross ?? 0;
+  const avgBack = k?.avg_back_gross ?? 0;
+  const avgPvr = k?.avg_pvr ?? 0;
+  const totalVehicles = k?.total_vehicles ?? 0;
+  const availableVehicles = k?.available_vehicles ?? 0;
+  const mailPieces = k?.mail_pieces_sent ?? 0;
+  const mailResponses = k?.mail_total_responses ?? 0;
+  const mailPct = k?.mail_response_pct ?? 0;
 
   const cards = [
     {
       label: "Total Units Sold",
       value: totalDeals.toString(),
-      target: config?.target_units ? `/ ${config.target_units}` : "",
+      target: c?.target_units ? `/ ${c.target_units}` : "",
       icon: Handshake,
       color: "text-blue-600",
       bg: "bg-blue-50 dark:bg-blue-950",
@@ -70,8 +93,8 @@ export async function KpiCards({ eventId }: KpiCardsProps) {
     {
       label: "Total Gross",
       value: formatCurrency(totalGross),
-      target: config?.target_gross
-        ? `/ ${formatCurrency(Number(config.target_gross))}`
+      target: c?.target_gross
+        ? `/ ${formatCurrency(Number(c.target_gross))}`
         : "",
       icon: DollarSign,
       color: "text-green-600",
@@ -94,8 +117,8 @@ export async function KpiCards({ eventId }: KpiCardsProps) {
     {
       label: "Avg Total PVR",
       value: formatCurrency(avgPvr),
-      target: config?.target_pvr
-        ? `/ ${formatCurrency(Number(config.target_pvr))}`
+      target: c?.target_pvr
+        ? `/ ${formatCurrency(Number(c.target_pvr))}`
         : "",
       icon: Target,
       color: "text-indigo-600",

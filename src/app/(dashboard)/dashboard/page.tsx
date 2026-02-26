@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, AlertTriangle } from "lucide-react";
 import { KpiCards } from "@/components/dashboard/kpi-cards";
 import { RecentDealsTable } from "@/components/dashboard/recent-deals-table";
 import {
@@ -19,67 +19,92 @@ export default async function DashboardPage({
   searchParams,
 }: DashboardPageProps) {
   console.log("[DashboardPage] render start");
-  const params = await searchParams;
-  const supabase = await createClient();
-  console.log("[DashboardPage] createClient OK, resolving event...");
 
-  // Resolve the event ID: URL param → first active event → first event
-  let eventId = params.event;
+  let eventId: string | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let event: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let deals: any[] = [];
 
-  if (!eventId) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      // Get user's event memberships
-      const { data: memberships } = await supabase
-        .from("event_members")
-        .select("event_id")
-        .eq("user_id", user.id);
+  try {
+    const params = await searchParams;
+    const supabase = await createClient();
+    console.log("[DashboardPage] createClient OK, resolving event...");
 
-      if (memberships && memberships.length > 0) {
-        const ids = memberships.map((m) => m.event_id);
-        const { data: events } = await supabase
-          .from("events")
-          .select("id, status")
-          .in("id", ids)
-          .order("created_at", { ascending: false });
+    // Resolve the event ID: URL param → first active event → first event
+    eventId = params.event;
 
-        if (events && events.length > 0) {
-          const active = events.find((e) => e.status === "active");
-          eventId = active?.id ?? events[0].id;
-        }
-      } else {
-        // Fallback for users without memberships
-        const { data: events } = await supabase
-          .from("events")
-          .select("id, status")
-          .order("created_at", { ascending: false })
-          .limit(1);
+    if (!eventId) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        // Get user's event memberships
+        const { data: memberships } = await supabase
+          .from("event_members")
+          .select("event_id")
+          .eq("user_id", user.id);
 
-        if (events && events.length > 0) {
-          eventId = events[0].id;
+        if (memberships && memberships.length > 0) {
+          const ids = memberships.map((m) => m.event_id);
+          const { data: events } = await supabase
+            .from("events")
+            .select("id, status")
+            .in("id", ids)
+            .order("created_at", { ascending: false });
+
+          if (events && events.length > 0) {
+            const active = events.find((e) => e.status === "active");
+            eventId = active?.id ?? events[0].id;
+          }
+        } else {
+          // Fallback for users without memberships
+          const { data: events } = await supabase
+            .from("events")
+            .select("id, status")
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          if (events && events.length > 0) {
+            eventId = events[0].id;
+          }
         }
       }
     }
+
+    if (!eventId) {
+      return <NoEventState />;
+    }
+
+    // Fetch event details + recent deals in parallel
+    const [eventRes, dealsRes] = await Promise.all([
+      supabase.from("events").select("*").eq("id", eventId).single(),
+      supabase
+        .from("sales_deals")
+        .select(
+          "id, deal_number, sale_day, stock_number, customer_name, vehicle_year, vehicle_make, vehicle_model, salesperson, lender, front_gross, back_gross, total_gross, new_used, status, created_at",
+        )
+        .eq("event_id", eventId)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    if (eventRes.error) {
+      console.warn("[DashboardPage] events query error:", eventRes.error.message);
+    }
+    if (dealsRes.error) {
+      console.warn("[DashboardPage] deals query error:", dealsRes.error.message);
+    }
+
+    event = eventRes.data;
+    deals = dealsRes.data ?? [];
+  } catch (error) {
+    console.error("[DashboardPage] CRASH:", error);
+    return <ErrorState message={error instanceof Error ? error.message : "Failed to load dashboard"} />;
   }
 
   if (!eventId) {
     return <NoEventState />;
   }
-
-  // Fetch event details + recent deals in parallel
-  const [eventRes, dealsRes] = await Promise.all([
-    supabase.from("events").select("*").eq("id", eventId).single(),
-    supabase
-      .from("sales_deals")
-      .select(
-        "id, deal_number, sale_day, stock_number, customer_name, vehicle_year, vehicle_make, vehicle_model, salesperson, lender, front_gross, back_gross, total_gross, new_used, status, created_at",
-      )
-      .eq("event_id", eventId)
-      .order("created_at", { ascending: false }),
-  ]);
-
-  const event = eventRes.data;
-  const deals = dealsRes.data ?? [];
 
   const locationLine = event
     ? [event.city, event.state, event.zip].filter(Boolean).join(", ")
@@ -144,6 +169,19 @@ function NoEventState() {
           <Plus className="h-4 w-4" />
           Create Your First Event
         </Link>
+      </Button>
+    </div>
+  );
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-center">
+      <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
+      <h2 className="text-2xl font-bold mb-2">Dashboard Error</h2>
+      <p className="text-muted-foreground mb-6 max-w-md text-sm">{message}</p>
+      <Button asChild variant="outline">
+        <Link href="/api/health">Check System Health</Link>
       </Button>
     </div>
   );
