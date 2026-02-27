@@ -17,7 +17,6 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -722,12 +721,14 @@ export default function InventoryPage() {
             className="rounded-md border overflow-auto"
             style={{ maxHeight: "calc(100vh - 380px)", minHeight: 300 }}
           >
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background">
+            {/* Raw <table> instead of <Table> component — the Table component
+                wraps in its own overflow-auto div which breaks sticky thead. */}
+            <table className="w-full caption-bottom text-sm">
+              <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_3px_0_rgba(0,0,0,0.08)]">
                 {table.getHeaderGroups().map((hg) => (
                   <TableRow key={hg.id}>
                     {hg.headers.map((header) => (
-                      <TableHead key={header.id} className="whitespace-nowrap">
+                      <TableHead key={header.id} className="whitespace-nowrap bg-background">
                         {header.isPlaceholder
                           ? null
                           : flexRender(
@@ -782,7 +783,7 @@ export default function InventoryPage() {
                   </tr>
                 )}
               </TableBody>
-            </Table>
+            </table>
           </div>
 
           <div className="flex items-center justify-between text-sm text-muted-foreground">
