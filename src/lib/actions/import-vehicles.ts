@@ -339,15 +339,25 @@ export async function executeImport(
   const supabase = await createClient();
 
   // Auth + membership check
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  const { data: membership } = await supabase
+  console.log("[executeImport] user:", user.email, "event_id:", eventId);
+
+  const { data: membership, error: memberErr } = await supabase
     .from("event_members")
     .select("role")
     .eq("event_id", eventId)
     .eq("user_id", user.id)
     .single();
+
+  console.log(
+    "[executeImport] membership:",
+    membership?.role ?? "NONE",
+    memberErr ? `error: ${memberErr.message}` : "",
+  );
 
   if (!membership || !["owner", "manager"].includes(membership.role)) {
     throw new Error("You must be an owner or manager to import inventory");
@@ -358,6 +368,11 @@ export async function executeImport(
     .from("vehicle_inventory")
     .select("stock_number")
     .eq("event_id", eventId);
+
+  console.log(
+    "[executeImport] existing vehicles in event:",
+    existing?.length ?? 0,
+  );
 
   const existingStocks = new Set(
     (existing ?? []).map((v) => v.stock_number?.toLowerCase()).filter(Boolean),
@@ -376,7 +391,11 @@ export async function executeImport(
     const mapped: Record<string, unknown> = {};
 
     for (const [spreadsheetCol, dbField] of Object.entries(columnMap)) {
-      if (dbField && dbField !== "__skip__" && raw[spreadsheetCol] !== undefined) {
+      if (
+        dbField &&
+        dbField !== "__skip__" &&
+        raw[spreadsheetCol] !== undefined
+      ) {
         mapped[dbField] = raw[spreadsheetCol];
       }
     }
@@ -400,7 +419,9 @@ export async function executeImport(
       errors++;
       errorDetails.push({
         row: i + 1,
-        message: parsed.error.issues.map((e) => `${e.path}: ${e.message}`).join("; "),
+        message: parsed.error.issues
+          .map((e) => `${e.path}: ${e.message}`)
+          .join("; "),
       });
       continue;
     }
@@ -408,6 +429,23 @@ export async function executeImport(
     validRows.push({ rowNum: i + 1, data: parsed.data });
     // Track newly added stocks to catch intra-file duplicates
     if (stockNum) existingStocks.add(stockNum);
+  }
+
+  console.log(
+    "[executeImport] valid rows:",
+    validRows.length,
+    "errors:",
+    errors,
+    "dupes:",
+    duplicatesSkipped,
+  );
+
+  // Log sample row for debugging
+  if (validRows.length > 0) {
+    console.log("[executeImport] sample row[0]:", {
+      event_id: eventId,
+      ...validRows[0].data,
+    });
   }
 
   // Batch insert in chunks of 250
@@ -446,9 +484,21 @@ export async function executeImport(
       status: "available" as const,
     }));
 
-    const { error: insertErr } = await supabase
+    // Use .select('id') to get actual inserted rows back — this verifies
+    // the INSERT actually succeeded and wasn't silently blocked by RLS.
+    const { data: insertedRows, error: insertErr } = await supabase
       .from("vehicle_inventory")
-      .insert(insertData);
+      .insert(insertData)
+      .select("id");
+
+    const actualInserted = insertedRows?.length ?? 0;
+
+    console.log(
+      `[executeImport] batch ${start}-${start + batch.length}:`,
+      insertErr
+        ? `ERROR: ${insertErr.message} (code: ${insertErr.code})`
+        : `OK — ${actualInserted}/${batch.length} rows confirmed`,
+    );
 
     if (insertErr) {
       // Mark entire batch as error
@@ -456,10 +506,55 @@ export async function executeImport(
         errors++;
         errorDetails.push({ row: r.rowNum, message: insertErr.message });
       }
+    } else if (actualInserted === 0) {
+      // INSERT returned no error but also no rows — RLS silently blocked it
+      console.error(
+        "[executeImport] SILENT RLS BLOCK: insert returned no error but 0 rows!",
+        "event_id:",
+        eventId,
+        "user:",
+        user.email,
+      );
+      for (const r of batch) {
+        errors++;
+        errorDetails.push({
+          row: r.rowNum,
+          message:
+            "Insert was silently blocked (likely RLS). Check event membership and role.",
+        });
+      }
     } else {
-      imported += batch.length;
+      imported += actualInserted;
+      if (actualInserted < batch.length) {
+        console.warn(
+          `[executeImport] PARTIAL INSERT: ${actualInserted}/${batch.length}`,
+        );
+      }
     }
   }
 
-  return { success: errors === 0, imported, errors, duplicatesSkipped, errorDetails };
+  // Verify: count rows in DB after import
+  const { count: postCount } = await supabase
+    .from("vehicle_inventory")
+    .select("id", { count: "exact", head: true })
+    .eq("event_id", eventId);
+
+  console.log(
+    "[executeImport] DONE — imported:",
+    imported,
+    "errors:",
+    errors,
+    "dupes:",
+    duplicatesSkipped,
+    "total in DB now:",
+    postCount,
+  );
+
+  return {
+    success: errors === 0,
+    imported,
+    errors,
+    duplicatesSkipped,
+    errorDetails,
+  };
 }
