@@ -196,9 +196,26 @@ export default function InventoryPage() {
     [currentEvent],
   );
 
-  // Columns
+  // ── Currency cell helper ──
+  const currencyCell = (val: number | null | undefined) =>
+    val != null ? formatCurrency(val) : "—";
+
+  const diffCell = (val: number | null | undefined) => {
+    if (val == null) return "—";
+    return (
+      <span className={val >= 0 ? "text-green-700 font-semibold" : "text-red-600 font-semibold"}>
+        {formatCurrency(val)}
+      </span>
+    );
+  };
+
+  // ── Columns: EXACT 18-column spec ──
+  // 1.Stock# 2.Year 3.Make 4.Model 5.Class 6.Color 7.Odometer 8.VIN#
+  // 9.Series 10.Age 11.CleanTrade 12.CleanRetail 13.UnitCost 14.DIFF
+  // 15.115% 16.120% 17.125% 18.130%
   const columns: ColumnDef<Vehicle>[] = useMemo(
     () => [
+      // ── Utility: checkbox ──
       {
         id: "select",
         header: ({ table: t }) => (
@@ -218,44 +235,127 @@ export default function InventoryPage() {
         enableSorting: false,
         size: 40,
       },
+      // ── 1. Stock # ──
+      { accessorKey: "stock_number", header: "Stock #", size: 90 },
+      // ── 2. Year ──
+      { accessorKey: "year", header: "Year", size: 55 },
+      // ── 3. Make ──
+      { accessorKey: "make", header: "Make", size: 80 },
+      // ── 4. Model ──
+      { accessorKey: "model", header: "Model", size: 100 },
+      // ── 5. Class (body_style) ──
+      { accessorKey: "body_style", header: "Class", size: 70 },
+      // ── 6. Color ──
+      { accessorKey: "color", header: "Color", size: 80 },
+      // ── 7. Odometer (mileage) ──
       {
-        id: "photo",
-        header: "",
-        size: 44,
+        accessorKey: "mileage",
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Odometer <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
         cell: ({ row }) => {
-          const v = row.original;
-          const isUploading = uploadingPhotoId === v.id;
-          return (
-            <div className="flex items-center justify-center">
-              {isUploading ? (
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              ) : v.photo_url ? (
-                <img
-                  src={v.photo_url}
-                  alt={`${v.year} ${v.make} ${v.model}`}
-                  className="h-8 w-8 rounded object-cover cursor-pointer"
-                  onClick={() => {
-                    photoInputRef.current?.setAttribute("data-vehicle-id", v.id);
-                    photoInputRef.current?.click();
-                  }}
-                />
-              ) : (
-                <button
-                  className="h-8 w-8 rounded border border-dashed border-muted-foreground/30 flex items-center justify-center hover:border-primary/50 transition-colors"
-                  onClick={() => {
-                    photoInputRef.current?.setAttribute("data-vehicle-id", v.id);
-                    photoInputRef.current?.click();
-                  }}
-                  title="Upload photo"
-                >
-                  <ImageIcon className="h-3.5 w-3.5 text-muted-foreground/50" />
-                </button>
-              )}
-            </div>
-          );
+          const v = row.getValue("mileage") as number | null;
+          return v != null ? v.toLocaleString() : "—";
         },
+        size: 90,
       },
-      { accessorKey: "hat_number", header: "#", size: 50 },
+      // ── 8. VIN # ──
+      { accessorKey: "vin", header: "VIN #", size: 160 },
+      // ── 9. Series (trim) ──
+      { accessorKey: "trim", header: "Series", size: 100 },
+      // ── 10. Age ──
+      { accessorKey: "age_days", header: "Age", size: 50 },
+      // ── 11. Clean Trade (jd_trade_clean) ──
+      {
+        accessorKey: "jd_trade_clean",
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Clean Trade <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        cell: ({ row }) => currencyCell(row.getValue("jd_trade_clean") as number | null),
+        size: 110,
+      },
+      // ── 12. Clean Retail (jd_retail_clean) ──
+      {
+        accessorKey: "jd_retail_clean",
+        header: "Clean Retail",
+        cell: ({ row }) => currencyCell(row.getValue("jd_retail_clean") as number | null),
+        size: 110,
+      },
+      // ── 13. Unit Cost (acquisition_cost) ──
+      {
+        accessorKey: "acquisition_cost",
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Unit Cost <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        cell: ({ row }) => currencyCell(row.getValue("acquisition_cost") as number | null),
+        size: 100,
+      },
+      // ── 14. DIFF (retail_spread = jd_trade_clean - acquisition_cost) ──
+      {
+        accessorKey: "retail_spread",
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            DIFF <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        cell: ({ row }) => diffCell(row.original.retail_spread),
+        size: 90,
+      },
+      // ── 15. 115% ──
+      {
+        accessorKey: "asking_price_115",
+        header: "115%",
+        cell: ({ row }) => currencyCell(row.getValue("asking_price_115") as number | null),
+        size: 90,
+      },
+      // ── 16. 120% ──
+      {
+        accessorKey: "asking_price_120",
+        header: "120%",
+        cell: ({ row }) => currencyCell(row.getValue("asking_price_120") as number | null),
+        size: 90,
+      },
+      // ── 17. 125% ──
+      {
+        accessorKey: "asking_price_125",
+        header: "125%",
+        cell: ({ row }) => currencyCell(row.getValue("asking_price_125") as number | null),
+        size: 90,
+      },
+      // ── 18. 130% ──
+      {
+        accessorKey: "asking_price_130",
+        header: "130%",
+        cell: ({ row }) => currencyCell(row.getValue("asking_price_130") as number | null),
+        size: 90,
+      },
+      // ── Utility: status badge ──
       {
         accessorKey: "status",
         header: "Status",
@@ -267,80 +367,9 @@ export default function InventoryPage() {
             </Badge>
           );
         },
+        size: 90,
       },
-      { accessorKey: "stock_number", header: "Stock #" },
-      { accessorKey: "year", header: "Year", size: 60 },
-      { accessorKey: "make", header: "Make" },
-      { accessorKey: "model", header: "Model" },
-      { accessorKey: "color", header: "Color" },
-      {
-        accessorKey: "mileage",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Miles <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        cell: ({ row }) => {
-          const v = row.getValue("mileage") as number | null;
-          return v != null ? v.toLocaleString() : "—";
-        },
-      },
-      {
-        accessorKey: "acquisition_cost",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Cost <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        cell: ({ row }) => {
-          const v = row.getValue("acquisition_cost") as number | null;
-          return v != null ? formatCurrency(v) : "—";
-        },
-      },
-      {
-        accessorKey: "asking_price_120",
-        header: "Ask 120%",
-        cell: ({ row }) => {
-          const v = row.getValue("asking_price_120") as number | null;
-          return v != null ? formatCurrency(v) : "—";
-        },
-      },
-      {
-        accessorKey: "profit_120",
-        header: "Profit 20%",
-        cell: ({ row }) => {
-          const v = row.original.profit_120;
-          if (v == null) return "—";
-          return (
-            <span className={v >= 0 ? "text-green-700 font-medium" : "text-red-600"}>
-              {formatCurrency(v)}
-            </span>
-          );
-        },
-      },
-      {
-        accessorKey: "retail_spread",
-        header: "Spread",
-        cell: ({ row }) => {
-          const v = row.original.retail_spread;
-          if (v == null) return "—";
-          return (
-            <span className={v >= 0 ? "text-green-700 font-bold" : "text-red-600 font-bold"}>
-              {formatCurrency(v)}
-            </span>
-          );
-        },
-      },
+      // ── Utility: actions menu ──
       {
         id: "actions",
         cell: ({ row }) => {
@@ -467,14 +496,22 @@ export default function InventoryPage() {
 
   const exportCSV = useCallback(() => {
     const csvHeaders = [
-      "Hat #", "Status", "Stock #", "Year", "Make", "Model", "Trim", "Color",
-      "Mileage", "Cost", "Ask 120%", "Profit 20%", "Spread",
+      "Stock #", "Year", "Make", "Model", "Class", "Color", "Odometer",
+      "VIN #", "Series", "Age", "Clean Trade", "Clean Retail", "Unit Cost",
+      "DIFF", "115%", "120%", "125%", "130%", "Status",
     ];
+    const esc = (v: unknown) => {
+      if (v == null) return "";
+      const s = String(v);
+      return s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
     const csvRows = filteredVehicles.map((v) =>
       [
-        v.hat_number, v.status, v.stock_number, v.year, v.make, v.model,
-        v.trim, v.color, v.mileage, v.acquisition_cost, v.asking_price_120,
-        v.profit_120, v.retail_spread,
+        esc(v.stock_number), v.year, esc(v.make), esc(v.model), esc(v.body_style),
+        esc(v.color), v.mileage, esc(v.vin), esc(v.trim), v.age_days,
+        v.jd_trade_clean, v.jd_retail_clean, v.acquisition_cost, v.retail_spread,
+        v.asking_price_115, v.asking_price_120, v.asking_price_125, v.asking_price_130,
+        v.status,
       ].join(","),
     );
     const csv = [csvHeaders.join(","), ...csvRows].join("\n");
