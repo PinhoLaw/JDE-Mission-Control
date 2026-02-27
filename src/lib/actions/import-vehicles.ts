@@ -91,30 +91,64 @@ function parseOneSheet(
 
   if (!worksheet || worksheet.rowCount < 2) return null;
 
-  // Extract headers from row 1 (ExcelJS row.values is 1-indexed → slot 0 is undefined)
-  const rawHeaderValues = worksheet.getRow(1).values;
+  // Extract headers from row 1 using getCell for reliable formula/text extraction
+  const headerRow = worksheet.getRow(1);
   const headers: string[] = [];
-  if (Array.isArray(rawHeaderValues)) {
-    for (let i = 1; i < rawHeaderValues.length; i++) {
-      const val = rawHeaderValues[i];
-      headers.push(val?.toString().trim() || `col${i}`);
+  const colCount = worksheet.columnCount || headerRow.cellCount || 30;
+  for (let i = 1; i <= colCount; i++) {
+    const cell = headerRow.getCell(i);
+    const text = cell.text != null ? String(cell.text).trim() : "";
+    const val = text || cellToString(cell.value)?.trim() || "";
+    if (val) {
+      headers.push(val);
+    } else if (headers.length > 0) {
+      // Only add placeholder if we've already seen real headers (skip trailing empty cols)
+      headers.push(`col${i}`);
     }
+  }
+  // Trim trailing placeholder columns
+  while (headers.length > 0 && headers[headers.length - 1].startsWith("col")) {
+    headers.pop();
   }
 
   if (headers.length === 0) return null;
 
-  // Extract data rows
+  // Extract data rows — use getCell() instead of row.values to properly
+  // resolve formula cells, cross-sheet references, and cached results
   const rows: Record<string, unknown>[] = [];
-  worksheet.eachRow({ includeEmpty: false }, (row: unknown, rowNumber: number) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  worksheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
     if (rowNumber === 1) return; // skip header row
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rowValues = Array.isArray((row as any).values) ? (row as any).values.slice(1) : [];
     const rowObj: Record<string, unknown> = {};
+    let loggedFirst = rows.length === 0; // log first data row for debugging
 
     headers.forEach((header, index) => {
-      rowObj[header] = cellToString(rowValues[index]) ?? null;
+      // getCell is 1-indexed (column 1 = A)
+      const cell = row.getCell(index + 1);
+
+      // Try multiple approaches to extract the cell value:
+      // 1. cell.text — the displayed text (most reliable for formulas)
+      // 2. cell.value — raw value (may be formula object)
+      // 3. cell.result — formula cached result
+      let val: string | null = null;
+
+      if (cell.text != null && String(cell.text).trim() !== "") {
+        val = String(cell.text).trim();
+      } else if (cell.result != null) {
+        val = String(cell.result);
+      } else {
+        val = cellToString(cell.value);
+      }
+
+      rowObj[header] = val;
+
+      if (loggedFirst && index < 6 && val != null) {
+        console.log(`[parseSheet:${sheetIndex}] row ${rowNumber} col "${header}": text="${cell.text}" value=${JSON.stringify(cell.value)} result=${cell.result} → "${val}"`);
+      }
     });
+
+    if (loggedFirst) loggedFirst = false;
 
     const hasData = Object.values(rowObj).some((v) => v != null && v !== "");
     if (hasData) {
