@@ -150,6 +150,272 @@ const HEADER_KEYWORDS = new Set([
   "salespeople", "salesperson", "phone", "confirmed", "setup", "lenders",
 ]);
 
+// ────────────────────────────────────────────────────────
+// Content-based column name inference
+// When headers are generic (col1, col2...) because formula cells had no cached
+// result, we sample the first 10 data rows and pattern-match to infer names.
+// ────────────────────────────────────────────────────────
+const CAR_MAKES = new Set([
+  "ford", "chevrolet", "chevy", "ram", "dodge", "jeep", "chrysler",
+  "toyota", "honda", "hyundai", "kia", "nissan", "subaru", "mazda",
+  "bmw", "mercedes", "audi", "lexus", "acura", "infiniti", "volvo",
+  "volkswagen", "vw", "buick", "cadillac", "gmc", "lincoln", "pontiac",
+  "saturn", "mercury", "mitsubishi", "suzuki", "genesis", "tesla",
+  "rivian", "lucid", "mini", "fiat", "alfa", "jaguar", "land",
+  "porsche", "maserati", "bentley", "rolls", "ferrari", "lamborghini",
+]);
+
+const BODY_STYLES = new Set([
+  "sedan", "suv", "truck", "van", "coupe", "wagon", "hatchback",
+  "convertible", "minivan", "crossover", "pickup", "cab", "crew",
+  "regular", "extended", "sport", "4dr", "2dr", "4d", "2d",
+]);
+
+const COLORS = new Set([
+  "black", "white", "silver", "gray", "grey", "red", "blue", "green",
+  "brown", "gold", "orange", "yellow", "purple", "beige", "tan",
+  "maroon", "burgundy", "charcoal", "pearl", "bronze", "champagne",
+  "ivory", "copper", "pewter", "platinum", "magnetic", "shadow",
+  "ruby", "sapphire", "midnight", "oxford", "race", "rapid",
+]);
+
+// Infer a single column's identity from its sample values
+function inferColumnType(
+  values: string[],
+  assigned: Set<string>,
+): string | null {
+  if (values.length === 0) return null;
+
+  // VIN: 17 alphanumeric characters
+  if (
+    !assigned.has("VIN #") &&
+    values.filter((v) => /^[A-HJ-NPR-Z0-9]{17}$/i.test(v)).length >=
+      values.length * 0.5
+  ) {
+    return "VIN #";
+  }
+
+  // Stock #: alphanumeric codes like "MF1378A", "T12345", "24-1234"
+  // Must have mix of letters+digits, 4-12 chars
+  if (
+    !assigned.has("Stock #") &&
+    values.filter((v) => /^[A-Z0-9][-A-Z0-9]{2,11}$/i.test(v) && /[A-Z]/i.test(v) && /\d/.test(v)).length >=
+      values.length * 0.5
+  ) {
+    return "Stock #";
+  }
+
+  // Year: 4-digit numbers 1990-2030
+  if (
+    !assigned.has("Year") &&
+    values.filter((v) => /^\d{4}$/.test(v) && Number(v) >= 1990 && Number(v) <= 2030).length >=
+      values.length * 0.5
+  ) {
+    return "Year";
+  }
+
+  // Make: known car brands
+  if (
+    !assigned.has("Make") &&
+    values.filter((v) => CAR_MAKES.has(v.toLowerCase().trim().split(/\s/)[0])).length >=
+      values.length * 0.3
+  ) {
+    return "Make";
+  }
+
+  // Color: known color names
+  if (
+    !assigned.has("Color") &&
+    values.filter((v) => {
+      const words = v.toLowerCase().trim().split(/\s+/);
+      return words.some((w) => COLORS.has(w));
+    }).length >= values.length * 0.3
+  ) {
+    return "Color";
+  }
+
+  // Body Style / Class: known body types
+  if (
+    !assigned.has("Class") &&
+    values.filter((v) => {
+      const words = v.toLowerCase().trim().split(/[\s/]+/);
+      return words.some((w) => BODY_STYLES.has(w));
+    }).length >= values.length * 0.3
+  ) {
+    return "Class";
+  }
+
+  // For numeric columns, classify by range
+  const nums = values
+    .map((v) => {
+      const cleaned = v.replace(/[$,\s]/g, "");
+      return Number(cleaned);
+    })
+    .filter((n) => !isNaN(n) && isFinite(n));
+
+  if (nums.length >= values.length * 0.4) {
+    const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
+    const allPositive = nums.every((n) => n >= 0);
+    const hasNegative = nums.some((n) => n < 0);
+
+    // Age: small integers 1-999 (days on lot)
+    if (
+      !assigned.has("Age") &&
+      avg >= 1 && avg <= 500 &&
+      nums.every((n) => n >= 0 && n <= 999 && Number.isInteger(n))
+    ) {
+      return "Age";
+    }
+
+    // Odometer: large integers 1000-300000
+    if (
+      !assigned.has("Odometer") &&
+      avg >= 5000 && avg <= 200000 &&
+      allPositive &&
+      nums.every((n) => n >= 100 && n <= 500000)
+    ) {
+      return "Odometer";
+    }
+
+    // DIFF: can be negative, typically -15000 to +15000
+    if (
+      !assigned.has("DIFF") &&
+      hasNegative &&
+      avg > -20000 && avg < 20000
+    ) {
+      return "DIFF";
+    }
+
+    // Dollar amounts in cost/trade/retail range ($5k-$150k)
+    if (allPositive && avg >= 3000 && avg <= 150000) {
+      // Try to distinguish Unit Cost vs Clean Trade vs Clean Retail vs asking prices
+      // by position — the first unassigned dollar column gets the most likely label
+      for (const label of ["Unit Cost", "Clean Trade", "Clean Retail", "115%", "120%", "125%", "130%"]) {
+        if (!assigned.has(label)) return label;
+      }
+    }
+  }
+
+  return null;
+}
+
+// Infer meaningful header names from data content when headers are generic (col1, col2...)
+function inferColumnNames(
+  headers: string[],
+  rows: Record<string, unknown>[],
+): { headers: string[]; rows: Record<string, unknown>[]; inferred: boolean } {
+  // Count how many headers are generic "colN"
+  const genericCount = headers.filter((h) => /^col\d+$/i.test(h)).length;
+  if (genericCount < headers.length * 0.5) {
+    // Most headers are real — no inference needed
+    return { headers, rows, inferred: false };
+  }
+
+  const sampleRows = rows.slice(0, 10);
+  const newHeaders = [...headers];
+  const assigned = new Set<string>();
+  const renames: Record<string, string> = {}; // old → new
+
+  // First pass: non-generic headers stay as-is
+  for (const h of headers) {
+    if (!/^col\d+$/i.test(h)) assigned.add(h);
+  }
+
+  // Second pass: infer generic columns
+  for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+    const oldName = headers[colIdx];
+    if (!/^col\d+$/i.test(oldName)) continue;
+
+    const values = sampleRows
+      .map((r) => r[oldName])
+      .filter((v) => v != null && String(v).trim() !== "")
+      .map((v) => String(v).trim());
+
+    if (values.length === 0) continue;
+
+    const inferred = inferColumnType(values, assigned);
+    if (inferred) {
+      newHeaders[colIdx] = inferred;
+      assigned.add(inferred);
+      renames[oldName] = inferred;
+    }
+  }
+
+  // If nothing was inferred, bail
+  if (Object.keys(renames).length === 0) {
+    return { headers, rows, inferred: false };
+  }
+
+  // Re-key row objects to use new header names
+  const newRows = rows.map((row) => {
+    const newRow: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(row)) {
+      newRow[renames[key] ?? key] = val;
+    }
+    return newRow;
+  });
+
+  console.log(
+    `[INFER] Renamed ${Object.keys(renames).length} generic columns:`,
+    Object.entries(renames)
+      .map(([old, neu]) => `${old} → "${neu}"`)
+      .join(", "),
+  );
+
+  return { headers: newHeaders, rows: newRows, inferred: true };
+}
+
+// Also try to infer "Model" as the column right after "Make" if it contains
+// short text strings that aren't makes, colors, or body styles
+function inferModelColumn(
+  headers: string[],
+  rows: Record<string, unknown>[],
+): { headers: string[]; rows: Record<string, unknown>[] } {
+  const makeIdx = headers.indexOf("Make");
+  if (makeIdx < 0) return { headers, rows };
+
+  // Look at the next 1-2 columns after Make for a potential Model column
+  for (let offset = 1; offset <= 2; offset++) {
+    const idx = makeIdx + offset;
+    if (idx >= headers.length) break;
+    if (!/^col\d+$/i.test(headers[idx])) continue; // already named
+
+    const sampleRows = rows.slice(0, 10);
+    const values = sampleRows
+      .map((r) => r[headers[idx]])
+      .filter((v) => v != null && String(v).trim() !== "")
+      .map((v) => String(v).trim());
+
+    if (values.length < 3) continue;
+
+    // Model values: short text (2-30 chars), not all numeric, not car makes, not colors
+    const looksLikeModel = values.filter((v) => {
+      if (v.length < 1 || v.length > 35) return false;
+      if (/^\d+$/.test(v)) return false; // pure number
+      if (CAR_MAKES.has(v.toLowerCase())) return false;
+      if (COLORS.has(v.toLowerCase())) return false;
+      return true;
+    }).length;
+
+    if (looksLikeModel >= values.length * 0.5) {
+      const oldName = headers[idx];
+      const newHeaders = [...headers];
+      newHeaders[idx] = "Model";
+      const newRows = rows.map((row) => {
+        const newRow: Record<string, unknown> = {};
+        for (const [key, val] of Object.entries(row)) {
+          newRow[key === oldName ? "Model" : key] = val;
+        }
+        return newRow;
+      });
+      console.log(`[INFER] Inferred "${oldName}" → "Model" (column after Make)`);
+      return { headers: newHeaders, rows: newRows };
+    }
+  }
+
+  return { headers, rows };
+}
+
 // Score how "header-like" a row is by counting how many cells contain known keywords.
 // IMPORTANT: Uses row.getCell(i) + extractCellValue() so formula cells are resolved
 // to their display text instead of stringifying as "[object Object]".
@@ -322,7 +588,23 @@ function parseOneSheet(
     console.warn(`[COVERAGE] "${sheetName}" has ${formulaNullCount} formula cells with no cached result in row ${headerRowNum + 1}`);
   }
 
-  return { name: sheetName, index: sheetIndex, headers, rows, rowCount: rows.length };
+  // ── Content-based column name inference ──
+  // If most headers are generic "colN" (formula cells with no cached result),
+  // scan data values to infer meaningful column names like "Stock #", "Year", "Make", etc.
+  let finalHeaders = headers;
+  let finalRows = rows;
+  const inferred = inferColumnNames(headers, rows);
+  if (inferred.inferred) {
+    finalHeaders = inferred.headers;
+    finalRows = inferred.rows;
+    // Also try to infer Model (column right after Make)
+    const modelInferred = inferModelColumn(finalHeaders, finalRows);
+    finalHeaders = modelInferred.headers;
+    finalRows = modelInferred.rows;
+    console.log(`[PARSE] "${sheetName}" — auto-detected headers:`, finalHeaders.slice(0, 20).join(" | "));
+  }
+
+  return { name: sheetName, index: sheetIndex, headers: finalHeaders, rows: finalRows, rowCount: finalRows.length };
 }
 
 async function parseExcel(
