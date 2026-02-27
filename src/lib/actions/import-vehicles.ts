@@ -760,59 +760,67 @@ function normalizeConfirmed(raw: string | null | undefined): boolean {
 
 // ── Roster name validation ──
 // The "Roster & Tables" sheet mixes section headers, field labels, and
-// dealer metadata alongside real sales people names. Strategy:
-//   1. Strip leading row numbers ("1 NATE HARDING" → "NATE HARDING")
-//   2. Reject anything with special chars (%, #, $, @, digits-heavy)
-//   3. Reject if ANY word matches a junk keyword (substring-safe)
-//   4. Require at least 2 words (first + last name) — single words like
-//      "HOUSE", "Franchise" are not person names
-//   5. Each word must be predominantly alphabetic
-const JUNK_WORDS = new Set([
-  // field labels & section headers
-  "additional", "address", "amount", "according", "cap", "city",
-  "closer", "commission", "confirmed", "date", "dealer", "direct",
-  "drivetrain", "email", "end", "event", "finance", "franchise",
-  "grand", "house", "information", "inventory", "leader", "lender",
-  "letter", "mail", "manager", "marketing", "name", "note", "notes",
-  "number", "pct", "percent", "phone", "position", "role", "roster",
-  "sale", "sales", "setup", "sheet", "spec", "specification", "start",
-  "state", "street", "subtotal", "table", "tables", "title", "total",
-  "vehicle", "zip", "people", "f&i",
+// dealer metadata alongside real sales people names. Strategy: BLOCKLIST
+// approach — accept anything that has letters, reject only known junk.
+// Must accept: "RJ", 'MAKOTO "TOKYO" MACHO', "O'Brien", short nicknames.
+// Must reject: "End Date", "Additional 1 %", "CAP Letter #", "City", etc.
+
+// Exact-match junk (case-insensitive) — single words or exact phrases
+const JUNK_EXACT = new Set([
+  // single-word section labels
+  "city", "state", "zip", "house", "franchise", "lenders",
+  "setup", "confirmed", "drivetrain", "phone", "email",
+  "notes", "role", "title", "position", "amount", "total",
+  "subtotal", "grand", "percent", "pct", "inventory",
+  "vehicle", "roster", "sheet", "event", "closer",
 ]);
+
+// Substring junk — if the cleaned name contains any of these, reject
+const JUNK_SUBSTRINGS = [
+  "information", "address", "marketing", "commission",
+  "additional", "franchise", "specification",
+  "cap letter", "direct mail", "end date", "start date",
+  "sale start", "sale end", "street add", "dealer name",
+  "sales people", "salesperson", "according to",
+  "drive train",
+];
 
 function cleanRosterName(raw: string | null | undefined): string | null {
   if (!raw) return null;
   let name = raw.trim();
-  if (!name || name.length < 2) return null;
+  if (!name) return null;
 
   // Strip leading row number + separator ("1 NATE HARDING", "1. Nate", "23) Bob")
   name = name.replace(/^\d+[\s.)\-]+/, "").trim();
-  if (!name || name.length < 2) return null;
+  if (!name) return null;
 
-  // Instant reject: contains %, #, $, @, or digits (person names don't have these)
-  if (/[%#$@\d]/.test(name)) return null;
+  // Reject if contains %, #, or $ (not a person's name — catches "Additional 1 %", "CAP Letter #", "Spec. Finc %")
+  if (/[%#$]/.test(name)) return null;
 
   // Must contain at least one letter
   if (!/[a-zA-Z]/.test(name)) return null;
 
-  // Split into words — a real person name needs at least 2 (first + last)
-  const words = name.split(/\s+/).filter((w) => w.length > 0);
-  if (words.length < 2) return null;
+  // Reject pure digits (after stripping the leading number)
+  if (/^\d+$/.test(name)) return null;
 
-  // Reject if ANY word is a known junk keyword
-  for (const word of words) {
-    if (JUNK_WORDS.has(word.toLowerCase())) return null;
+  const lower = name.toLowerCase().trim();
+
+  // Exact match against known junk single-words
+  if (JUNK_EXACT.has(lower)) return null;
+
+  // Substring match against known junk phrases
+  for (const sub of JUNK_SUBSTRINGS) {
+    if (lower.includes(sub)) return null;
   }
 
-  // Each word should be predominantly alphabetic (reject "1%", "F&I", etc.)
-  for (const word of words) {
-    const alpha = word.replace(/[^a-zA-Z]/g, "").length;
-    if (alpha < word.length * 0.8) return null;
-  }
-
-  // Final: need at least 4 total alpha characters across the name
-  const totalAlpha = name.replace(/[^a-zA-Z]/g, "").length;
-  if (totalAlpha < 4) return null;
+  // Reject if EVERY word is a junk word (catches "End Date", "Sale Start", etc.)
+  // but allows names where only some words match (e.g. a person named "Grant" wouldn't be alone)
+  const words = lower.split(/\s+/).filter((w) => w.length > 0);
+  const JUNK_WORDS_MULTI = new Set([
+    "end", "start", "date", "sale", "cap", "letter", "direct",
+    "mail", "spec", "finc", "dealer", "name", "street", "number",
+  ]);
+  if (words.length > 0 && words.every((w) => JUNK_WORDS_MULTI.has(w))) return null;
 
   return name;
 }
