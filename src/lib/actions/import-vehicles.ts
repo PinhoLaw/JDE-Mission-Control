@@ -965,6 +965,39 @@ export async function executeImport(
 
   console.log("[executeImport] user:", user.email, "event_id:", eventId, "mode:", mode, "total rows received:", rows.length);
 
+  // ── Diagnostic: show columnMap and sample raw data ──
+  const mappedFields = Object.entries(columnMap).filter(([, v]) => v && v !== "__skip__");
+  const skippedFields = Object.entries(columnMap).filter(([, v]) => !v || v === "__skip__");
+  console.log(
+    `[executeImport] COLUMN MAP: ${mappedFields.length} mapped, ${skippedFields.length} skipped`,
+  );
+  for (const [col, field] of mappedFields) {
+    console.log(`  "${col}" → ${field}`);
+  }
+  if (rows.length > 0) {
+    const sampleRow = rows[0];
+    const rowKeys = Object.keys(sampleRow);
+    console.log(`[executeImport] RAW ROW KEYS (${rowKeys.length}):`, rowKeys.slice(0, 15).join(" | "));
+    console.log(`[executeImport] RAW ROW[0] sample:`, Object.fromEntries(
+      rowKeys.slice(0, 10).map((k) => [k, sampleRow[k] ?? "NULL"]),
+    ));
+    // Check if any columnMap key exists in the row keys
+    const matchingKeys = mappedFields.filter(([col]) => col in sampleRow);
+    const missingKeys = mappedFields.filter(([col]) => !(col in sampleRow));
+    if (missingKeys.length > 0) {
+      console.error(
+        `[executeImport] KEY MISMATCH! ${missingKeys.length} columnMap keys not found in row:`,
+        missingKeys.map(([col, field]) => `"${col}" (→${field})`).join(", "),
+      );
+      console.log(
+        `[executeImport] Row has keys:`, rowKeys.join(", "),
+        `\nColumnMap expects:`, mappedFields.map(([col]) => col).join(", "),
+      );
+    } else {
+      console.log(`[executeImport] All ${matchingKeys.length} columnMap keys found in row ✓`);
+    }
+  }
+
   const { data: membership, error: memberErr } = await supabase
     .from("event_members")
     .select("role")
@@ -1040,6 +1073,19 @@ export async function executeImport(
       ) {
         mapped[dbField] = raw[spreadsheetCol];
       }
+    }
+
+    // Diagnostic: log first 3 rows' mapping results
+    if (i < 3) {
+      console.log(
+        `[executeImport] ROW[${i}] MAPPED:`,
+        `stock_number=${JSON.stringify(mapped.stock_number)}`,
+        `year=${JSON.stringify(mapped.year)}`,
+        `make=${JSON.stringify(mapped.make)}`,
+        `model=${JSON.stringify(mapped.model)}`,
+        `| total mapped fields: ${Object.keys(mapped).length}`,
+        `| non-null fields: ${Object.values(mapped).filter((v) => v != null && v !== "").length}`,
+      );
     }
 
     // Clean empties
