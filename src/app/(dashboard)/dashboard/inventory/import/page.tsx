@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEvent } from "@/providers/event-provider";
@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ArrowLeft,
   Upload,
@@ -38,12 +39,14 @@ import {
   Loader2,
   Replace,
   ListPlus,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   parseSpreadsheet,
   validateImportRows,
   executeImport,
+  type ParsedSheet,
   type ImportValidationResult,
   type ImportResult,
   type ImportMode,
@@ -90,15 +93,17 @@ function autoMapColumn(header: string): string {
     year: "year", yr: "year",
     make: "make",
     model: "model",
-    trim: "trim",
+    trim: "trim", series: "trim",
     bodystyle: "body_style", body: "body_style", class: "body_style", type: "body_style",
     color: "color", ext: "color", extcolor: "color",
     mileage: "mileage", miles: "mileage", odometer: "mileage", odo: "mileage",
     age: "age_days", agedays: "age_days", days: "age_days",
-    drivetrain: "drivetrain", drive: "drivetrain",
+    drivetrain: "drivetrain", drive: "drivetrain", drivetraintype: "drivetrain",
     cost: "acquisition_cost", acqcost: "acquisition_cost", acquisitioncost: "acquisition_cost", unitcost: "acquisition_cost",
     jdtradeclean: "jd_trade_clean", tradeclean: "jd_trade_clean", jdtrade: "jd_trade_clean",
+    jdpowertradeinclean: "jd_trade_clean", jdpowertradeclean: "jd_trade_clean",
     jdretailclean: "jd_retail_clean", retailclean: "jd_retail_clean", jdretail: "jd_retail_clean",
+    jdpowerretailclean: "jd_retail_clean", jdpowerretail: "jd_retail_clean",
     ask115: "asking_price_115", price115: "asking_price_115",
     ask120: "asking_price_120", price120: "asking_price_120",
     ask125: "asking_price_125", price125: "asking_price_125",
@@ -106,13 +111,14 @@ function autoMapColumn(header: string): string {
     profit115: "profit_115", profit120: "profit_120",
     profit125: "profit_125", profit130: "profit_130",
     retailspread: "retail_spread", spread: "retail_spread",
-    label: "label", status: "label",
+    diff: "retail_spread",
+    label: "label", status: "label", location: "__skip__",
     notes: "notes", note: "notes",
   };
   return map[h] ?? "__skip__";
 }
 
-type Step = "upload" | "map" | "preview" | "importing" | "done";
+type Step = "upload" | "sheets" | "map" | "preview" | "importing" | "done";
 
 export default function ImportPage() {
   const { currentEvent } = useEvent();
@@ -122,6 +128,10 @@ export default function ImportPage() {
   const [step, setStep] = useState<Step>("upload");
   const [importMode, setImportMode] = useState<ImportMode>("replace");
   const [fileName, setFileName] = useState("");
+  // All sheets from the file
+  const [allSheets, setAllSheets] = useState<ParsedSheet[]>([]);
+  const [selectedSheetIndices, setSelectedSheetIndices] = useState<Set<number>>(new Set());
+  // Merged data from selected sheets
   const [headers, setHeaders] = useState<string[]>([]);
   const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
   const [columnMap, setColumnMap] = useState<Record<string, string>>({});
@@ -143,24 +153,92 @@ export default function ImportPage() {
       const result = await parseSpreadsheet(formData);
 
       setFileName(result.fileName);
-      setHeaders(result.headers);
-      setRawRows(result.rows);
+      setAllSheets(result.sheets);
 
-      // Auto-map columns
-      const autoMap: Record<string, string> = {};
-      for (const col of result.headers) {
-        autoMap[col] = autoMapColumn(col);
+      if (result.sheets.length === 1) {
+        // Single sheet — skip sheet selection, go straight to mapping
+        const sheet = result.sheets[0];
+        setSelectedSheetIndices(new Set([0]));
+        setHeaders(sheet.headers);
+        setRawRows(sheet.rows);
+
+        const autoMap: Record<string, string> = {};
+        for (const col of sheet.headers) {
+          autoMap[col] = autoMapColumn(col);
+        }
+        setColumnMap(autoMap);
+
+        setStep("map");
+        toast.success(`Loaded ${sheet.rowCount} rows from "${result.fileName}"`);
+      } else {
+        // Multiple sheets — show sheet selection step
+        // Pre-select sheets that look like inventory
+        const preselected = new Set<number>();
+        result.sheets.forEach((s, i) => {
+          const name = s.name.toLowerCase();
+          if (name.includes("inventory") || name.includes("inv")) {
+            preselected.add(i);
+          }
+        });
+        setSelectedSheetIndices(preselected.size > 0 ? preselected : new Set([0]));
+        setStep("sheets");
+        toast.success(
+          `Found ${result.sheets.length} sheets in "${result.fileName}" — select which to import`,
+        );
       }
-      setColumnMap(autoMap);
-
-      setStep("map");
-      toast.success(`Loaded ${result.rowCount} rows from "${result.fileName}"`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to parse file");
     } finally {
       setIsParsing(false);
     }
   }, []);
+
+  // Merge selected sheets into combined headers + rows
+  const applySheetSelection = useCallback(() => {
+    const selected = allSheets.filter((_, i) => selectedSheetIndices.has(i));
+    if (selected.length === 0) {
+      toast.error("Select at least one sheet");
+      return;
+    }
+
+    // Union of all headers (preserving order from first sheet, appending new ones)
+    const headerSet = new Set<string>();
+    const mergedHeaders: string[] = [];
+    for (const sheet of selected) {
+      for (const h of sheet.headers) {
+        if (!headerSet.has(h)) {
+          headerSet.add(h);
+          mergedHeaders.push(h);
+        }
+      }
+    }
+
+    // Merge all rows (missing columns get null)
+    const mergedRows: Record<string, unknown>[] = [];
+    for (const sheet of selected) {
+      for (const row of sheet.rows) {
+        const fullRow: Record<string, unknown> = {};
+        for (const h of mergedHeaders) {
+          fullRow[h] = row[h] ?? null;
+        }
+        mergedRows.push(fullRow);
+      }
+    }
+
+    setHeaders(mergedHeaders);
+    setRawRows(mergedRows);
+
+    // Auto-map columns
+    const autoMap: Record<string, string> = {};
+    for (const col of mergedHeaders) {
+      autoMap[col] = autoMapColumn(col);
+    }
+    setColumnMap(autoMap);
+
+    setStep("map");
+    const sheetNames = selected.map((s) => s.name).join(", ");
+    toast.success(`Merged ${mergedRows.length} rows from: ${sheetNames}`);
+  }, [allSheets, selectedSheetIndices]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -179,6 +257,26 @@ export default function ImportPage() {
     },
     [parseFile],
   );
+
+  // ── Sheet toggle helper ──
+  const toggleSheet = useCallback((index: number) => {
+    setSelectedSheetIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  }, []);
+
+  // ── Total rows from selected sheets ──
+  const selectedRowCount = useMemo(() => {
+    return allSheets
+      .filter((_, i) => selectedSheetIndices.has(i))
+      .reduce((sum, s) => sum + s.rowCount, 0);
+  }, [allSheets, selectedSheetIndices]);
 
   // ── Validation (dry run) ──
   const handleValidate = useCallback(async () => {
@@ -308,7 +406,8 @@ export default function ImportPage() {
             <CardHeader>
               <CardTitle>Upload Spreadsheet</CardTitle>
               <CardDescription>
-                Drag and drop an .xlsx or .csv file, or click to browse
+                Drag and drop an .xlsx or .csv file, or click to browse.
+                Multi-sheet workbooks supported — you&apos;ll pick which sheets to import.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -332,7 +431,7 @@ export default function ImportPage() {
                       Parsing spreadsheet...
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Reading columns and rows from your file
+                      Reading all sheets, columns, and rows
                     </p>
                   </>
                 ) : (
@@ -342,7 +441,7 @@ export default function ImportPage() {
                       Drop your spreadsheet here
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      .xlsx or .csv — up to 1,000 rows
+                      .xlsx or .csv — up to 10 MB
                     </p>
                   </>
                 )}
@@ -358,6 +457,77 @@ export default function ImportPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* ── STEP 1.5: SHEET SELECTION (multi-sheet files only) ── */}
+      {step === "sheets" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5" />
+              Select Sheets to Import
+            </CardTitle>
+            <CardDescription>
+              {fileName} has {allSheets.length} sheets with data.
+              Select which ones contain inventory to import.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              {allSheets.map((sheet, i) => (
+                <button
+                  key={i}
+                  onClick={() => toggleSheet(i)}
+                  className={`w-full flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-colors ${
+                    selectedSheetIndices.has(i)
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-primary/20"
+                  }`}
+                >
+                  <Checkbox
+                    checked={selectedSheetIndices.has(i)}
+                    onCheckedChange={() => toggleSheet(i)}
+                    className="pointer-events-none"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{sheet.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {sheet.rowCount} rows · {sheet.headers.length} columns
+                    </p>
+                    <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+                      Columns: {sheet.headers.slice(0, 8).join(", ")}
+                      {sheet.headers.length > 8 ? `, +${sheet.headers.length - 8} more` : ""}
+                    </p>
+                  </div>
+                  <Badge variant="secondary" className="shrink-0">
+                    {sheet.rowCount} rows
+                  </Badge>
+                </button>
+              ))}
+            </div>
+
+            {selectedSheetIndices.size > 0 && (
+              <div className="rounded-md border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30 p-3">
+                <p className="text-xs text-blue-800 dark:text-blue-200">
+                  <strong>{selectedSheetIndices.size} sheet(s) selected</strong> —{" "}
+                  {selectedRowCount} total rows will be merged and imported.
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setStep("upload")}>
+                Back
+              </Button>
+              <Button
+                onClick={applySheetSelection}
+                disabled={selectedSheetIndices.size === 0}
+              >
+                Continue with {selectedSheetIndices.size} Sheet{selectedSheetIndices.size !== 1 ? "s" : ""} ({selectedRowCount} rows)
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ── STEP 2: COLUMN MAPPING ── */}
@@ -435,7 +605,10 @@ export default function ImportPage() {
             </div>
 
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setStep("upload")}>
+              <Button
+                variant="outline"
+                onClick={() => allSheets.length > 1 ? setStep("sheets") : setStep("upload")}
+              >
                 Back
               </Button>
               <Button onClick={handleValidate} disabled={isValidating}>
@@ -636,6 +809,8 @@ export default function ImportPage() {
                   setStep("upload");
                   setRawRows([]);
                   setHeaders([]);
+                  setAllSheets([]);
+                  setSelectedSheetIndices(new Set());
                   setColumnMap({});
                   setValidationResults([]);
                   setImportResult(null);

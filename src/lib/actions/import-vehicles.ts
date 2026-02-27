@@ -39,11 +39,20 @@ function cellToString(value: unknown): string | null {
 // Parse spreadsheet (server action — accepts FormData)
 // Supports .xlsx and .csv files
 // ────────────────────────────────────────────────────────
+export interface ParsedSheet {
+  name: string;
+  index: number;
+  headers: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+}
+
 export interface ParsedSpreadsheet {
   headers: string[];
   rows: Record<string, unknown>[];
   fileName: string;
   rowCount: number;
+  sheets: ParsedSheet[];
 }
 
 export async function parseSpreadsheet(
@@ -73,6 +82,51 @@ export async function parseSpreadsheet(
   throw new Error("Unsupported file type — upload .xlsx or .csv");
 }
 
+function parseOneSheet(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  worksheet: any,
+  sheetIndex: number,
+): ParsedSheet | null {
+  const sheetName: string = worksheet.name ?? `Sheet ${sheetIndex + 1}`;
+
+  if (!worksheet || worksheet.rowCount < 2) return null;
+
+  // Extract headers from row 1 (ExcelJS row.values is 1-indexed → slot 0 is undefined)
+  const rawHeaderValues = worksheet.getRow(1).values;
+  const headers: string[] = [];
+  if (Array.isArray(rawHeaderValues)) {
+    for (let i = 1; i < rawHeaderValues.length; i++) {
+      const val = rawHeaderValues[i];
+      headers.push(val?.toString().trim() || `col${i}`);
+    }
+  }
+
+  if (headers.length === 0) return null;
+
+  // Extract data rows
+  const rows: Record<string, unknown>[] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row: unknown, rowNumber: number) => {
+    if (rowNumber === 1) return; // skip header row
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rowValues = Array.isArray((row as any).values) ? (row as any).values.slice(1) : [];
+    const rowObj: Record<string, unknown> = {};
+
+    headers.forEach((header, index) => {
+      rowObj[header] = cellToString(rowValues[index]) ?? null;
+    });
+
+    const hasData = Object.values(rowObj).some((v) => v != null && v !== "");
+    if (hasData) {
+      rows.push(rowObj);
+    }
+  });
+
+  if (rows.length === 0) return null;
+
+  return { name: sheetName, index: sheetIndex, headers, rows, rowCount: rows.length };
+}
+
 async function parseExcel(
   arrayBuffer: ArrayBuffer,
   fileName: string,
@@ -86,50 +140,28 @@ async function parseExcel(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await workbook.xlsx.load(arrayBuffer as any);
 
-  const worksheet = workbook.worksheets[0];
-  if (!worksheet || worksheet.rowCount < 2) {
-    throw new Error("Spreadsheet is empty or has no data rows");
-  }
-
-  // Extract headers from row 1 (ExcelJS row.values is 1-indexed → slot 0 is undefined)
-  const rawHeaderValues = worksheet.getRow(1).values;
-  const headers: string[] = [];
-  if (Array.isArray(rawHeaderValues)) {
-    for (let i = 1; i < rawHeaderValues.length; i++) {
-      const val = rawHeaderValues[i];
-      headers.push(val?.toString().trim() || `col${i}`);
+  // Parse ALL worksheets
+  const sheets: ParsedSheet[] = [];
+  for (let i = 0; i < workbook.worksheets.length; i++) {
+    const parsed = parseOneSheet(workbook.worksheets[i], i);
+    if (parsed) {
+      sheets.push(parsed);
     }
   }
 
-  if (headers.length === 0) {
-    throw new Error("No column headers found in the first row");
+  if (sheets.length === 0) {
+    throw new Error("Spreadsheet is empty or has no data rows in any sheet");
   }
 
-  // Extract data rows
-  const rows: Record<string, unknown>[] = [];
-  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber === 1) return; // skip header row
-
-    const rowValues = Array.isArray(row.values) ? row.values.slice(1) : [];
-    const rowObj: Record<string, unknown> = {};
-
-    // Map each cell to its header, converting ExcelJS cell values to strings
-    headers.forEach((header, index) => {
-      rowObj[header] = cellToString(rowValues[index]) ?? null;
-    });
-
-    // Only include rows that have at least one non-null value
-    const hasData = Object.values(rowObj).some((v) => v != null && v !== "");
-    if (hasData) {
-      rows.push(rowObj);
-    }
-  });
-
-  if (rows.length === 0) {
-    throw new Error("Spreadsheet has headers but no data rows");
-  }
-
-  return { headers, rows, fileName, rowCount: rows.length };
+  // Default: use first sheet for backward compatibility
+  const first = sheets[0];
+  return {
+    headers: first.headers,
+    rows: first.rows,
+    fileName,
+    rowCount: first.rowCount,
+    sheets,
+  };
 }
 
 function parseCSV(buffer: Buffer, fileName: string): ParsedSpreadsheet {
@@ -196,7 +228,8 @@ function parseCSV(buffer: Buffer, fileName: string): ParsedSpreadsheet {
     throw new Error("CSV has headers but no data rows");
   }
 
-  return { headers, rows, fileName, rowCount: rows.length };
+  const sheet: ParsedSheet = { name: "CSV", index: 0, headers, rows, rowCount: rows.length };
+  return { headers, rows, fileName, rowCount: rows.length, sheets: [sheet] };
 }
 
 // ────────────────────────────────────────────────────────
