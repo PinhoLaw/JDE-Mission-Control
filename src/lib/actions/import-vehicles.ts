@@ -566,7 +566,7 @@ export async function executeImport(
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  console.log("[executeImport] user:", user.email, "event_id:", eventId, "mode:", mode);
+  console.log("[executeImport] user:", user.email, "event_id:", eventId, "mode:", mode, "total rows received:", rows.length);
 
   const { data: membership, error: memberErr } = await supabase
     .from("event_members")
@@ -652,6 +652,31 @@ export async function executeImport(
       }
     }
 
+    // Skip rows with no stock number — these are junk (section headers, subtotals, etc.)
+    const rawStock = mapped.stock_number;
+    if (rawStock == null || String(rawStock).trim() === "") {
+      continue;
+    }
+
+    // ── Sanitize number fields ──
+    // Formula cells from Google Sheets may return "#REF!", "#N/A", "N/A", etc.
+    // z.coerce.number() would reject the ENTIRE row if any number field has garbage.
+    // Fix: convert non-numeric strings to null before Zod validation.
+    const NUMBER_FIELDS = [
+      "hat_number", "year", "mileage", "age_days", "acquisition_cost",
+      "jd_trade_clean", "jd_retail_clean", "asking_price_115", "asking_price_120",
+      "asking_price_125", "asking_price_130", "profit_115", "profit_120",
+      "profit_125", "profit_130", "retail_spread",
+    ];
+    for (const nf of NUMBER_FIELDS) {
+      if (mapped[nf] != null) {
+        const n = Number(mapped[nf]);
+        if (isNaN(n)) {
+          mapped[nf] = null; // garbage formula result → null (don't nuke the row)
+        }
+      }
+    }
+
     // ── Post-processing: compute derived fields if formula cells returned null ──
     const cost = mapped.acquisition_cost != null ? Number(mapped.acquisition_cost) : NaN;
     const trade = mapped.jd_trade_clean != null ? Number(mapped.jd_trade_clean) : NaN;
@@ -720,14 +745,19 @@ export async function executeImport(
     if (stockNum) existingStocks.add(stockNum);
   }
 
+  const skippedNoStock = rows.length - validRows.length - errors - duplicatesSkipped;
   console.log(
-    "[executeImport] valid rows:",
-    validRows.length,
-    "errors:",
-    errors,
-    "dupes:",
-    duplicatesSkipped,
+    `[executeImport] FILTER: ${rows.length} total rows → ` +
+    `${skippedNoStock} skipped (no Stock#), ` +
+    `${errors} validation errors, ` +
+    `${duplicatesSkipped} duplicates, ` +
+    `${validRows.length} valid rows to insert`,
   );
+
+  // Log first 5 validation errors for debugging
+  if (errorDetails.length > 0) {
+    console.log("[executeImport] sample errors:", errorDetails.slice(0, 5));
+  }
 
   // Log sample row for debugging
   if (validRows.length > 0) {

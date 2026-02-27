@@ -293,6 +293,7 @@ export default function ImportPage() {
     // Merge all rows (missing columns get null)
     const mergedRows: Record<string, unknown>[] = [];
     for (const sheet of selected) {
+      const beforeCount = mergedRows.length;
       for (const row of sheet.rows) {
         const fullRow: Record<string, unknown> = {};
         for (const h of mergedHeaders) {
@@ -300,6 +301,8 @@ export default function ImportPage() {
         }
         mergedRows.push(fullRow);
       }
+      const sheetAdded = mergedRows.length - beforeCount;
+      console.log(`[MERGE] Sheet "${sheet.name}": ${sheet.rows.length} parsed rows → ${sheetAdded} added to merge (total now: ${mergedRows.length})`);
     }
 
     setHeaders(mergedHeaders);
