@@ -161,14 +161,14 @@ function parseOneSheet(
 
   // Extract data rows using getCell() + extractCellValue for formula support
   const rows: Record<string, unknown>[] = [];
-  const debugRowLimit = 3; // log first N data rows in detail
+  let formulaNullCount = 0; // track formula cells that returned null
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   worksheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
     if (rowNumber === 1) return; // skip header row
 
     const rowObj: Record<string, unknown> = {};
-    const shouldDebug = rows.length < debugRowLimit;
+    const shouldDebug = rows.length === 0; // only log first data row in detail
 
     // Also grab row.values as fallback
     const sparseValues = Array.isArray(row.values) ? row.values : [];
@@ -181,29 +181,28 @@ function parseOneSheet(
         const cell = row.getCell(colIdx);
         val = extractCellValue(cell);
 
-        // Debug: dump EVERYTHING for first N rows
+        // Log only first row, or formula cells that extracted as null
         if (shouldDebug) {
-          const sparseVal = sparseValues[colIdx];
-          console.log(
-            `[CELL DEBUG] sheet="${sheetName}" row=${rowNumber} col=${colIdx} header="${header}"` +
-            ` | type=${cell?.type}` +
-            ` | text=${JSON.stringify(cell?.text)}` +
-            ` | value=${JSON.stringify(cell?.value)}` +
-            ` | result=${JSON.stringify(cell?.result)}` +
-            ` | formula=${JSON.stringify(cell?.formula)}` +
-            ` | sparse=${JSON.stringify(sparseVal)}` +
-            ` | EXTRACTED="${val}"`,
-          );
+          const hasFormula = cell?.formula || cell?.sharedFormula ||
+            (cell?.value && typeof cell.value === "object" && ("formula" in cell.value || "sharedFormula" in cell.value));
+          if (hasFormula || val == null) {
+            console.log(
+              `[CELL] sheet="${sheetName}" row=${rowNumber} col=${colIdx} header="${header}"` +
+              ` | type=${cell?.type} | formula=${JSON.stringify(cell?.formula ?? cell?.sharedFormula ?? null)}` +
+              ` | text=${JSON.stringify(cell?.text)} | result=${JSON.stringify(cell?.result)}` +
+              ` | value=${JSON.stringify(cell?.value)}` +
+              ` | EXTRACTED="${val}"`,
+            );
+          }
+          if (hasFormula && val == null) formulaNullCount++;
         }
       } catch (err) {
-        // Fallback to sparse array
         val = cellToString(sparseValues[colIdx]) ?? null;
         if (shouldDebug) {
           console.log(
-            `[CELL DEBUG] sheet="${sheetName}" row=${rowNumber} col=${colIdx} header="${header}"` +
-            ` | GETCEL_ERROR=${err instanceof Error ? err.message : String(err)}` +
-            ` | sparse_fallback=${JSON.stringify(sparseValues[colIdx])}` +
-            ` | EXTRACTED="${val}"`,
+            `[CELL] sheet="${sheetName}" row=${rowNumber} col=${colIdx} header="${header}"` +
+            ` | ERROR=${err instanceof Error ? err.message : String(err)}` +
+            ` | sparse=${JSON.stringify(sparseValues[colIdx])} | EXTRACTED="${val}"`,
           );
         }
       }
@@ -218,6 +217,24 @@ function parseOneSheet(
   });
 
   if (rows.length === 0) return null;
+
+  // Column coverage summary — shows which columns have data vs null
+  const coverage: Record<string, number> = {};
+  for (const h of headers) coverage[h] = 0;
+  for (const row of rows) {
+    for (const h of headers) {
+      if (row[h] != null && row[h] !== "") coverage[h]++;
+    }
+  }
+  console.log(`[COVERAGE] "${sheetName}" (${rows.length} rows):`);
+  for (const h of headers) {
+    const pct = Math.round((coverage[h] / rows.length) * 100);
+    const warn = pct < 50 ? " ⚠️ LOW" : "";
+    console.log(`  ${h}: ${coverage[h]}/${rows.length} (${pct}%)${warn}`);
+  }
+  if (formulaNullCount > 0) {
+    console.warn(`[COVERAGE] "${sheetName}" has ${formulaNullCount} formula cells with no cached result in row 2`);
+  }
 
   return { name: sheetName, index: sheetIndex, headers, rows, rowCount: rows.length };
 }
@@ -575,6 +592,16 @@ export async function executeImport(
     for (const key of Object.keys(mapped)) {
       if (mapped[key] === "" || mapped[key] === undefined) {
         mapped[key] = null;
+      }
+    }
+
+    // Post-processing: compute derived fields if formula cells returned null
+    // DIFF (retail_spread) = acquisition_cost - jd_trade_clean
+    if (mapped.retail_spread == null && mapped.acquisition_cost != null && mapped.jd_trade_clean != null) {
+      const cost = Number(mapped.acquisition_cost);
+      const trade = Number(mapped.jd_trade_clean);
+      if (!isNaN(cost) && !isNaN(trade)) {
+        mapped.retail_spread = cost - trade;
       }
     }
 
