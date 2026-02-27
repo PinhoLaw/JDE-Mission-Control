@@ -150,18 +150,28 @@ const HEADER_KEYWORDS = new Set([
   "salespeople", "salesperson", "phone", "confirmed", "setup", "lenders",
 ]);
 
-// Score how "header-like" a row is by counting how many cells contain known keywords
+// Score how "header-like" a row is by counting how many cells contain known keywords.
+// IMPORTANT: Uses row.getCell(i) + extractCellValue() so formula cells are resolved
+// to their display text instead of stringifying as "[object Object]".
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function scoreHeaderRow(row: any): number {
-  const values = Array.isArray(row.values) ? row.values : [];
+  const colCount = row.cellCount ?? row.values?.length ?? 0;
   let score = 0;
-  for (let i = 1; i < values.length; i++) {
-    const val = values[i];
-    if (val == null) continue;
-    const str = String(val).toLowerCase().trim();
+  for (let i = 1; i <= colCount; i++) {
+    let str: string | null = null;
+    try {
+      const cell = row.getCell(i);
+      str = extractCellValue(cell);
+    } catch {
+      // Fallback to sparse values array
+      const vals = Array.isArray(row.values) ? row.values : [];
+      if (vals[i] != null) str = cellToString(vals[i]);
+    }
     if (!str) continue;
+    const lower = str.toLowerCase().trim();
+    if (!lower) continue;
     // Split into words and check each against keywords
-    const words = str.replace(/[^a-z0-9\s]/g, "").split(/\s+/);
+    const words = lower.replace(/[^a-z0-9\s]/g, "").split(/\s+/);
     for (const w of words) {
       if (HEADER_KEYWORDS.has(w)) {
         score++;
@@ -189,32 +199,51 @@ function parseOneSheet(
   let bestScore = 0;
   const maxScan = Math.min(worksheet.rowCount, 10);
 
+  const scanResults: string[] = [];
   for (let r = 1; r <= maxScan; r++) {
     const row = worksheet.getRow(r);
     const score = scoreHeaderRow(row);
+    // Log a preview of each scanned row (first 5 cells)
+    const preview: string[] = [];
+    for (let c = 1; c <= Math.min(row.cellCount ?? 5, 5); c++) {
+      try {
+        const v = extractCellValue(row.getCell(c));
+        if (v) preview.push(v);
+      } catch { /* ignore */ }
+    }
+    scanResults.push(`row ${r}: score=${score} [${preview.join(", ")}]`);
     if (score > bestScore) {
       bestScore = score;
       headerRowNum = r;
     }
   }
 
+  console.log(`[PARSE] "${sheetName}" — header scan:\n  ${scanResults.join("\n  ")}`);
   console.log(
     `[PARSE] "${sheetName}" — header row detected at row ${headerRowNum} (score=${bestScore})`,
   );
 
-  // Extract headers from the detected header row
-  const rawHeaderValues = worksheet.getRow(headerRowNum).values;
+  // Extract headers from the detected header row using extractCellValue
+  // so formula-generated headers (common in Google Sheets) are resolved to display text.
+  const headerRow = worksheet.getRow(headerRowNum);
+  const headerColCount = headerRow.cellCount ?? headerRow.values?.length ?? 0;
   const headers: string[] = [];
-  if (Array.isArray(rawHeaderValues)) {
-    for (let i = 1; i < rawHeaderValues.length; i++) {
-      const val = rawHeaderValues[i];
-      headers.push(val != null ? String(val).trim() : `col${i}`);
+  for (let i = 1; i <= headerColCount; i++) {
+    let val: string | null = null;
+    try {
+      const cell = headerRow.getCell(i);
+      val = extractCellValue(cell);
+    } catch {
+      // Fallback to raw values
+      const rawVals = Array.isArray(headerRow.values) ? headerRow.values : [];
+      if (rawVals[i] != null) val = cellToString(rawVals[i]);
     }
+    headers.push(val != null && val.trim() !== "" ? val.trim() : `col${i}`);
   }
 
   if (headers.length === 0) return null;
 
-  console.log(`[PARSE] "${sheetName}" — headers (${headers.length}):`, headers.slice(0, 15).join(", "));
+  console.log(`[PARSE] "${sheetName}" — headers (${headers.length}):`, headers.slice(0, 20).join(" | "));
 
   // Extract data rows using getCell() + extractCellValue for formula support
   const rows: Record<string, unknown>[] = [];
