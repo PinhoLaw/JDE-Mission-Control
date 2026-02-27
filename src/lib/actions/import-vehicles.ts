@@ -758,33 +758,10 @@ function normalizeConfirmed(raw: string | null | undefined): boolean {
   return ["yes", "y", "true", "1", "confirmed", "x", "✓", "✔"].includes(lower);
 }
 
-// ── Roster name validation ──
-// The "Roster & Tables" sheet mixes section headers, field labels, and
-// dealer metadata alongside real sales people names. Strategy: BLOCKLIST
-// approach — accept anything that has letters, reject only known junk.
-// Must accept: "RJ", 'MAKOTO "TOKYO" MACHO', "O'Brien", short nicknames.
-// Must reject: "End Date", "Additional 1 %", "CAP Letter #", "City", etc.
-
-// Exact-match junk (case-insensitive) — single words or exact phrases
-const JUNK_EXACT = new Set([
-  // single-word section labels
-  "city", "state", "zip", "house", "franchise", "lenders",
-  "setup", "confirmed", "drivetrain", "phone", "email",
-  "notes", "role", "title", "position", "amount", "total",
-  "subtotal", "grand", "percent", "pct", "inventory",
-  "vehicle", "roster", "sheet", "event", "closer",
-]);
-
-// Substring junk — if the cleaned name contains any of these, reject
-const JUNK_SUBSTRINGS = [
-  "information", "address", "marketing", "commission",
-  "additional", "franchise", "specification",
-  "cap letter", "direct mail", "end date", "start date",
-  "sale start", "sale end", "street add", "dealer name",
-  "sales people", "salesperson", "according to",
-  "drive train",
-];
-
+// ── Roster name cleaning ──
+// Strip the leading row number ("1 NATE HARDING" → "NATE HARDING")
+// and do basic validation. The real filtering is done by requiring a
+// sequential row number in the adjacent column (Column B).
 function cleanRosterName(raw: string | null | undefined): string | null {
   if (!raw) return null;
   let name = raw.trim();
@@ -794,35 +771,41 @@ function cleanRosterName(raw: string | null | undefined): string | null {
   name = name.replace(/^\d+[\s.)\-]+/, "").trim();
   if (!name) return null;
 
-  // Reject if contains %, #, or $ (not a person's name — catches "Additional 1 %", "CAP Letter #", "Spec. Finc %")
-  if (/[%#$]/.test(name)) return null;
-
   // Must contain at least one letter
   if (!/[a-zA-Z]/.test(name)) return null;
 
-  // Reject pure digits (after stripping the leading number)
-  if (/^\d+$/.test(name)) return null;
+  return name;
+}
 
-  const lower = name.toLowerCase().trim();
+// Detect which column contains the sequential row numbers (1, 2, 3...).
+// In the Roster & Tables sheet, Column B has these numbers for real roster rows.
+// Junk rows (section headers, summaries) don't have a number in Column B.
+function detectNumberingColumn(rows: Record<string, unknown>[]): string | null {
+  if (rows.length < 3) return null;
 
-  // Exact match against known junk single-words
-  if (JUNK_EXACT.has(lower)) return null;
-
-  // Substring match against known junk phrases
-  for (const sub of JUNK_SUBSTRINGS) {
-    if (lower.includes(sub)) return null;
+  // Collect all column keys from the first 30 rows
+  const allKeys = new Set<string>();
+  const sample = rows.slice(0, 30);
+  for (const row of sample) {
+    for (const key of Object.keys(row)) allKeys.add(key);
   }
 
-  // Reject if EVERY word is a junk word (catches "End Date", "Sale Start", etc.)
-  // but allows names where only some words match (e.g. a person named "Grant" wouldn't be alone)
-  const words = lower.split(/\s+/).filter((w) => w.length > 0);
-  const JUNK_WORDS_MULTI = new Set([
-    "end", "start", "date", "sale", "cap", "letter", "direct",
-    "mail", "spec", "finc", "dealer", "name", "street", "number",
-  ]);
-  if (words.length > 0 && words.every((w) => JUNK_WORDS_MULTI.has(w))) return null;
-
-  return name;
+  for (const key of allKeys) {
+    const nums: number[] = [];
+    for (const row of sample) {
+      const val = row[key];
+      if (val == null || String(val).trim() === "") continue;
+      const n = Number(val);
+      if (Number.isInteger(n) && n > 0 && n <= 200) {
+        nums.push(n);
+      }
+    }
+    // Must have at least 3 small integers including 1, 2, 3 (sequential numbering)
+    if (nums.length >= 3 && nums.includes(1) && nums.includes(2) && nums.includes(3)) {
+      return key;
+    }
+  }
+  return null;
 }
 
 export async function executeRosterImport(
@@ -872,7 +855,12 @@ export async function executeRosterImport(
     console.log("[rosterImport] DELETED:", deleted, "existing roster members");
   }
 
-  // ── Step 3: Map and validate rows ──
+  // ── Step 3: Detect numbering column + map and validate rows ──
+  // Real roster rows have a sequential number in Column B (1, 2, 3...).
+  // Section headers like "Mail Investment", "Total Sales Days" do NOT.
+  const numberCol = detectNumberingColumn(rows);
+  console.log("[rosterImport] numbering column:", numberCol ? `"${numberCol}"` : "NOT FOUND (fallback to name-only)");
+
   let imported = 0;
   let errors = 0;
   const errorDetails: { row: number; message: string }[] = [];
@@ -891,13 +879,25 @@ export async function executeRosterImport(
       }
     }
 
-    // Name is required — cleanRosterName strips leading numbers and rejects junk
     const rawName = mapped.name;
+
+    // Primary filter: if we found a numbering column, require a positive integer
+    if (numberCol) {
+      const numVal = raw[numberCol];
+      const n = Number(numVal);
+      if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) {
+        if (skippedSamples.length < 15 && rawName && String(rawName).trim()) {
+          skippedSamples.push(`[no row#] ${String(rawName).trim()}`);
+        }
+        continue;
+      }
+    }
+
+    // Clean the name (strip leading number prefix, require at least one letter)
     const name = cleanRosterName(rawName);
     if (!name) {
-      // Log first 15 skipped values for debugging
       if (skippedSamples.length < 15 && rawName && String(rawName).trim()) {
-        skippedSamples.push(String(rawName).trim());
+        skippedSamples.push(`[bad name] ${String(rawName).trim()}`);
       }
       continue;
     }
