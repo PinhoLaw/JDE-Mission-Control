@@ -365,55 +365,109 @@ function inferColumnNames(
   return { headers: newHeaders, rows: newRows, inferred: true };
 }
 
-// Also try to infer "Model" as the column right after "Make" if it contains
-// short text strings that aren't makes, colors, or body styles
-function inferModelColumn(
+// Helper: rename a single column in headers + re-key row objects
+function renameColumn(
+  headers: string[],
+  rows: Record<string, unknown>[],
+  colIdx: number,
+  newName: string,
+): { headers: string[]; rows: Record<string, unknown>[] } {
+  const oldName = headers[colIdx];
+  if (oldName === newName) return { headers, rows };
+  const newHeaders = [...headers];
+  newHeaders[colIdx] = newName;
+  const newRows = rows.map((row) => {
+    const newRow: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(row)) {
+      newRow[key === oldName ? newName : key] = val;
+    }
+    return newRow;
+  });
+  console.log(`[INFER] Inferred "${oldName}" → "${newName}"`);
+  return { headers: newHeaders, rows: newRows };
+}
+
+// Infer positional columns: Model (after Make), Series/Trim (after Model or Class)
+function inferPositionalColumns(
   headers: string[],
   rows: Record<string, unknown>[],
 ): { headers: string[]; rows: Record<string, unknown>[] } {
-  const makeIdx = headers.indexOf("Make");
-  if (makeIdx < 0) return { headers, rows };
+  let h = headers;
+  let r = rows;
+  const sampleRows = rows.slice(0, 10);
 
-  // Look at the next 1-2 columns after Make for a potential Model column
-  for (let offset = 1; offset <= 2; offset++) {
-    const idx = makeIdx + offset;
-    if (idx >= headers.length) break;
-    if (!/^col\d+$/i.test(headers[idx])) continue; // already named
+  // ── Model: column right after Make ──
+  const makeIdx = h.indexOf("Make");
+  if (makeIdx >= 0) {
+    for (let offset = 1; offset <= 2; offset++) {
+      const idx = makeIdx + offset;
+      if (idx >= h.length) break;
+      if (!/^col\d+$/i.test(h[idx])) continue; // already named
 
-    const sampleRows = rows.slice(0, 10);
-    const values = sampleRows
-      .map((r) => r[headers[idx]])
-      .filter((v) => v != null && String(v).trim() !== "")
-      .map((v) => String(v).trim());
+      const values = sampleRows
+        .map((row) => row[h[idx]])
+        .filter((v) => v != null && String(v).trim() !== "")
+        .map((v) => String(v).trim());
 
-    if (values.length < 3) continue;
+      if (values.length < 3) continue;
 
-    // Model values: short text (2-30 chars), not all numeric, not car makes, not colors
-    const looksLikeModel = values.filter((v) => {
-      if (v.length < 1 || v.length > 35) return false;
-      if (/^\d+$/.test(v)) return false; // pure number
-      if (CAR_MAKES.has(v.toLowerCase())) return false;
-      if (COLORS.has(v.toLowerCase())) return false;
-      return true;
-    }).length;
+      // Model values: short text (1-35 chars), not car makes, not colors
+      // NOTE: Allow pure numbers like "2500" (RAM 2500, F-150, etc.)
+      const looksLikeModel = values.filter((v) => {
+        if (v.length < 1 || v.length > 35) return false;
+        if (CAR_MAKES.has(v.toLowerCase())) return false;
+        if (COLORS.has(v.toLowerCase())) return false;
+        return true;
+      }).length;
 
-    if (looksLikeModel >= values.length * 0.5) {
-      const oldName = headers[idx];
-      const newHeaders = [...headers];
-      newHeaders[idx] = "Model";
-      const newRows = rows.map((row) => {
-        const newRow: Record<string, unknown> = {};
-        for (const [key, val] of Object.entries(row)) {
-          newRow[key === oldName ? "Model" : key] = val;
-        }
-        return newRow;
-      });
-      console.log(`[INFER] Inferred "${oldName}" → "Model" (column after Make)`);
-      return { headers: newHeaders, rows: newRows };
+      if (looksLikeModel >= values.length * 0.5) {
+        const renamed = renameColumn(h, r, idx, "Model");
+        h = renamed.headers;
+        r = renamed.rows;
+        break;
+      }
     }
   }
 
-  return { headers, rows };
+  // ── Series/Trim: look for a column with multi-word strings like "LX AWD", "V-Series RWD" ──
+  // Typically comes after Model or Class. Check remaining generic columns.
+  const modelIdx = h.indexOf("Model");
+  const classIdx = h.indexOf("Class");
+  const anchor = modelIdx >= 0 ? modelIdx : classIdx;
+  if (anchor >= 0 && !h.includes("Series")) {
+    for (let offset = 1; offset <= 3; offset++) {
+      const idx = anchor + offset;
+      if (idx >= h.length) break;
+      if (!/^col\d+$/i.test(h[idx])) continue;
+
+      const values = sampleRows
+        .map((row) => row[h[idx]])
+        .filter((v) => v != null && String(v).trim() !== "")
+        .map((v) => String(v).trim());
+
+      if (values.length < 3) continue;
+
+      // Series/Trim values: 2-50 chars, mostly multi-word or contain letters
+      // Not pure numbers, not car makes, not colors, not body styles
+      const looksLikeTrim = values.filter((v) => {
+        if (v.length < 2 || v.length > 50) return false;
+        if (/^\d+$/.test(v)) return false;
+        if (/^[$\d,.\-\s]+$/.test(v)) return false; // dollar amounts
+        if (CAR_MAKES.has(v.toLowerCase())) return false;
+        if (COLORS.has(v.toLowerCase().split(/\s/)[0])) return false;
+        return /[a-zA-Z]/.test(v); // must contain letters
+      }).length;
+
+      if (looksLikeTrim >= values.length * 0.4) {
+        const renamed = renameColumn(h, r, idx, "Series");
+        h = renamed.headers;
+        r = renamed.rows;
+        break;
+      }
+    }
+  }
+
+  return { headers: h, rows: r };
 }
 
 // Score how "header-like" a row is by counting how many cells contain known keywords.
@@ -485,26 +539,55 @@ function parseOneSheet(
   }
 
   console.log(`[PARSE] "${sheetName}" — header scan:\n  ${scanResults.join("\n  ")}`);
-  console.log(
-    `[PARSE] "${sheetName}" — header row detected at row ${headerRowNum} (score=${bestScore})`,
-  );
 
-  // Extract headers from the detected header row using extractCellValue
-  // so formula-generated headers (common in Google Sheets) are resolved to display text.
-  const headerRow = worksheet.getRow(headerRowNum);
-  const headerColCount = headerRow.cellCount ?? headerRow.values?.length ?? 0;
+  // ── Determine if file has a real header row ──
+  // If bestScore === 0, NO row looks like headers — file has no header row.
+  // In that case: use generic col1/col2 headers and include ALL rows as data.
+  const hasRealHeaders = bestScore > 0;
+
+  if (hasRealHeaders) {
+    console.log(
+      `[PARSE] "${sheetName}" — header row detected at row ${headerRowNum} (score=${bestScore})`,
+    );
+  } else {
+    console.log(
+      `[PARSE] "${sheetName}" — NO header row found (all scores=0). Treating all rows as data, will infer column names from content.`,
+    );
+    headerRowNum = 0; // signal: no header row to skip
+  }
+
+  // Extract headers
   const headers: string[] = [];
-  for (let i = 1; i <= headerColCount; i++) {
-    let val: string | null = null;
-    try {
-      const cell = headerRow.getCell(i);
-      val = extractCellValue(cell);
-    } catch {
-      // Fallback to raw values
-      const rawVals = Array.isArray(headerRow.values) ? headerRow.values : [];
-      if (rawVals[i] != null) val = cellToString(rawVals[i]);
+  if (hasRealHeaders) {
+    // Extract from the detected header row using extractCellValue
+    // so formula-generated headers (common in Google Sheets) are resolved to display text.
+    const headerRow = worksheet.getRow(headerRowNum);
+    const headerColCount = headerRow.cellCount ?? headerRow.values?.length ?? 0;
+    for (let i = 1; i <= headerColCount; i++) {
+      let val: string | null = null;
+      try {
+        const cell = headerRow.getCell(i);
+        val = extractCellValue(cell);
+      } catch {
+        // Fallback to raw values
+        const rawVals = Array.isArray(headerRow.values) ? headerRow.values : [];
+        if (rawVals[i] != null) val = cellToString(rawVals[i]);
+      }
+      headers.push(val != null && val.trim() !== "" ? val.trim() : `col${i}`);
     }
-    headers.push(val != null && val.trim() !== "" ? val.trim() : `col${i}`);
+  } else {
+    // No header row — determine column count from first non-empty row
+    // and use generic col1, col2, ... names (inference will rename them later)
+    let maxCols = 0;
+    const scanLimit = Math.min(worksheet.rowCount, 5);
+    for (let r = 1; r <= scanLimit; r++) {
+      const row = worksheet.getRow(r);
+      const cnt = row.cellCount ?? row.values?.length ?? 0;
+      if (cnt > maxCols) maxCols = cnt;
+    }
+    for (let i = 1; i <= maxCols; i++) {
+      headers.push(`col${i}`);
+    }
   }
 
   if (headers.length === 0) return null;
@@ -517,7 +600,9 @@ function parseOneSheet(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   worksheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
-    if (rowNumber <= headerRowNum) return; // skip header row and any rows above it
+    // If we have a real header row, skip it and everything above it.
+    // If no header row (headerRowNum === 0), include ALL rows as data.
+    if (hasRealHeaders && rowNumber <= headerRowNum) return;
 
     const rowObj: Record<string, unknown> = {};
     const shouldDebug = rows.length === 0; // only log first data row in detail
@@ -589,18 +674,19 @@ function parseOneSheet(
   }
 
   // ── Content-based column name inference ──
-  // If most headers are generic "colN" (formula cells with no cached result),
-  // scan data values to infer meaningful column names like "Stock #", "Year", "Make", etc.
+  // If most headers are generic "colN" (formula cells with no cached result,
+  // or file has no header row), scan data values to infer meaningful column
+  // names like "Stock #", "Year", "Make", etc.
   let finalHeaders = headers;
   let finalRows = rows;
   const inferred = inferColumnNames(headers, rows);
   if (inferred.inferred) {
     finalHeaders = inferred.headers;
     finalRows = inferred.rows;
-    // Also try to infer Model (column right after Make)
-    const modelInferred = inferModelColumn(finalHeaders, finalRows);
-    finalHeaders = modelInferred.headers;
-    finalRows = modelInferred.rows;
+    // Also try to infer positional columns (Model after Make, Series/Trim after Model/Class)
+    const positional = inferPositionalColumns(finalHeaders, finalRows);
+    finalHeaders = positional.headers;
+    finalRows = positional.rows;
     console.log(`[PARSE] "${sheetName}" — auto-detected headers:`, finalHeaders.slice(0, 20).join(" | "));
   }
 
