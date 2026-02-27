@@ -25,8 +25,20 @@ export async function KpiCards({ eventId }: KpiCardsProps) {
   let config: Record<string, unknown> | null = null;
   let teamSize = 0;
 
+  console.log("[KpiCards] RENDER — eventId:", eventId);
+
   try {
     const supabase = await createClient();
+
+    // Verify auth first
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
+    console.log(
+      "[KpiCards] AUTH:",
+      user ? `${user.email} (${user.id})` : `NO USER: ${authErr?.message}`,
+    );
 
     // Parallel fetches for KPI data
     const [kpiRes, configRes, rosterRes] = await Promise.all([
@@ -48,18 +60,22 @@ export async function KpiCards({ eventId }: KpiCardsProps) {
     ]);
 
     if (kpiRes.error) {
-      console.warn("[KpiCards] v_event_kpis query error:", kpiRes.error.message);
+      console.warn("[KpiCards] v_event_kpis ERROR:", kpiRes.error.message, "code:", kpiRes.error.code);
+    } else {
+      console.log("[KpiCards] v_event_kpis OK:", JSON.stringify(kpiRes.data));
     }
     if (configRes.error) {
-      console.warn("[KpiCards] event_config query error:", configRes.error.message);
+      console.warn("[KpiCards] event_config ERROR:", configRes.error.message);
     }
     if (rosterRes.error) {
-      console.warn("[KpiCards] roster query error:", rosterRes.error.message);
+      console.warn("[KpiCards] roster ERROR:", rosterRes.error.message);
     }
 
     kpi = kpiRes.data;
     config = configRes.data;
     teamSize = rosterRes.data?.length ?? 0;
+
+    console.log("[KpiCards] RESULT — kpi:", kpi ? "HAS DATA" : "NULL", "| config:", config ? "HAS DATA" : "NULL", "| teamSize:", teamSize);
   } catch (error) {
     console.error("[KpiCards] CRASH:", error);
     // Render with zero values — better than crashing the page

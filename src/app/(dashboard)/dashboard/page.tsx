@@ -31,27 +31,49 @@ export default async function DashboardPage({
     const supabase = await createClient();
     console.log("[DashboardPage] createClient OK, resolving event...");
 
+    // Check auth
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
+    console.log(
+      "[DashboardPage] AUTH:",
+      user ? `${user.email} (${user.id})` : `NO USER: ${authErr?.message}`,
+    );
+
     // Resolve the event ID: URL param → first active event → first event
     eventId = params.event;
+    console.log("[DashboardPage] URL event param:", eventId ?? "NONE");
 
     if (!eventId) {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
       if (user) {
         // Get user's event memberships
-        const { data: memberships } = await supabase
+        const { data: memberships, error: memErr } = await supabase
           .from("event_members")
           .select("event_id")
           .eq("user_id", user.id);
 
+        console.log(
+          "[DashboardPage] memberships:",
+          memberships?.length ?? 0,
+          memErr ? `ERROR: ${memErr.message}` : "",
+          memberships?.map((m) => m.event_id),
+        );
+
         if (memberships && memberships.length > 0) {
           const ids = memberships.map((m) => m.event_id);
-          const { data: events } = await supabase
+          const { data: events, error: evErr } = await supabase
             .from("events")
             .select("id, status")
             .in("id", ids)
             .order("created_at", { ascending: false });
+
+          console.log(
+            "[DashboardPage] events for memberships:",
+            events?.length ?? 0,
+            evErr ? `ERROR: ${evErr.message}` : "",
+            events?.map((e) => `${e.id} (${e.status})`),
+          );
 
           if (events && events.length > 0) {
             const active = events.find((e) => e.status === "active");
@@ -65,12 +87,16 @@ export default async function DashboardPage({
             .order("created_at", { ascending: false })
             .limit(1);
 
+          console.log("[DashboardPage] fallback events:", events?.length ?? 0);
+
           if (events && events.length > 0) {
             eventId = events[0].id;
           }
         }
       }
     }
+
+    console.log("[DashboardPage] RESOLVED eventId:", eventId ?? "NONE");
 
     if (!eventId) {
       return <NoEventState />;
