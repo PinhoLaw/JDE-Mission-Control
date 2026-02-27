@@ -91,24 +91,14 @@ function parseOneSheet(
 
   if (!worksheet || worksheet.rowCount < 2) return null;
 
-  // Extract headers from row 1 using getCell for reliable formula/text extraction
-  const headerRow = worksheet.getRow(1);
+  // Extract headers from row 1 (row.values works fine for headers — they're plain text)
+  const rawHeaderValues = worksheet.getRow(1).values;
   const headers: string[] = [];
-  const colCount = worksheet.columnCount || headerRow.cellCount || 30;
-  for (let i = 1; i <= colCount; i++) {
-    const cell = headerRow.getCell(i);
-    const text = cell.text != null ? String(cell.text).trim() : "";
-    const val = text || cellToString(cell.value)?.trim() || "";
-    if (val) {
-      headers.push(val);
-    } else if (headers.length > 0) {
-      // Only add placeholder if we've already seen real headers (skip trailing empty cols)
-      headers.push(`col${i}`);
+  if (Array.isArray(rawHeaderValues)) {
+    for (let i = 1; i < rawHeaderValues.length; i++) {
+      const val = rawHeaderValues[i];
+      headers.push(val != null ? String(val).trim() : `col${i}`);
     }
-  }
-  // Trim trailing placeholder columns
-  while (headers.length > 0 && headers[headers.length - 1].startsWith("col")) {
-    headers.pop();
   }
 
   if (headers.length === 0) return null;
@@ -125,26 +115,29 @@ function parseOneSheet(
 
     headers.forEach((header, index) => {
       // getCell is 1-indexed (column 1 = A)
-      const cell = row.getCell(index + 1);
-
-      // Try multiple approaches to extract the cell value:
-      // 1. cell.text — the displayed text (most reliable for formulas)
-      // 2. cell.value — raw value (may be formula object)
-      // 3. cell.result — formula cached result
       let val: string | null = null;
-
-      if (cell.text != null && String(cell.text).trim() !== "") {
-        val = String(cell.text).trim();
-      } else if (cell.result != null) {
-        val = String(cell.result);
-      } else {
-        val = cellToString(cell.value);
+      try {
+        const cell = row.getCell(index + 1);
+        if (!cell) {
+          val = null;
+        } else if (cell.text != null && String(cell.text).trim() !== "") {
+          // cell.text is the displayed text — most reliable for formulas
+          val = String(cell.text).trim();
+        } else if (cell.result != null) {
+          val = String(cell.result);
+        } else {
+          val = cellToString(cell.value);
+        }
+      } catch {
+        // Fallback: try row.values sparse array
+        const rowValues = Array.isArray(row.values) ? row.values : [];
+        val = cellToString(rowValues[index + 1]) ?? null;
       }
 
       rowObj[header] = val;
 
       if (loggedFirst && index < 6 && val != null) {
-        console.log(`[parseSheet:${sheetIndex}] row ${rowNumber} col "${header}": text="${cell.text}" value=${JSON.stringify(cell.value)} result=${cell.result} → "${val}"`);
+        console.log(`[parseSheet:${sheetIndex}] row ${rowNumber} col "${header}": → "${val}"`);
       }
     });
 
