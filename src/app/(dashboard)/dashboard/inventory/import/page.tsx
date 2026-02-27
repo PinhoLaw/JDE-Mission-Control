@@ -87,37 +87,72 @@ const DB_FIELDS = [
 // Best-effort auto-mapping from header text to DB field
 function autoMapColumn(header: string): string {
   const h = header.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
-  const map: Record<string, string> = {
+
+  // Exact matches (highest priority)
+  const exactMap: Record<string, string> = {
     hat: "hat_number", hatnumber: "hat_number", hatno: "hat_number",
-    stock: "stock_number", stocknumber: "stock_number", stockno: "stock_number", stk: "stock_number",
-    vin: "vin",
+    stock: "stock_number", stocknumber: "stock_number", stockno: "stock_number",
+    stk: "stock_number", stkno: "stock_number",
+    vin: "vin", vin7: "__skip__", vinno: "vin", vinnumber: "vin",
     year: "year", yr: "year",
     make: "make",
     model: "model",
-    trim: "trim", series: "trim",
+    trim: "trim", series: "trim", trimlevel: "trim",
     bodystyle: "body_style", body: "body_style", class: "body_style",
-    color: "color", ext: "color", extcolor: "color",
+    bodytype: "body_style", style: "body_style",
+    color: "color", ext: "color", extcolor: "color", exteriorcolor: "color",
     mileage: "mileage", miles: "mileage", odometer: "mileage", odo: "mileage",
+    odometerreading: "mileage",
     type: "drivetrain",
-    age: "age_days", agedays: "age_days", days: "age_days",
+    age: "age_days", agedays: "age_days", days: "age_days", ageday: "age_days",
     drivetrain: "drivetrain", drive: "drivetrain", drivetraintype: "drivetrain",
-    cost: "acquisition_cost", acqcost: "acquisition_cost", acquisitioncost: "acquisition_cost", unitcost: "acquisition_cost",
-    jdtradeclean: "jd_trade_clean", tradeclean: "jd_trade_clean", jdtrade: "jd_trade_clean",
+    drivetype: "drivetrain",
+    cost: "acquisition_cost", acqcost: "acquisition_cost",
+    acquisitioncost: "acquisition_cost", unitcost: "acquisition_cost",
+    acvcost: "acquisition_cost", dealercost: "acquisition_cost",
+    // JD Power fields (many spelling variations in spreadsheets)
+    jdtradeclean: "jd_trade_clean", tradeclean: "jd_trade_clean",
+    jdtrade: "jd_trade_clean", cleantrade: "jd_trade_clean",
     jdpowertradeinclean: "jd_trade_clean", jdpowertradeclean: "jd_trade_clean",
-    jdpowerretailclean: "jd_retail_clean", retailclean: "jd_retail_clean", jdretail: "jd_retail_clean",
-    jdpowerretail: "jd_retail_clean",
-    ask115: "asking_price_115", price115: "asking_price_115",
-    ask120: "asking_price_120", price120: "asking_price_120",
-    ask125: "asking_price_125", price125: "asking_price_125",
-    ask130: "asking_price_130", price130: "asking_price_130",
+    tradein: "jd_trade_clean", tradeinclean: "jd_trade_clean",
+    jdpowerretailclean: "jd_retail_clean", retailclean: "jd_retail_clean",
+    jdretail: "jd_retail_clean", cleanretail: "jd_retail_clean",
+    jdpowerretail: "jd_retail_clean", retail: "jd_retail_clean",
+    // Asking price / percentage columns
+    ask115: "asking_price_115", price115: "asking_price_115", "115": "asking_price_115",
+    ask120: "asking_price_120", price120: "asking_price_120", "120": "asking_price_120",
+    ask125: "asking_price_125", price125: "asking_price_125", "125": "asking_price_125",
+    ask130: "asking_price_130", price130: "asking_price_130", "130": "asking_price_130",
     profit115: "profit_115", profit120: "profit_120",
     profit125: "profit_125", profit130: "profit_130",
-    retailspread: "retail_spread", spread: "retail_spread",
-    diff: "retail_spread",
+    retailspread: "retail_spread", spread: "retail_spread", diff: "retail_spread",
     label: "label", status: "label", location: "__skip__",
     notes: "notes", note: "notes",
   };
-  return map[h] ?? "__skip__";
+
+  if (exactMap[h]) return exactMap[h];
+
+  // Substring / fuzzy matches for common header variations
+  const raw = header.toLowerCase().trim();
+  if (raw.includes("stock") && raw.includes("#")) return "stock_number";
+  if (raw.includes("vin") && (raw.includes("#") || raw.includes("no"))) return "vin";
+  if (raw.includes("unit") && raw.includes("cost")) return "acquisition_cost";
+  if (raw.includes("acq") && raw.includes("cost")) return "acquisition_cost";
+  if (raw.includes("j.d.") && raw.includes("trade")) return "jd_trade_clean";
+  if (raw.includes("j.d.") && raw.includes("retail")) return "jd_retail_clean";
+  if (raw.includes("jd") && raw.includes("trade")) return "jd_trade_clean";
+  if (raw.includes("jd") && raw.includes("retail")) return "jd_retail_clean";
+  if (raw.includes("power") && raw.includes("trade")) return "jd_trade_clean";
+  if (raw.includes("power") && raw.includes("retail")) return "jd_retail_clean";
+  if (raw.includes("clean") && raw.includes("trade")) return "jd_trade_clean";
+  if (raw.includes("clean") && raw.includes("retail")) return "jd_retail_clean";
+  if (raw.includes("115") && raw.includes("%")) return "asking_price_115";
+  if (raw.includes("120") && raw.includes("%")) return "asking_price_120";
+  if (raw.includes("125") && raw.includes("%")) return "asking_price_125";
+  if (raw.includes("130") && raw.includes("%")) return "asking_price_130";
+  if (raw.includes("odometer")) return "mileage";
+
+  return "__skip__";
 }
 
 // Roster DB fields

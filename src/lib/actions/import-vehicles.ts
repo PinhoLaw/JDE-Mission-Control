@@ -138,6 +138,40 @@ export async function parseSpreadsheet(
   throw new Error("Unsupported file type — upload .xlsx or .csv");
 }
 
+// Known inventory header keywords — used to detect the real header row
+// when row 1 is a title like "FORD INVENTORY" instead of column headers
+const HEADER_KEYWORDS = new Set([
+  "stock", "stk", "vin", "year", "yr", "make", "model", "trim", "series",
+  "class", "body", "color", "ext", "mileage", "miles", "odometer", "odo",
+  "age", "days", "cost", "unit", "price", "trade", "retail", "diff",
+  "drivetrain", "drive", "type", "hat", "label", "notes", "profit",
+  "jd", "power", "clean", "asking", "spread", "acquisition",
+  // Roster keywords too
+  "salespeople", "salesperson", "phone", "confirmed", "setup", "lenders",
+]);
+
+// Score how "header-like" a row is by counting how many cells contain known keywords
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function scoreHeaderRow(row: any): number {
+  const values = Array.isArray(row.values) ? row.values : [];
+  let score = 0;
+  for (let i = 1; i < values.length; i++) {
+    const val = values[i];
+    if (val == null) continue;
+    const str = String(val).toLowerCase().trim();
+    if (!str) continue;
+    // Split into words and check each against keywords
+    const words = str.replace(/[^a-z0-9\s]/g, "").split(/\s+/);
+    for (const w of words) {
+      if (HEADER_KEYWORDS.has(w)) {
+        score++;
+        break; // Count each cell only once
+      }
+    }
+  }
+  return score;
+}
+
 function parseOneSheet(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   worksheet: any,
@@ -147,8 +181,29 @@ function parseOneSheet(
 
   if (!worksheet || worksheet.rowCount < 2) return null;
 
-  // Extract headers from row 1 (row.values works fine for headers — they're plain text)
-  const rawHeaderValues = worksheet.getRow(1).values;
+  // ── Smart header row detection ──
+  // Scan rows 1-10 to find the row that looks most like column headers.
+  // Many Google Sheets have a title in row 1 (e.g., "FORD INVENTORY") with
+  // the actual headers in row 2, 3, or even later.
+  let headerRowNum = 1;
+  let bestScore = 0;
+  const maxScan = Math.min(worksheet.rowCount, 10);
+
+  for (let r = 1; r <= maxScan; r++) {
+    const row = worksheet.getRow(r);
+    const score = scoreHeaderRow(row);
+    if (score > bestScore) {
+      bestScore = score;
+      headerRowNum = r;
+    }
+  }
+
+  console.log(
+    `[PARSE] "${sheetName}" — header row detected at row ${headerRowNum} (score=${bestScore})`,
+  );
+
+  // Extract headers from the detected header row
+  const rawHeaderValues = worksheet.getRow(headerRowNum).values;
   const headers: string[] = [];
   if (Array.isArray(rawHeaderValues)) {
     for (let i = 1; i < rawHeaderValues.length; i++) {
@@ -159,13 +214,15 @@ function parseOneSheet(
 
   if (headers.length === 0) return null;
 
+  console.log(`[PARSE] "${sheetName}" — headers (${headers.length}):`, headers.slice(0, 15).join(", "));
+
   // Extract data rows using getCell() + extractCellValue for formula support
   const rows: Record<string, unknown>[] = [];
   let formulaNullCount = 0; // track formula cells that returned null
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   worksheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
-    if (rowNumber === 1) return; // skip header row
+    if (rowNumber <= headerRowNum) return; // skip header row and any rows above it
 
     const rowObj: Record<string, unknown> = {};
     const shouldDebug = rows.length === 0; // only log first data row in detail
@@ -233,7 +290,7 @@ function parseOneSheet(
     console.log(`  ${h}: ${coverage[h]}/${rows.length} (${pct}%)${warn}`);
   }
   if (formulaNullCount > 0) {
-    console.warn(`[COVERAGE] "${sheetName}" has ${formulaNullCount} formula cells with no cached result in row 2`);
+    console.warn(`[COVERAGE] "${sheetName}" has ${formulaNullCount} formula cells with no cached result in row ${headerRowNum + 1}`);
   }
 
   return { name: sheetName, index: sheetIndex, headers, rows, rowCount: rows.length };
@@ -595,14 +652,45 @@ export async function executeImport(
       }
     }
 
-    // Post-processing: compute derived fields if formula cells returned null
-    // DIFF (retail_spread) = acquisition_cost - jd_trade_clean
-    if (mapped.retail_spread == null && mapped.acquisition_cost != null && mapped.jd_trade_clean != null) {
-      const cost = Number(mapped.acquisition_cost);
-      const trade = Number(mapped.jd_trade_clean);
-      if (!isNaN(cost) && !isNaN(trade)) {
-        mapped.retail_spread = cost - trade;
-      }
+    // ── Post-processing: compute derived fields if formula cells returned null ──
+    const cost = mapped.acquisition_cost != null ? Number(mapped.acquisition_cost) : NaN;
+    const trade = mapped.jd_trade_clean != null ? Number(mapped.jd_trade_clean) : NaN;
+
+    // DIFF (retail_spread) = jd_trade_clean - acquisition_cost
+    if (mapped.retail_spread == null && !isNaN(cost) && !isNaN(trade)) {
+      mapped.retail_spread = Math.round((trade - cost) * 100) / 100;
+    }
+
+    // Asking prices: jd_trade_clean * multiplier
+    if (mapped.asking_price_115 == null && !isNaN(trade)) {
+      mapped.asking_price_115 = Math.round(trade * 1.15 * 100) / 100;
+    }
+    if (mapped.asking_price_120 == null && !isNaN(trade)) {
+      mapped.asking_price_120 = Math.round(trade * 1.20 * 100) / 100;
+    }
+    if (mapped.asking_price_125 == null && !isNaN(trade)) {
+      mapped.asking_price_125 = Math.round(trade * 1.25 * 100) / 100;
+    }
+    if (mapped.asking_price_130 == null && !isNaN(trade)) {
+      mapped.asking_price_130 = Math.round(trade * 1.30 * 100) / 100;
+    }
+
+    // Profits: asking_price - acquisition_cost
+    if (mapped.profit_115 == null && !isNaN(cost)) {
+      const ask115 = Number(mapped.asking_price_115);
+      if (!isNaN(ask115)) mapped.profit_115 = Math.round((ask115 - cost) * 100) / 100;
+    }
+    if (mapped.profit_120 == null && !isNaN(cost)) {
+      const ask120 = Number(mapped.asking_price_120);
+      if (!isNaN(ask120)) mapped.profit_120 = Math.round((ask120 - cost) * 100) / 100;
+    }
+    if (mapped.profit_125 == null && !isNaN(cost)) {
+      const ask125 = Number(mapped.asking_price_125);
+      if (!isNaN(ask125)) mapped.profit_125 = Math.round((ask125 - cost) * 100) / 100;
+    }
+    if (mapped.profit_130 == null && !isNaN(cost)) {
+      const ask130 = Number(mapped.asking_price_130);
+      if (!isNaN(ask130)) mapped.profit_130 = Math.round((ask130 - cost) * 100) / 100;
     }
 
     // Check duplicate (append mode only)
