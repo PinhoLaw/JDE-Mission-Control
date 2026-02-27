@@ -8,31 +8,87 @@ import { z } from "zod";
 // pulls in Node.js stream/crypto modules that fail to bundle.
 
 // ────────────────────────────────────────────────────────
-// Cell value → string helper (handles ExcelJS rich types)
+// Cell value → string helper (handles ALL ExcelJS value types)
 // ────────────────────────────────────────────────────────
 function cellToString(value: unknown): string | null {
   if (value == null) return null;
   if (value instanceof Date) {
-    // Return ISO string for dates so Zod coerce can parse them
     return value.toISOString();
   }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return value;
+  }
   if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
     // ExcelJS rich text: { richText: [{ text: "..." }, ...] }
-    if ("richText" in (value as Record<string, unknown>)) {
-      const rt = (value as { richText: { text: string }[] }).richText;
-      return rt.map((segment) => segment.text).join("");
-    }
-    // ExcelJS hyperlink: { text: "...", hyperlink: "..." }
-    if ("text" in (value as Record<string, unknown>)) {
-      return String((value as { text: unknown }).text);
+    if ("richText" in obj && Array.isArray(obj.richText)) {
+      return (obj.richText as { text: string }[]).map((s) => s.text).join("");
     }
     // ExcelJS formula: { formula: "...", result: ... }
-    if ("result" in (value as Record<string, unknown>)) {
-      const result = (value as { result: unknown }).result;
-      return result != null ? String(result) : null;
+    // Try result first — it's the cached displayed value
+    if ("result" in obj) {
+      const r = obj.result;
+      if (r instanceof Date) return r.toISOString();
+      if (r != null) return String(r);
+    }
+    // ExcelJS shared formula: { sharedFormula: "...", result: ... }
+    if ("sharedFormula" in obj && "result" in obj) {
+      const r = obj.result;
+      if (r != null) return String(r);
+    }
+    // ExcelJS hyperlink: { text: "...", hyperlink: "..." }
+    if ("text" in obj && obj.text != null) {
+      return String(obj.text);
+    }
+    // Last resort: if there's a formula key but no result, the value is uncalculated
+    if ("formula" in obj || "sharedFormula" in obj) {
+      return null; // formula without cached result — can't resolve
     }
   }
   return String(value);
+}
+
+// Extract displayed value from an ExcelJS cell object using every available approach
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractCellValue(cell: any): string | null {
+  if (!cell) return null;
+
+  // Approach 1: cell.text — the formatted display string (best for formulas)
+  try {
+    if (cell.text != null) {
+      const t = String(cell.text).trim();
+      if (t !== "" && t !== "undefined" && t !== "null") return t;
+    }
+  } catch { /* ignore */ }
+
+  // Approach 2: cell.result — formula cached result (direct property)
+  try {
+    if (cell.result != null) {
+      if (cell.result instanceof Date) return cell.result.toISOString();
+      const r = String(cell.result).trim();
+      if (r !== "" && r !== "undefined") return r;
+    }
+  } catch { /* ignore */ }
+
+  // Approach 3: cell.value — raw value (may be primitive, formula obj, or rich text)
+  try {
+    const v = cell.value;
+    if (v != null) {
+      return cellToString(v);
+    }
+  } catch { /* ignore */ }
+
+  // Approach 4: cell.model — internal model (last resort)
+  try {
+    const m = cell.model;
+    if (m?.result != null) return String(m.result);
+    if (m?.value != null) return cellToString(m.value);
+  } catch { /* ignore */ }
+
+  return null;
 }
 
 // ────────────────────────────────────────────────────────
@@ -103,45 +159,57 @@ function parseOneSheet(
 
   if (headers.length === 0) return null;
 
-  // Extract data rows — use getCell() instead of row.values to properly
-  // resolve formula cells, cross-sheet references, and cached results
+  // Extract data rows using getCell() + extractCellValue for formula support
   const rows: Record<string, unknown>[] = [];
+  const debugRowLimit = 3; // log first N data rows in detail
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   worksheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
     if (rowNumber === 1) return; // skip header row
 
     const rowObj: Record<string, unknown> = {};
-    let loggedFirst = rows.length === 0; // log first data row for debugging
+    const shouldDebug = rows.length < debugRowLimit;
+
+    // Also grab row.values as fallback
+    const sparseValues = Array.isArray(row.values) ? row.values : [];
 
     headers.forEach((header, index) => {
-      // getCell is 1-indexed (column 1 = A)
+      const colIdx = index + 1; // ExcelJS is 1-indexed
       let val: string | null = null;
+
       try {
-        const cell = row.getCell(index + 1);
-        if (!cell) {
-          val = null;
-        } else if (cell.text != null && String(cell.text).trim() !== "") {
-          // cell.text is the displayed text — most reliable for formulas
-          val = String(cell.text).trim();
-        } else if (cell.result != null) {
-          val = String(cell.result);
-        } else {
-          val = cellToString(cell.value);
+        const cell = row.getCell(colIdx);
+        val = extractCellValue(cell);
+
+        // Debug: dump EVERYTHING for first N rows
+        if (shouldDebug) {
+          const sparseVal = sparseValues[colIdx];
+          console.log(
+            `[CELL DEBUG] sheet="${sheetName}" row=${rowNumber} col=${colIdx} header="${header}"` +
+            ` | type=${cell?.type}` +
+            ` | text=${JSON.stringify(cell?.text)}` +
+            ` | value=${JSON.stringify(cell?.value)}` +
+            ` | result=${JSON.stringify(cell?.result)}` +
+            ` | formula=${JSON.stringify(cell?.formula)}` +
+            ` | sparse=${JSON.stringify(sparseVal)}` +
+            ` | EXTRACTED="${val}"`,
+          );
         }
-      } catch {
-        // Fallback: try row.values sparse array
-        const rowValues = Array.isArray(row.values) ? row.values : [];
-        val = cellToString(rowValues[index + 1]) ?? null;
+      } catch (err) {
+        // Fallback to sparse array
+        val = cellToString(sparseValues[colIdx]) ?? null;
+        if (shouldDebug) {
+          console.log(
+            `[CELL DEBUG] sheet="${sheetName}" row=${rowNumber} col=${colIdx} header="${header}"` +
+            ` | GETCEL_ERROR=${err instanceof Error ? err.message : String(err)}` +
+            ` | sparse_fallback=${JSON.stringify(sparseValues[colIdx])}` +
+            ` | EXTRACTED="${val}"`,
+          );
+        }
       }
 
       rowObj[header] = val;
-
-      if (loggedFirst && index < 6 && val != null) {
-        console.log(`[parseSheet:${sheetIndex}] row ${rowNumber} col "${header}": → "${val}"`);
-      }
     });
-
-    if (loggedFirst) loggedFirst = false;
 
     const hasData = Object.values(rowObj).some((v) => v != null && v !== "");
     if (hasData) {
