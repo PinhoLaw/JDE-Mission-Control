@@ -736,3 +736,163 @@ export async function executeImport(
     mode,
   };
 }
+
+// ────────────────────────────────────────────────────────
+// Roster Import — imports roster rows from "Roster & Tables" sheet
+// ────────────────────────────────────────────────────────
+const VALID_ROLES = ["sales", "team_leader", "fi_manager", "closer", "manager"] as const;
+
+function normalizeRole(raw: string | null | undefined): (typeof VALID_ROLES)[number] {
+  if (!raw) return "sales";
+  const lower = raw.toLowerCase().trim();
+  if (lower.includes("team") && lower.includes("lead")) return "team_leader";
+  if (lower.includes("fi") || lower.includes("f&i") || lower.includes("finance")) return "fi_manager";
+  if (lower.includes("clos")) return "closer";
+  if (lower.includes("manager") || lower.includes("mgr")) return "manager";
+  return "sales";
+}
+
+function normalizeConfirmed(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  const lower = raw.toLowerCase().trim();
+  return ["yes", "y", "true", "1", "confirmed", "x", "✓", "✔"].includes(lower);
+}
+
+export async function executeRosterImport(
+  rows: Record<string, unknown>[],
+  columnMap: Record<string, string>,
+  eventId: string,
+  mode: ImportMode = "replace",
+): Promise<ImportResult> {
+  const supabase = await createClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  console.log("[rosterImport] user:", user.email, "event_id:", eventId, "mode:", mode, "rows:", rows.length);
+
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", eventId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership || !["owner", "manager"].includes(membership.role)) {
+    throw new Error("You must be an owner or manager to import roster");
+  }
+
+  // ── Step 1: Count existing ──
+  const { count: beforeCount } = await supabase
+    .from("roster")
+    .select("id", { count: "exact", head: true })
+    .eq("event_id", eventId);
+
+  console.log("[rosterImport] BEFORE — existing roster:", beforeCount ?? 0);
+
+  // ── Step 2: Delete existing (replace mode) ──
+  let deleted = 0;
+  if (mode === "replace" && (beforeCount ?? 0) > 0) {
+    const { error: deleteErr, count: deleteCount } = await supabase
+      .from("roster")
+      .delete({ count: "exact" })
+      .eq("event_id", eventId);
+
+    if (deleteErr) {
+      throw new Error(`Failed to clear existing roster: ${deleteErr.message}`);
+    }
+    deleted = deleteCount ?? 0;
+    console.log("[rosterImport] DELETED:", deleted, "existing roster members");
+  }
+
+  // ── Step 3: Map and validate rows ──
+  let imported = 0;
+  let errors = 0;
+  const errorDetails: { row: number; message: string }[] = [];
+
+  const validRows: { rowNum: number; name: string; phone: string | null; confirmed: boolean; role: (typeof VALID_ROLES)[number]; notes: string | null }[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const raw = rows[i];
+    const mapped: Record<string, string | null> = {};
+
+    for (const [spreadsheetCol, dbField] of Object.entries(columnMap)) {
+      if (dbField && dbField !== "__skip__" && raw[spreadsheetCol] !== undefined) {
+        const val = raw[spreadsheetCol];
+        mapped[dbField] = val != null ? String(val).trim() : null;
+      }
+    }
+
+    // Name is required
+    const name = mapped.name?.trim();
+    if (!name || name === "" || name === "null") {
+      // Skip empty rows silently (not an error — just blank rows in the sheet)
+      continue;
+    }
+
+    validRows.push({
+      rowNum: i + 1,
+      name,
+      phone: mapped.phone || null,
+      confirmed: normalizeConfirmed(mapped.confirmed),
+      role: normalizeRole(mapped.role),
+      notes: [mapped.setup, mapped.according_to, mapped.lenders, mapped.drivetrain]
+        .filter(Boolean)
+        .join(" | ") || null,
+    });
+  }
+
+  console.log("[rosterImport] valid rows:", validRows.length, "skipped:", rows.length - validRows.length);
+
+  if (validRows.length > 0) {
+    console.log("[rosterImport] sample:", validRows[0]);
+  }
+
+  // ── Step 4: Insert ──
+  const insertData = validRows.map((r) => ({
+    event_id: eventId,
+    name: r.name,
+    phone: r.phone,
+    role: r.role,
+    confirmed: r.confirmed,
+    notes: r.notes,
+    active: true,
+  }));
+
+  const { data: insertedRows, error: insertErr } = await supabase
+    .from("roster")
+    .insert(insertData)
+    .select("id");
+
+  if (insertErr) {
+    console.error("[rosterImport] INSERT ERROR:", insertErr.message);
+    errors = validRows.length;
+    for (const r of validRows) {
+      errorDetails.push({ row: r.rowNum, message: insertErr.message });
+    }
+  } else {
+    imported = insertedRows?.length ?? 0;
+    console.log("[rosterImport] INSERTED:", imported, "roster members");
+  }
+
+  // ── Step 5: Verify ──
+  const { count: afterCount } = await supabase
+    .from("roster")
+    .select("id", { count: "exact", head: true })
+    .eq("event_id", eventId);
+
+  console.log("[rosterImport] DONE — deleted:", deleted, "| imported:", imported, "| total now:", afterCount);
+
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/roster");
+
+  return {
+    success: errors === 0,
+    imported,
+    deleted,
+    errors,
+    duplicatesSkipped: 0,
+    errorDetails,
+    mode,
+  };
+}

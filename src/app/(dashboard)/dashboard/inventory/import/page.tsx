@@ -46,6 +46,7 @@ import {
   parseSpreadsheet,
   validateImportRows,
   executeImport,
+  executeRosterImport,
   type ParsedSheet,
   type ImportValidationResult,
   type ImportResult,
@@ -118,6 +119,41 @@ function autoMapColumn(header: string): string {
   return map[h] ?? "__skip__";
 }
 
+// Roster DB fields
+const ROSTER_DB_FIELDS = [
+  { value: "__skip__", label: "— Skip —" },
+  { value: "name", label: "Name" },
+  { value: "phone", label: "Phone" },
+  { value: "confirmed", label: "Confirmed?" },
+  { value: "role", label: "Role" },
+  { value: "setup", label: "Setup (notes)" },
+  { value: "according_to", label: "According To (notes)" },
+  { value: "lenders", label: "Lenders (notes)" },
+  { value: "drivetrain", label: "Drivetrain (notes)" },
+];
+
+function autoMapRosterColumn(header: string): string {
+  const h = header.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+  const map: Record<string, string> = {
+    salespeople: "name", salesperson: "name", name: "name", sales: "name", people: "name",
+    phone: "phone", cell: "phone", mobile: "phone", phonenumber: "phone",
+    confirmed: "confirmed", confirm: "confirmed",
+    setup: "setup",
+    accordingto: "according_to", accordingtowho: "according_to",
+    lenders: "lenders", lender: "lenders",
+    drivetrain: "drivetrain", drive: "drivetrain",
+    role: "role", position: "role", title: "role",
+  };
+  return map[h] ?? "__skip__";
+}
+
+// Detect if selected sheets include a roster sheet
+function isRosterSheet(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.includes("roster") || lower.includes("tables");
+}
+
+type ImportTarget = "inventory" | "roster";
 type Step = "upload" | "sheets" | "map" | "preview" | "importing" | "done";
 
 export default function ImportPage() {
@@ -127,6 +163,7 @@ export default function ImportPage() {
 
   const [step, setStep] = useState<Step>("upload");
   const [importMode, setImportMode] = useState<ImportMode>("replace");
+  const [importTarget, setImportTarget] = useState<ImportTarget>("inventory");
   const [fileName, setFileName] = useState("");
   // All sheets from the file
   const [allSheets, setAllSheets] = useState<ParsedSheet[]>([]);
@@ -162,9 +199,13 @@ export default function ImportPage() {
         setHeaders(sheet.headers);
         setRawRows(sheet.rows);
 
+        const isRoster = isRosterSheet(sheet.name);
+        setImportTarget(isRoster ? "roster" : "inventory");
+
         const autoMap: Record<string, string> = {};
+        const mapper = isRoster ? autoMapRosterColumn : autoMapColumn;
         for (const col of sheet.headers) {
-          autoMap[col] = autoMapColumn(col);
+          autoMap[col] = mapper(col);
         }
         setColumnMap(autoMap);
 
@@ -228,16 +269,24 @@ export default function ImportPage() {
     setHeaders(mergedHeaders);
     setRawRows(mergedRows);
 
-    // Auto-map columns
+    // Detect if this is a roster import or inventory import
+    const hasRosterSheet = selected.some((s) => isRosterSheet(s.name));
+    const hasInventorySheet = selected.some((s) => !isRosterSheet(s.name));
+    const target: ImportTarget = hasRosterSheet && !hasInventorySheet ? "roster" : "inventory";
+    setImportTarget(target);
+
+    // Auto-map columns based on target
     const autoMap: Record<string, string> = {};
+    const mapper = target === "roster" ? autoMapRosterColumn : autoMapColumn;
     for (const col of mergedHeaders) {
-      autoMap[col] = autoMapColumn(col);
+      autoMap[col] = mapper(col);
     }
     setColumnMap(autoMap);
 
     setStep("map");
     const sheetNames = selected.map((s) => s.name).join(", ");
-    toast.success(`Merged ${mergedRows.length} rows from: ${sheetNames}`);
+    const targetLabel = target === "roster" ? " (Roster import)" : "";
+    toast.success(`Merged ${mergedRows.length} rows from: ${sheetNames}${targetLabel}`);
   }, [allSheets, selectedSheetIndices]);
 
   const handleDrop = useCallback(
@@ -307,30 +356,33 @@ export default function ImportPage() {
     setIsImporting(true);
     setStep("importing");
     try {
-      const result = await executeImport(rawRows, columnMap, currentEvent.id, importMode);
+      const result = importTarget === "roster"
+        ? await executeRosterImport(rawRows, columnMap, currentEvent.id, importMode)
+        : await executeImport(rawRows, columnMap, currentEvent.id, importMode);
       setImportResult(result);
       setStep("done");
 
+      const isRoster = importTarget === "roster";
       if (result.success) {
         const modeLabel = result.mode === "replace"
-          ? `Replaced inventory: ${result.deleted} removed, ${result.imported} imported`
-          : `Appended ${result.imported} vehicles`;
+          ? `Replaced ${isRoster ? "roster" : "inventory"}: ${result.deleted} removed, ${result.imported} imported`
+          : `Appended ${result.imported} ${isRoster ? "roster members" : "vehicles"}`;
         toast.success(modeLabel);
       } else {
         toast.warning(
-          `Imported ${result.imported} vehicles. ${result.errors} errors, ${result.duplicatesSkipped} duplicates skipped.`,
+          `Imported ${result.imported} ${isRoster ? "roster members" : "vehicles"}. ${result.errors} errors, ${result.duplicatesSkipped} duplicates skipped.`,
         );
       }
 
-      // Force refresh the router cache so inventory/dashboard pages show fresh data
+      // Force refresh the router cache so pages show fresh data
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Import failed");
-      setStep("preview");
+      setStep(importTarget === "roster" ? "map" : "preview");
     } finally {
       setIsImporting(false);
     }
-  }, [currentEvent, rawRows, columnMap, importMode, router]);
+  }, [currentEvent, rawRows, columnMap, importMode, importTarget, router]);
 
   const validCount = validationResults.filter((r) => r.valid).length;
   const errorCount = validationResults.filter((r) => !r.valid).length;
@@ -346,10 +398,10 @@ export default function ImportPage() {
           </Link>
         </Button>
         <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-          Import Inventory
+          {importTarget === "roster" ? "Import Roster" : "Import Inventory"}
         </h1>
         <p className="text-sm text-muted-foreground">
-          Upload an Excel or CSV file to bulk-import vehicles to{" "}
+          Upload an Excel or CSV file to bulk-import {importTarget === "roster" ? "roster members" : "vehicles"} to{" "}
           <span className="font-medium">
             {currentEvent?.dealer_name ?? currentEvent?.name ?? "this event"}
           </span>
@@ -544,6 +596,9 @@ export default function ImportPage() {
               <Badge variant="outline" className="ml-2">
                 {importMode === "replace" ? "Replace mode" : "Append mode"}
               </Badge>
+              {importTarget === "roster" && (
+                <Badge variant="secondary" className="ml-2">Roster Import</Badge>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -563,7 +618,7 @@ export default function ImportPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {DB_FIELDS.map((f) => (
+                      {(importTarget === "roster" ? ROSTER_DB_FIELDS : DB_FIELDS).map((f) => (
                         <SelectItem key={f.value} value={f.value}>
                           {f.label}
                         </SelectItem>
@@ -584,7 +639,7 @@ export default function ImportPage() {
                         {h}
                         <br />
                         <span className="text-[10px] text-muted-foreground">
-                          → {DB_FIELDS.find((f) => f.value === columnMap[h])?.label ?? "Skip"}
+                          → {(importTarget === "roster" ? ROSTER_DB_FIELDS : DB_FIELDS).find((f) => f.value === columnMap[h])?.label ?? "Skip"}
                         </span>
                       </TableHead>
                     ))}
@@ -611,16 +666,29 @@ export default function ImportPage() {
               >
                 Back
               </Button>
-              <Button onClick={handleValidate} disabled={isValidating}>
-                {isValidating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Validating...
-                  </>
-                ) : (
-                  <>Validate {rawRows.length} Rows</>
-                )}
-              </Button>
+              {importTarget === "roster" ? (
+                <Button onClick={handleImport} disabled={isImporting}>
+                  {isImporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Importing Roster...
+                    </>
+                  ) : (
+                    <>Import {rawRows.length} Roster Members</>
+                  )}
+                </Button>
+              ) : (
+                <Button onClick={handleValidate} disabled={isValidating}>
+                  {isValidating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Validating...
+                    </>
+                  ) : (
+                    <>Validate {rawRows.length} Rows</>
+                  )}
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -745,11 +813,13 @@ export default function ImportPage() {
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
             <p className="text-lg font-medium">
-              {importMode === "replace" ? "Replacing inventory..." : "Importing vehicles..."}
+              {importTarget === "roster"
+                ? (importMode === "replace" ? "Replacing roster..." : "Importing roster members...")
+                : (importMode === "replace" ? "Replacing inventory..." : "Importing vehicles...")}
             </p>
             <p className="text-sm text-muted-foreground">
               {importMode === "replace" && "Clearing existing data, then "}
-              processing {rawRows.length} rows in batches of 250
+              processing {rawRows.length} rows
             </p>
           </CardContent>
         </Card>
@@ -801,7 +871,9 @@ export default function ImportPage() {
             )}
             <div className="flex gap-3">
               <Button asChild>
-                <Link href="/dashboard/inventory">View Inventory</Link>
+                <Link href={importTarget === "roster" ? "/dashboard/roster" : "/dashboard/inventory"}>
+                  {importTarget === "roster" ? "View Roster" : "View Inventory"}
+                </Link>
               </Button>
               <Button
                 variant="outline"
