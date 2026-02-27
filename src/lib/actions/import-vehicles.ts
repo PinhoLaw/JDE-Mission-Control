@@ -758,6 +758,51 @@ function normalizeConfirmed(raw: string | null | undefined): boolean {
   return ["yes", "y", "true", "1", "confirmed", "x", "✓", "✔"].includes(lower);
 }
 
+// ── Roster name validation ──
+// The "Roster & Tables" sheet has mixed content: section headers
+// ("Dealer Information", "City", "Commission Information", percentages, etc.)
+// alongside actual sales people names ("1 NATE HARDING", "2 IRELAND COMBS").
+// This function strips leading row numbers and rejects junk patterns.
+const ROSTER_JUNK_RE = [
+  /^dealer/i, /^city$/i, /^state$/i, /^zip$/i, /^address/i,
+  /^commission/i, /^cap\s*letter/i, /^closer\s*\d/i,
+  /^team\s*leader/i, /^information/i, /^phone$/i,
+  /^confirmed/i, /^according/i, /^sales\s*people/i,
+  /^setup$/i, /^lender/i, /^drivetrain/i, /^drive\s*train/i,
+  /^f\s*&?\s*i/i, /^finance/i, /^manager/i, /^closer$/i,
+  /^notes?$/i, /^email$/i, /^role$/i, /^position$/i,
+  /^name$/i, /^total/i, /^subtotal/i, /^grand/i,
+  /^percent/i, /^pct$/i, /^amount/i, /^date$/i,
+  /^event$/i, /^roster$/i, /^table/i, /^sheet/i,
+];
+
+function cleanRosterName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let name = raw.trim();
+  if (!name || name.length < 2) return null;
+
+  // Strip leading row number + space/period (e.g. "1 NATE HARDING" or "1. Nate")
+  name = name.replace(/^\d+[\s.)\-]+/, "").trim();
+  if (!name || name.length < 2) return null;
+
+  // Reject pure numbers, percentages, symbols-only
+  if (/^[\d\s%#$.,\-/()]+$/.test(name)) return null;
+
+  // Must contain at least one letter
+  if (!/[a-zA-Z]/.test(name)) return null;
+
+  // Reject known junk patterns
+  for (const re of ROSTER_JUNK_RE) {
+    if (re.test(name)) return null;
+  }
+
+  // A real name should have at least 2 alpha characters
+  const alphaOnly = name.replace(/[^a-zA-Z]/g, "");
+  if (alphaOnly.length < 2) return null;
+
+  return name;
+}
+
 export async function executeRosterImport(
   rows: Record<string, unknown>[],
   columnMap: Record<string, string>,
@@ -823,10 +868,10 @@ export async function executeRosterImport(
       }
     }
 
-    // Name is required
-    const name = mapped.name?.trim();
-    if (!name || name === "" || name === "null") {
-      // Skip empty rows silently (not an error — just blank rows in the sheet)
+    // Name is required — cleanRosterName strips leading numbers and rejects junk
+    const name = cleanRosterName(mapped.name);
+    if (!name) {
+      // Skip empty/junk rows (section headers, blanks, percentages, etc.)
       continue;
     }
 
@@ -842,10 +887,13 @@ export async function executeRosterImport(
     });
   }
 
-  console.log("[rosterImport] valid rows:", validRows.length, "skipped:", rows.length - validRows.length);
+  const skippedCount = rows.length - validRows.length;
+  console.log(
+    `[rosterImport] FILTER RESULTS: ${validRows.length} accepted, ${skippedCount} skipped (junk/empty) out of ${rows.length} total rows`,
+  );
 
   if (validRows.length > 0) {
-    console.log("[rosterImport] sample:", validRows[0]);
+    console.log("[rosterImport] first 5 accepted:", validRows.slice(0, 5).map((r) => r.name));
   }
 
   // ── Step 4: Insert ──
