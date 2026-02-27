@@ -134,10 +134,12 @@ function autoMapColumn(header: string): string {
 
   // Substring / fuzzy matches for common header variations
   const raw = header.toLowerCase().trim();
-  if (raw.includes("stock") && raw.includes("#")) return "stock_number";
+  if (raw.includes("stock") && (raw.includes("#") || raw.includes("no") || raw.includes("num"))) return "stock_number";
+  if (raw.includes("stk") && (raw.includes("#") || raw.includes("no"))) return "stock_number";
   if (raw.includes("vin") && (raw.includes("#") || raw.includes("no"))) return "vin";
   if (raw.includes("unit") && raw.includes("cost")) return "acquisition_cost";
   if (raw.includes("acq") && raw.includes("cost")) return "acquisition_cost";
+  if (raw.includes("dealer") && raw.includes("cost")) return "acquisition_cost";
   if (raw.includes("j.d.") && raw.includes("trade")) return "jd_trade_clean";
   if (raw.includes("j.d.") && raw.includes("retail")) return "jd_retail_clean";
   if (raw.includes("jd") && raw.includes("trade")) return "jd_trade_clean";
@@ -146,11 +148,16 @@ function autoMapColumn(header: string): string {
   if (raw.includes("power") && raw.includes("retail")) return "jd_retail_clean";
   if (raw.includes("clean") && raw.includes("trade")) return "jd_trade_clean";
   if (raw.includes("clean") && raw.includes("retail")) return "jd_retail_clean";
-  if (raw.includes("115") && raw.includes("%")) return "asking_price_115";
-  if (raw.includes("120") && raw.includes("%")) return "asking_price_120";
-  if (raw.includes("125") && raw.includes("%")) return "asking_price_125";
-  if (raw.includes("130") && raw.includes("%")) return "asking_price_130";
+  if (raw.includes("trade") && raw.includes("in") && raw.includes("clean")) return "jd_trade_clean";
+  if (raw.includes("115") && (raw.includes("%") || raw.includes("ask"))) return "asking_price_115";
+  if (raw.includes("120") && (raw.includes("%") || raw.includes("ask"))) return "asking_price_120";
+  if (raw.includes("125") && (raw.includes("%") || raw.includes("ask"))) return "asking_price_125";
+  if (raw.includes("130") && (raw.includes("%") || raw.includes("ask"))) return "asking_price_130";
   if (raw.includes("odometer")) return "mileage";
+  if (raw.includes("ext") && raw.includes("color")) return "color";
+  if (raw.includes("body") && (raw.includes("style") || raw.includes("type"))) return "body_style";
+  if (raw.includes("age") && (raw.includes("day") || raw.includes("lot"))) return "age_days";
+  if (raw.includes("trim") && raw.includes("level")) return "trim";
 
   return "__skip__";
 }
@@ -245,6 +252,19 @@ export default function ImportPage() {
         }
         setColumnMap(autoMap);
 
+        const mapped = Object.entries(autoMap).filter(([, v]) => v !== "__skip__");
+        const skipped = Object.entries(autoMap).filter(([, v]) => v === "__skip__");
+        console.log(
+          `[AUTO-MAP] ${mapped.length}/${sheet.headers.length} columns auto-mapped:`,
+          mapped.map(([h, f]) => `"${h}" → ${f}`).join(", "),
+        );
+        if (skipped.length > 0) {
+          console.log(
+            `[AUTO-MAP] ${skipped.length} columns skipped:`,
+            skipped.map(([h]) => `"${h}"`).join(", "),
+          );
+        }
+
         setStep("map");
         toast.success(`Loaded ${sheet.rowCount} rows from "${result.fileName}"`);
       } else {
@@ -321,6 +341,19 @@ export default function ImportPage() {
       autoMap[col] = mapper(col);
     }
     setColumnMap(autoMap);
+
+    const mapped = Object.entries(autoMap).filter(([, v]) => v !== "__skip__");
+    const skipped = Object.entries(autoMap).filter(([, v]) => v === "__skip__");
+    console.log(
+      `[AUTO-MAP] ${mapped.length}/${mergedHeaders.length} columns auto-mapped:`,
+      mapped.map(([h, f]) => `"${h}" → ${f}`).join(", "),
+    );
+    if (skipped.length > 0) {
+      console.log(
+        `[AUTO-MAP] ${skipped.length} columns skipped:`,
+        skipped.map(([h]) => `"${h}"`).join(", "),
+      );
+    }
 
     setStep("map");
     const sheetNames = selected.map((s) => s.name).join(", ");
@@ -622,7 +655,10 @@ export default function ImportPage() {
       )}
 
       {/* ── STEP 2: COLUMN MAPPING ── */}
-      {step === "map" && (
+      {step === "map" && (() => {
+        const autoMappedCount = Object.values(columnMap).filter((v) => v && v !== "__skip__").length;
+        const totalCount = headers.length;
+        return (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -641,19 +677,44 @@ export default function ImportPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Auto-map summary */}
+            <div className={`rounded-md border p-3 flex items-center gap-2 ${
+              autoMappedCount > 0
+                ? "border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/30"
+                : "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
+            }`}>
+              <CheckCircle2 className={`h-4 w-4 shrink-0 ${autoMappedCount > 0 ? "text-green-600" : "text-amber-600"}`} />
+              <p className={`text-xs ${autoMappedCount > 0 ? "text-green-800 dark:text-green-200" : "text-amber-800 dark:text-amber-200"}`}>
+                <strong>{autoMappedCount} of {totalCount} columns auto-mapped.</strong>
+                {autoMappedCount < totalCount && (
+                  <> Review the columns marked &quot;Skip&quot; and assign them if needed.</>
+                )}
+                {autoMappedCount === totalCount && (
+                  <> All columns matched — review below and adjust if needed.</>
+                )}
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {headers.map((header) => (
-                <div key={header} className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-muted-foreground truncate">
+              {headers.map((header) => {
+                const mapValue = columnMap[header] ?? "__skip__";
+                const isMapped = mapValue !== "__skip__";
+                return (
+                <div key={header} className={`flex flex-col gap-1 rounded-md p-2 ${
+                  isMapped
+                    ? "bg-green-50/50 dark:bg-green-950/10 border border-green-200/50 dark:border-green-900/30"
+                    : "bg-muted/30 border border-transparent"
+                }`}>
+                  <label className="text-xs font-medium text-muted-foreground truncate flex items-center gap-1">
+                    {isMapped && <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />}
                     {header}
                   </label>
                   <Select
-                    value={columnMap[header] ?? "__skip__"}
+                    value={mapValue}
                     onValueChange={(val) =>
                       setColumnMap((prev) => ({ ...prev, [header]: val }))
                     }
                   >
-                    <SelectTrigger className="h-8 text-sm">
+                    <SelectTrigger className={`h-8 text-sm ${isMapped ? "border-green-300 dark:border-green-800" : ""}`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -665,7 +726,8 @@ export default function ImportPage() {
                     </SelectContent>
                   </Select>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Preview first 3 rows */}
@@ -731,7 +793,8 @@ export default function ImportPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
 
       {/* ── STEP 3: PREVIEW / DRY RUN ── */}
       {step === "preview" && (
