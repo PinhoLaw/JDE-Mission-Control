@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 // NOTE: ExcelJS is loaded via dynamic import() inside parseExcel() only.
 // Top-level import crashes Vercel serverless functions because ExcelJS
@@ -239,12 +240,16 @@ export interface ImportValidationResult {
   errors: string[];
 }
 
+export type ImportMode = "replace" | "append";
+
 export interface ImportResult {
   success: boolean;
   imported: number;
+  deleted: number;
   errors: number;
   duplicatesSkipped: number;
   errorDetails: { row: number; message: string }[];
+  mode: ImportMode;
 }
 
 // ────────────────────────────────────────────────────────
@@ -254,6 +259,7 @@ export async function validateImportRows(
   rows: Record<string, unknown>[],
   columnMap: Record<string, string>,
   eventId: string,
+  mode: ImportMode = "replace",
 ): Promise<ImportValidationResult[]> {
   const supabase = await createClient();
 
@@ -272,16 +278,21 @@ export async function validateImportRows(
     throw new Error("You must be an owner or manager to validate imports");
   }
 
-  // Get existing stock numbers for duplicate detection
-  const { data: existing } = await supabase
-    .from("vehicle_inventory")
-    .select("stock_number")
-    .eq("event_id", eventId);
+  // Get existing stock numbers for duplicate detection (only in append mode)
+  let existingStocks = new Set<string>();
+  if (mode === "append") {
+    const { data: existing } = await supabase
+      .from("vehicle_inventory")
+      .select("stock_number")
+      .eq("event_id", eventId);
 
-  const existingStocks = new Set(
-    (existing ?? []).map((v) => v.stock_number?.toLowerCase()).filter(Boolean),
-  );
+    existingStocks = new Set(
+      (existing ?? []).map((v) => v.stock_number?.toLowerCase()).filter(Boolean) as string[],
+    );
+  }
 
+  // Track stock numbers within the file itself (detect intra-file duplicates)
+  const seenStocks = new Set<string>();
   const results: ImportValidationResult[] = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -311,10 +322,18 @@ export async function validateImportRows(
       }
     }
 
-    // Check duplicate stock number
+    // Check for duplicate stock numbers
     const stockNum = String(mapped.stock_number ?? "").toLowerCase();
-    if (stockNum && existingStocks.has(stockNum)) {
-      errors.push(`Duplicate stock_number: "${mapped.stock_number}" already exists`);
+    if (stockNum) {
+      // Intra-file duplicate
+      if (seenStocks.has(stockNum)) {
+        errors.push(`Duplicate stock_number in file: "${mapped.stock_number}"`);
+      }
+      // Existing in DB duplicate (append mode only)
+      if (mode === "append" && existingStocks.has(stockNum)) {
+        errors.push(`Duplicate stock_number: "${mapped.stock_number}" already exists in event`);
+      }
+      seenStocks.add(stockNum);
     }
 
     results.push({
@@ -329,12 +348,13 @@ export async function validateImportRows(
 }
 
 // ────────────────────────────────────────────────────────
-// Execute the import (batch insert)
+// Execute the import (delete + insert for replace mode)
 // ────────────────────────────────────────────────────────
 export async function executeImport(
   rows: Record<string, unknown>[],
   columnMap: Record<string, string>,
   eventId: string,
+  mode: ImportMode = "replace",
 ): Promise<ImportResult> {
   const supabase = await createClient();
 
@@ -344,7 +364,7 @@ export async function executeImport(
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  console.log("[executeImport] user:", user.email, "event_id:", eventId);
+  console.log("[executeImport] user:", user.email, "event_id:", eventId, "mode:", mode);
 
   const { data: membership, error: memberErr } = await supabase
     .from("event_members")
@@ -363,27 +383,50 @@ export async function executeImport(
     throw new Error("You must be an owner or manager to import inventory");
   }
 
-  // Get existing stock numbers
-  const { data: existing } = await supabase
+  // ── Step 1: Count existing rows ──
+  const { count: beforeCount } = await supabase
     .from("vehicle_inventory")
-    .select("stock_number")
+    .select("id", { count: "exact", head: true })
     .eq("event_id", eventId);
 
-  console.log(
-    "[executeImport] existing vehicles in event:",
-    existing?.length ?? 0,
-  );
+  console.log("[executeImport] BEFORE — existing vehicles:", beforeCount ?? 0);
 
-  const existingStocks = new Set(
-    (existing ?? []).map((v) => v.stock_number?.toLowerCase()).filter(Boolean),
-  );
+  // ── Step 2: Delete existing rows (replace mode only) ──
+  let deleted = 0;
+  if (mode === "replace" && (beforeCount ?? 0) > 0) {
+    const { error: deleteErr, count: deleteCount } = await supabase
+      .from("vehicle_inventory")
+      .delete({ count: "exact" })
+      .eq("event_id", eventId);
+
+    if (deleteErr) {
+      console.error("[executeImport] DELETE failed:", deleteErr.message, "code:", deleteErr.code);
+      throw new Error(`Failed to clear existing inventory: ${deleteErr.message}`);
+    }
+
+    deleted = deleteCount ?? 0;
+    console.log("[executeImport] DELETED:", deleted, "existing vehicles");
+  }
+
+  // ── Step 3: Map and validate all rows ──
+  // For append mode, still track existing stocks to skip duplicates
+  let existingStocks = new Set<string>();
+  if (mode === "append") {
+    const { data: existing } = await supabase
+      .from("vehicle_inventory")
+      .select("stock_number")
+      .eq("event_id", eventId);
+
+    existingStocks = new Set(
+      (existing ?? []).map((v) => v.stock_number?.toLowerCase()).filter(Boolean) as string[],
+    );
+  }
 
   let imported = 0;
   let errors = 0;
   let duplicatesSkipped = 0;
   const errorDetails: { row: number; message: string }[] = [];
 
-  // Map and validate all rows
   const validRows: { rowNum: number; data: VehicleRow }[] = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -407,11 +450,13 @@ export async function executeImport(
       }
     }
 
-    // Check duplicate
-    const stockNum = String(mapped.stock_number ?? "").toLowerCase();
-    if (stockNum && existingStocks.has(stockNum)) {
-      duplicatesSkipped++;
-      continue;
+    // Check duplicate (append mode only)
+    if (mode === "append") {
+      const stockNum = String(mapped.stock_number ?? "").toLowerCase();
+      if (stockNum && existingStocks.has(stockNum)) {
+        duplicatesSkipped++;
+        continue;
+      }
     }
 
     const parsed = vehicleRowSchema.safeParse(mapped);
@@ -427,7 +472,8 @@ export async function executeImport(
     }
 
     validRows.push({ rowNum: i + 1, data: parsed.data });
-    // Track newly added stocks to catch intra-file duplicates
+    // Track newly added stocks for intra-file duplicate detection
+    const stockNum = String(parsed.data.stock_number ?? "").toLowerCase();
     if (stockNum) existingStocks.add(stockNum);
   }
 
@@ -448,7 +494,7 @@ export async function executeImport(
     });
   }
 
-  // Batch insert in chunks of 250
+  // ── Step 4: Batch insert in chunks of 250 ──
   const BATCH_SIZE = 250;
   for (let start = 0; start < validRows.length; start += BATCH_SIZE) {
     const batch = validRows.slice(start, start + BATCH_SIZE);
@@ -533,28 +579,32 @@ export async function executeImport(
     }
   }
 
-  // Verify: count rows in DB after import
-  const { count: postCount } = await supabase
+  // ── Step 5: Verify final count ──
+  const { count: afterCount } = await supabase
     .from("vehicle_inventory")
     .select("id", { count: "exact", head: true })
     .eq("event_id", eventId);
 
   console.log(
-    "[executeImport] DONE — imported:",
-    imported,
-    "errors:",
-    errors,
-    "dupes:",
-    duplicatesSkipped,
-    "total in DB now:",
-    postCount,
+    "[executeImport] DONE — mode:", mode,
+    "| deleted:", deleted,
+    "| imported:", imported,
+    "| errors:", errors,
+    "| dupes:", duplicatesSkipped,
+    "| total in DB now:", afterCount,
   );
+
+  // ── Step 6: Revalidate dashboard and inventory pages ──
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/inventory");
 
   return {
     success: errors === 0,
     imported,
+    deleted,
     errors,
     duplicatesSkipped,
     errorDetails,
+    mode,
   };
 }

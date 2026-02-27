@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEvent } from "@/providers/event-provider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +36,8 @@ import {
   XCircle,
   AlertTriangle,
   Loader2,
+  Replace,
+  ListPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -43,6 +46,7 @@ import {
   executeImport,
   type ImportValidationResult,
   type ImportResult,
+  type ImportMode,
 } from "@/lib/actions/import-vehicles";
 
 // DB fields the user can map to
@@ -112,9 +116,11 @@ type Step = "upload" | "map" | "preview" | "importing" | "done";
 
 export default function ImportPage() {
   const { currentEvent } = useEvent();
+  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<Step>("upload");
+  const [importMode, setImportMode] = useState<ImportMode>("replace");
   const [fileName, setFileName] = useState("");
   const [headers, setHeaders] = useState<string[]>([]);
   const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
@@ -179,7 +185,7 @@ export default function ImportPage() {
     if (!currentEvent) return;
     setIsValidating(true);
     try {
-      const results = await validateImportRows(rawRows, columnMap, currentEvent.id);
+      const results = await validateImportRows(rawRows, columnMap, currentEvent.id, importMode);
       setValidationResults(results);
       setStep("preview");
 
@@ -195,7 +201,7 @@ export default function ImportPage() {
     } finally {
       setIsValidating(false);
     }
-  }, [currentEvent, rawRows, columnMap]);
+  }, [currentEvent, rawRows, columnMap, importMode]);
 
   // ── Execute import ──
   const handleImport = useCallback(async () => {
@@ -203,23 +209,30 @@ export default function ImportPage() {
     setIsImporting(true);
     setStep("importing");
     try {
-      const result = await executeImport(rawRows, columnMap, currentEvent.id);
+      const result = await executeImport(rawRows, columnMap, currentEvent.id, importMode);
       setImportResult(result);
       setStep("done");
+
       if (result.success) {
-        toast.success(`Successfully imported ${result.imported} vehicles!`);
+        const modeLabel = result.mode === "replace"
+          ? `Replaced inventory: ${result.deleted} removed, ${result.imported} imported`
+          : `Appended ${result.imported} vehicles`;
+        toast.success(modeLabel);
       } else {
         toast.warning(
           `Imported ${result.imported} vehicles. ${result.errors} errors, ${result.duplicatesSkipped} duplicates skipped.`,
         );
       }
+
+      // Force refresh the router cache so inventory/dashboard pages show fresh data
+      router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Import failed");
       setStep("preview");
     } finally {
       setIsImporting(false);
     }
-  }, [currentEvent, rawRows, columnMap]);
+  }, [currentEvent, rawRows, columnMap, importMode, router]);
 
   const validCount = validationResults.filter((r) => r.valid).length;
   const errorCount = validationResults.filter((r) => !r.valid).length;
@@ -238,7 +251,7 @@ export default function ImportPage() {
           Import Inventory
         </h1>
         <p className="text-sm text-muted-foreground">
-          Upload an Excel or CSV file to bulk-add vehicles to{" "}
+          Upload an Excel or CSV file to bulk-import vehicles to{" "}
           <span className="font-medium">
             {currentEvent?.dealer_name ?? currentEvent?.name ?? "this event"}
           </span>
@@ -247,59 +260,104 @@ export default function ImportPage() {
 
       {/* ── STEP 1: UPLOAD ── */}
       {step === "upload" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Upload Spreadsheet</CardTitle>
-            <CardDescription>
-              Drag and drop an .xlsx or .csv file, or click to browse
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-              onClick={() => !isParsing && fileInputRef.current?.click()}
-              className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 cursor-pointer transition-colors ${
-                isParsing
-                  ? "border-primary/50 bg-primary/5 cursor-wait"
-                  : dragOver
-                    ? "border-primary bg-primary/5"
-                    : "border-muted-foreground/25 hover:border-primary/50"
-              }`}
-            >
-              {isParsing ? (
-                <>
-                  <Loader2 className="h-10 w-10 text-primary mb-4 animate-spin" />
-                  <p className="text-sm font-medium mb-1">
-                    Parsing spreadsheet...
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Reading columns and rows from your file
-                  </p>
-                </>
-              ) : (
-                <>
-                  <Upload className="h-10 w-10 text-muted-foreground mb-4" />
-                  <p className="text-sm font-medium mb-1">
-                    Drop your spreadsheet here
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    .xlsx or .csv — up to 1,000 rows
-                  </p>
-                </>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={handleFileSelect}
-                disabled={isParsing}
-              />
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          {/* Import mode selector */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Import Mode</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  onClick={() => setImportMode("replace")}
+                  className={`flex items-start gap-3 rounded-lg border-2 p-4 text-left transition-colors ${
+                    importMode === "replace"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-primary/30"
+                  }`}
+                >
+                  <Replace className={`h-5 w-5 mt-0.5 shrink-0 ${importMode === "replace" ? "text-primary" : "text-muted-foreground"}`} />
+                  <div>
+                    <p className="text-sm font-semibold">Replace All</p>
+                    <p className="text-xs text-muted-foreground">
+                      Delete all existing inventory for this event, then import fresh. Best for updated spreadsheets.
+                    </p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setImportMode("append")}
+                  className={`flex items-start gap-3 rounded-lg border-2 p-4 text-left transition-colors ${
+                    importMode === "append"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-primary/30"
+                  }`}
+                >
+                  <ListPlus className={`h-5 w-5 mt-0.5 shrink-0 ${importMode === "append" ? "text-primary" : "text-muted-foreground"}`} />
+                  <div>
+                    <p className="text-sm font-semibold">Append</p>
+                    <p className="text-xs text-muted-foreground">
+                      Add new vehicles without removing existing ones. Duplicates by stock # are skipped.
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Upload Spreadsheet</CardTitle>
+              <CardDescription>
+                Drag and drop an .xlsx or .csv file, or click to browse
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => !isParsing && fileInputRef.current?.click()}
+                className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 cursor-pointer transition-colors ${
+                  isParsing
+                    ? "border-primary/50 bg-primary/5 cursor-wait"
+                    : dragOver
+                      ? "border-primary bg-primary/5"
+                      : "border-muted-foreground/25 hover:border-primary/50"
+                }`}
+              >
+                {isParsing ? (
+                  <>
+                    <Loader2 className="h-10 w-10 text-primary mb-4 animate-spin" />
+                    <p className="text-sm font-medium mb-1">
+                      Parsing spreadsheet...
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Reading columns and rows from your file
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-10 w-10 text-muted-foreground mb-4" />
+                    <p className="text-sm font-medium mb-1">
+                      Drop your spreadsheet here
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      .xlsx or .csv — up to 1,000 rows
+                    </p>
+                  </>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={handleFileSelect}
+                  disabled={isParsing}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* ── STEP 2: COLUMN MAPPING ── */}
@@ -313,6 +371,9 @@ export default function ImportPage() {
             <CardDescription>
               {fileName} — {rawRows.length} rows detected. Map each spreadsheet
               column to a database field.
+              <Badge variant="outline" className="ml-2">
+                {importMode === "replace" ? "Replace mode" : "Append mode"}
+              </Badge>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -406,9 +467,22 @@ export default function ImportPage() {
                 </>
               )}
               {" · "}{rawRows.length} total rows
+              <Badge variant="outline" className="ml-2">
+                {importMode === "replace" ? "Replace mode — existing inventory will be deleted" : "Append mode"}
+              </Badge>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {importMode === "replace" && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 p-3 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-800 dark:text-amber-200">
+                  <strong>Replace mode:</strong> All existing inventory for this event will be deleted
+                  before importing {validCount} new vehicles. This cannot be undone.
+                </p>
+              </div>
+            )}
+
             <div className="rounded-md border overflow-x-auto max-h-[400px] overflow-y-auto">
               <Table>
                 <TableHeader>
@@ -470,8 +544,16 @@ export default function ImportPage() {
               <Button
                 onClick={handleImport}
                 disabled={validCount === 0}
+                variant={importMode === "replace" ? "destructive" : "default"}
               >
-                Import {validCount} Vehicles
+                {importMode === "replace" ? (
+                  <>
+                    <Replace className="h-4 w-4" />
+                    Replace Inventory ({validCount} vehicles)
+                  </>
+                ) : (
+                  <>Import {validCount} Vehicles</>
+                )}
               </Button>
               {errorCount > 0 && (
                 <p className="flex items-center gap-1 text-xs text-amber-600">
@@ -489,9 +571,12 @@ export default function ImportPage() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-            <p className="text-lg font-medium">Importing vehicles...</p>
+            <p className="text-lg font-medium">
+              {importMode === "replace" ? "Replacing inventory..." : "Importing vehicles..."}
+            </p>
             <p className="text-sm text-muted-foreground">
-              Processing {rawRows.length} rows in batches of 250
+              {importMode === "replace" && "Clearing existing data, then "}
+              processing {rawRows.length} rows in batches of 250
             </p>
           </CardContent>
         </Card>
@@ -507,7 +592,12 @@ export default function ImportPage() {
               <AlertTriangle className="h-16 w-16 text-amber-500 mb-4" />
             )}
             <h2 className="text-2xl font-bold mb-2">Import Complete</h2>
-            <div className="flex gap-4 mb-6">
+            <div className="flex flex-wrap justify-center gap-3 mb-6">
+              {importResult.mode === "replace" && importResult.deleted > 0 && (
+                <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 text-sm px-3 py-1">
+                  {importResult.deleted} old rows removed
+                </Badge>
+              )}
               <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-sm px-3 py-1">
                 {importResult.imported} imported
               </Badge>
@@ -537,10 +627,11 @@ export default function ImportPage() {
               </div>
             )}
             <div className="flex gap-3">
-              <Button variant="outline" asChild>
+              <Button asChild>
                 <Link href="/dashboard/inventory">View Inventory</Link>
               </Button>
               <Button
+                variant="outline"
                 onClick={() => {
                   setStep("upload");
                   setRawRows([]);
