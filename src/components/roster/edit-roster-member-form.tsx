@@ -17,6 +17,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { resilientSheetFetch } from "@/lib/services/offlineQueue";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,30 +67,34 @@ function rosterMemberToRow(member: {
   ];
 }
 
-async function updateRosterMemberOnSheet(member: {
-  id: string;
-  name: string;
-  phone?: string | null;
-  email?: string | null;
-  role: string;
-  team?: string | null;
-  commission_pct?: number | null;
-  confirmed: boolean;
-  active: boolean;
-  notes?: string | null;
-}) {
+async function updateRosterMemberOnSheet(
+  member: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    role: string;
+    team?: string | null;
+    commission_pct?: number | null;
+    confirmed: boolean;
+    active: boolean;
+    notes?: string | null;
+  },
+  spreadsheetId?: string | null,
+  eventId?: string | null,
+) {
   const values = rosterMemberToRow(member);
-  const res = await fetch("/api/sheets", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: "update_raw",
-      sheetTitle: "Roster Push",
-      matchColumnIndex: 0, // Match by ID (column A)
-      matchValue: member.id,
-      values,
-    }),
-  });
+  const payload = {
+    action: "update_raw",
+    sheetTitle: "Roster Push",
+    matchColumnIndex: 0, // Match by ID (column A)
+    matchValue: member.id,
+    values,
+    spreadsheetId: spreadsheetId ?? undefined,
+    eventId: eventId ?? undefined,
+  };
+  const res = await resilientSheetFetch(payload, eventId ?? null);
+  if (!res) return { queued: true };
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error ?? "Sheet update failed");
@@ -104,12 +109,14 @@ async function updateRosterMemberOnSheet(member: {
 interface EditRosterMemberFormProps {
   member: RosterMember;
   eventId: string;
+  sheetId?: string | null;
   onSuccess?: () => void;
 }
 
 export function EditRosterMemberForm({
   member,
   eventId,
+  sheetId,
   onSuccess,
 }: EditRosterMemberFormProps) {
   const [form, setForm] = useState({
@@ -168,10 +175,14 @@ export function EditRosterMemberForm({
         confirmed: form.confirmed,
         active: form.active,
         notes: form.notes.trim() || null,
-      })
-        .then(() =>
-          toast.success("Sheet updated", { duration: 2000 }),
-        )
+      }, sheetId, eventId)
+        .then((r) => {
+          if (r?.queued) {
+            toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
+          } else {
+            toast.success("Sheet updated", { duration: 2000 });
+          }
+        })
         .catch((e: Error) =>
           toast.error(`Sheet sync failed: ${e.message}`, {
             duration: 4000,

@@ -58,6 +58,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { EditRosterMemberForm } from "@/components/roster/edit-roster-member-form";
 import { EditLenderForm } from "@/components/roster/edit-lender-form";
 import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
+import { resilientSheetFetch } from "@/lib/services/offlineQueue";
 import { CSVImportDialog } from "@/components/roster/csv-import-dialog";
 import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import {
@@ -161,28 +162,32 @@ function rosterMemberToRow(member: {
   ];
 }
 
-async function pushRosterMemberToSheet(member: {
-  id: string;
-  name: string;
-  phone?: string | null;
-  email?: string | null;
-  role: string;
-  team?: string | null;
-  commission_pct?: number | null;
-  confirmed: boolean;
-  active: boolean;
-  notes?: string | null;
-}) {
+async function pushRosterMemberToSheet(
+  member: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    role: string;
+    team?: string | null;
+    commission_pct?: number | null;
+    confirmed: boolean;
+    active: boolean;
+    notes?: string | null;
+  },
+  spreadsheetId?: string | null,
+  eventId?: string | null,
+) {
   const values = rosterMemberToRow(member);
-  const res = await fetch("/api/sheets", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: "append_raw",
-      sheetTitle: "Roster Push",
-      values,
-    }),
-  });
+  const payload = {
+    action: "append_raw",
+    sheetTitle: "Roster Push",
+    values,
+    spreadsheetId: spreadsheetId ?? undefined,
+    eventId: eventId ?? undefined,
+  };
+  const res = await resilientSheetFetch(payload, eventId ?? null);
+  if (!res) return { queued: true };
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error ?? "Sheet push failed");
@@ -190,30 +195,34 @@ async function pushRosterMemberToSheet(member: {
   return res.json();
 }
 
-async function updateRosterMemberOnSheet(member: {
-  id: string;
-  name: string;
-  phone?: string | null;
-  email?: string | null;
-  role: string;
-  team?: string | null;
-  commission_pct?: number | null;
-  confirmed: boolean;
-  active: boolean;
-  notes?: string | null;
-}) {
+async function updateRosterMemberOnSheet(
+  member: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    role: string;
+    team?: string | null;
+    commission_pct?: number | null;
+    confirmed: boolean;
+    active: boolean;
+    notes?: string | null;
+  },
+  spreadsheetId?: string | null,
+  eventId?: string | null,
+) {
   const values = rosterMemberToRow(member);
-  const res = await fetch("/api/sheets", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: "update_raw",
-      sheetTitle: "Roster Push",
-      matchColumnIndex: 0, // Match by ID (column A)
-      matchValue: member.id,
-      values,
-    }),
-  });
+  const payload = {
+    action: "update_raw",
+    sheetTitle: "Roster Push",
+    matchColumnIndex: 0, // Match by ID (column A)
+    matchValue: member.id,
+    values,
+    spreadsheetId: spreadsheetId ?? undefined,
+    eventId: eventId ?? undefined,
+  };
+  const res = await resilientSheetFetch(payload, eventId ?? null);
+  if (!res) return { queued: true };
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error ?? "Sheet update failed");
@@ -472,7 +481,7 @@ export default function RosterPage() {
         // Fire-and-forget: update sheet rows
         const members = roster.filter((m) => selectedRosterIds.has(m.id));
         for (const member of members) {
-          updateRosterMemberOnSheet({ ...member, confirmed })
+          updateRosterMemberOnSheet({ ...member, confirmed }, currentEvent?.sheet_id, currentEvent?.id)
             .then(() => setLastSyncedAt(new Date()))
             .catch(() => {});
         }
@@ -506,7 +515,7 @@ export default function RosterPage() {
         // Fire-and-forget: update sheet rows
         const members = roster.filter((m) => selectedRosterIds.has(m.id));
         for (const member of members) {
-          updateRosterMemberOnSheet({ ...member, active })
+          updateRosterMemberOnSheet({ ...member, active }, currentEvent?.sheet_id, currentEvent?.id)
             .then(() => setLastSyncedAt(new Date()))
             .catch(() => {});
         }
@@ -540,7 +549,7 @@ export default function RosterPage() {
         // Fire-and-forget: update sheet rows
         const members = roster.filter((m) => selectedRosterIds.has(m.id));
         for (const member of members) {
-          updateRosterMemberOnSheet({ ...member, team })
+          updateRosterMemberOnSheet({ ...member, team }, currentEvent?.sheet_id, currentEvent?.id)
             .then(() => setLastSyncedAt(new Date()))
             .catch(() => {});
         }
@@ -616,9 +625,13 @@ export default function RosterPage() {
         confirmed: false,
         active: true,
         notes: null,
-      })
-        .then(() => {
-          toast.success("Roster synced to sheet", { duration: 2000 });
+      }, currentEvent?.sheet_id, currentEvent?.id)
+        .then((r) => {
+          if (r?.queued) {
+            toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
+          } else {
+            toast.success("Roster synced to sheet", { duration: 2000 });
+          }
           setLastSyncedAt(new Date());
         })
         .catch((e: Error) =>
@@ -650,9 +663,13 @@ export default function RosterPage() {
         updateRosterMemberOnSheet({
           ...member,
           confirmed: newConfirmed,
-        })
-          .then(() => {
-            toast.success("Sheet updated", { duration: 2000 });
+        }, currentEvent?.sheet_id, currentEvent?.id)
+          .then((r) => {
+            if (r?.queued) {
+              toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
+            } else {
+              toast.success("Sheet updated", { duration: 2000 });
+            }
             setLastSyncedAt(new Date());
           })
           .catch((e: Error) =>
@@ -690,7 +707,7 @@ export default function RosterPage() {
         updateRosterMemberOnSheet({
           ...member,
           active: newActive,
-        })
+        }, currentEvent?.sheet_id, currentEvent?.id)
           .then(() => {
             toast.success("Sheet updated", { duration: 2000 });
             setLastSyncedAt(new Date());
@@ -852,6 +869,7 @@ export default function RosterPage() {
       toast.success(parts.join(", "));
 
       // Fire-and-forget: push each inserted member to "Roster Push" sheet
+      let queuedCount = 0;
       for (const member of inserted) {
         pushRosterMemberToSheet({
           id: member.id,
@@ -864,13 +882,18 @@ export default function RosterPage() {
           confirmed: member.confirmed,
           active: member.active,
           notes: member.notes,
-        })
-          .then(() => {})
+        }, currentEvent?.sheet_id, currentEvent?.id)
+          .then((r) => {
+            if (r?.queued) queuedCount++;
+          })
           .catch((e: Error) =>
             toast.error(`Sheet sync failed for ${member.name}: ${e.message}`, {
               duration: 4000,
             }),
           );
+      }
+      if (queuedCount > 0) {
+        toast.info(`${queuedCount} sheet push(es) queued — will retry automatically`);
       }
 
       // Close dialog and reset
@@ -897,7 +920,7 @@ export default function RosterPage() {
       const res = await fetch("/api/sheets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "read_raw", sheetTitle: "Roster Push" }),
+        body: JSON.stringify({ action: "read_raw", sheetTitle: "Roster Push", spreadsheetId: currentEvent?.sheet_id, eventId: currentEvent?.id }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -991,15 +1014,18 @@ export default function RosterPage() {
       const dataRows = roster.map((m) => rosterMemberToRow(m));
 
       // Write to sheet (clear + replace)
-      const res = await fetch("/api/sheets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "write_raw",
-          sheetTitle: "Roster Push",
-          values: [header, ...dataRows],
-        }),
-      });
+      const payload = {
+        action: "write_raw",
+        sheetTitle: "Roster Push",
+        values: [header, ...dataRows],
+        spreadsheetId: currentEvent?.sheet_id,
+        eventId: currentEvent?.id,
+      };
+      const res = await resilientSheetFetch(payload, currentEvent?.id ?? null);
+      if (!res) {
+        toast.info("Sheet push queued — will retry when online", { duration: 3000 });
+        return;
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error ?? "Failed to push to sheet");
@@ -1931,6 +1957,7 @@ export default function RosterPage() {
                 key={editingMember.id}
                 member={editingMember}
                 eventId={currentEvent.id}
+                sheetId={currentEvent.sheet_id}
                 onSuccess={() => setEditingMember(null)}
               />
             )}

@@ -2,38 +2,34 @@
  * Google Sheets API Route — JDE Mission Control
  * ==============================================
  *
- * Central API endpoint for all Dashboard ↔ Google Sheets communication.
+ * Central API endpoint for all Dashboard <-> Google Sheets communication.
  * The dashboard is the source of truth — this route pushes every input
- * to Sheet18 so it stays a live mirror of the current event state.
+ * to the event's Google Sheet so it stays a live mirror.
+ *
+ * SECURITY:
+ *   - Requires Supabase authentication (returns 401 if not logged in)
+ *   - Every write action is logged to the audit_logs table
+ *   - Google auth uses a service account — no user OAuth needed
+ *
+ * All actions accept an optional `spreadsheetId` field to target a
+ * specific spreadsheet (per-event routing). If omitted, falls back
+ * to the global default (env var or hard-coded JDE master sheet).
+ *
+ * All actions also accept an optional `eventId` field for audit logging.
  *
  * Supported actions:
- *   POST { action: "read",   sheetTitle: "Sheet18" }
- *   POST { action: "append", sheetTitle: "Sheet18", data: { ... } }
- *   POST { action: "append_batch", sheetTitle: "Sheet18", rows: [ { ... }, ... ] }
- *   POST { action: "update", sheetTitle: "Sheet18", rowIndex: 0, data: { ... } }
- *   POST { action: "update_by_field", sheetTitle: "Sheet18", matchColumn, matchValue, data }
- *   POST { action: "delete", sheetTitle: "Sheet18", rowIndex: 0 }
- *   POST { action: "list_sheets" }
- *
- * How this enables "Dashboard → Sheet18 push" for Michigan City Ford:
- *   1. When a vehicle is imported or edited in the dashboard, the UI calls
- *      this endpoint with action: "append" or "update" to push the change
- *      to Sheet18 in real-time.
- *   2. Dealership staff at Michigan City Ford (and future events) can view
- *      the Google Sheet directly — it always matches the dashboard.
- *   3. Downstream automations (mail merge, ad generation, pricing reports)
- *      read from Sheet18 as a stable data source.
- *
- * Security:
- *   - This route is server-only (API route, not a Server Action)
- *   - Google auth uses a service account — no user OAuth needed
- *   - The proxy.ts middleware skips auth for /api/ routes (they handle
- *     their own auth), so this route is accessible from the client
- *   - For production, add your own auth check below if you want to
- *     restrict access to authenticated dashboard users only
+ *   POST { action: "read",   sheetTitle: "Sheet18", spreadsheetId?: "...", eventId?: "..." }
+ *   POST { action: "append", sheetTitle: "Sheet18", data: { ... }, ... }
+ *   POST { action: "append_batch", sheetTitle: "Sheet18", rows: [...], ... }
+ *   POST { action: "update", sheetTitle: "Sheet18", rowIndex: 0, data: {...}, ... }
+ *   POST { action: "update_by_field", sheetTitle, matchColumn, matchValue, data, ... }
+ *   POST { action: "delete", sheetTitle: "Sheet18", rowIndex: 0, ... }
+ *   POST { action: "list_sheets", spreadsheetId?: "..." }
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { logSheetAudit } from "@/lib/actions/audit";
 import {
   readSheet,
   readSheetRaw,
@@ -55,18 +51,24 @@ import {
 interface ReadAction {
   action: "read";
   sheetTitle: string;
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface AppendAction {
   action: "append";
   sheetTitle: string;
   data: Record<string, unknown>;
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface AppendBatchAction {
   action: "append_batch";
   sheetTitle: string;
   rows: Record<string, unknown>[];
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface UpdateAction {
@@ -74,6 +76,8 @@ interface UpdateAction {
   sheetTitle: string;
   rowIndex: number;
   data: Record<string, unknown>;
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface UpdateByFieldAction {
@@ -82,18 +86,24 @@ interface UpdateByFieldAction {
   matchColumn: string;
   matchValue: string;
   data: Record<string, unknown>;
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface DeleteAction {
   action: "delete";
   sheetTitle: string;
   rowIndex: number;
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface AppendRawAction {
   action: "append_raw";
   sheetTitle: string;
   values: unknown[];
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface UpdateRawAction {
@@ -102,21 +112,29 @@ interface UpdateRawAction {
   matchColumnIndex: number;
   matchValue: string;
   values: unknown[];
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface ReadRawAction {
   action: "read_raw";
   sheetTitle: string;
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface WriteRawAction {
   action: "write_raw";
   sheetTitle: string;
   values: unknown[][];
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 interface ListSheetsAction {
   action: "list_sheets";
+  spreadsheetId?: string;
+  eventId?: string;
 }
 
 type SheetAction =
@@ -133,10 +151,60 @@ type SheetAction =
   | ListSheetsAction;
 
 // ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+/** Map sheet action name -> audit action name */
+function toAuditAction(
+  action: string,
+): "sheet_read" | "sheet_append" | "sheet_update" | "sheet_delete" | "sheet_write" {
+  switch (action) {
+    case "read":
+    case "read_raw":
+    case "list_sheets":
+      return "sheet_read";
+    case "append":
+    case "append_raw":
+    case "append_batch":
+      return "sheet_append";
+    case "update":
+    case "update_by_field":
+    case "update_raw":
+      return "sheet_update";
+    case "delete":
+      return "sheet_delete";
+    case "write_raw":
+      return "sheet_write";
+    default:
+      return "sheet_update";
+  }
+}
+
+/** Whether the action is a write (should always be logged) */
+function isWriteAction(action: string): boolean {
+  return !["read", "read_raw", "list_sheets"].includes(action);
+}
+
+// ─────────────────────────────────────────────────────────────
 // POST handler
 // ─────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  // ── Auth check ─────────────────────────────────────────
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json(
+      { error: "Unauthorized — you must be logged in to access the Sheets API" },
+      { status: 401 },
+    );
+  }
+
+  // ── Parse body ─────────────────────────────────────────
   let body: SheetAction;
 
   try {
@@ -155,18 +223,32 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ── Helper: fire-and-forget audit log for write actions ─
+  const auditLog = (changes?: Record<string, unknown> | null) => {
+    if (!isWriteAction(body.action)) return;
+    const sheetTitle = "sheetTitle" in body ? body.sheetTitle : "unknown";
+    logSheetAudit({
+      userId: user.id,
+      eventId: body.eventId ?? null,
+      action: toAuditAction(body.action),
+      sheetTitle,
+      spreadsheetId: body.spreadsheetId,
+      changes,
+    }).catch(() => {}); // never block the response
+  };
+
   try {
     switch (body.action) {
       // ── READ ──────────────────────────────────────────────
       case "read": {
-        const { sheetTitle } = body;
+        const { sheetTitle, spreadsheetId } = body;
         if (!sheetTitle) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle' for read action" },
             { status: 400 },
           );
         }
-        const result = await readSheet(sheetTitle);
+        const result = await readSheet(sheetTitle, spreadsheetId);
         return NextResponse.json(result, {
           headers: { "Cache-Control": "no-store" },
         });
@@ -174,14 +256,14 @@ export async function POST(request: NextRequest) {
 
       // ── READ RAW (positional 2D array) ──────────────────────
       case "read_raw": {
-        const { sheetTitle } = body;
+        const { sheetTitle, spreadsheetId } = body;
         if (!sheetTitle) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle' for read_raw action" },
             { status: 400 },
           );
         }
-        const rawResult = await readSheetRaw(sheetTitle);
+        const rawResult = await readSheetRaw(sheetTitle, spreadsheetId);
         return NextResponse.json(rawResult, {
           headers: { "Cache-Control": "no-store" },
         });
@@ -189,59 +271,63 @@ export async function POST(request: NextRequest) {
 
       // ── APPEND (single row) ───────────────────────────────
       case "append": {
-        const { sheetTitle, data } = body;
+        const { sheetTitle, data, spreadsheetId } = body;
         if (!sheetTitle || !data) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle' or 'data' for append action" },
             { status: 400 },
           );
         }
-        const result = await appendRow(sheetTitle, data);
+        const result = await appendRow(sheetTitle, data, spreadsheetId);
+        auditLog({ sheetTitle, data });
         return NextResponse.json(result, { status: 201 });
       }
 
       // ── APPEND RAW (positional array — for sheets with duplicate headers)
       case "append_raw": {
-        const { sheetTitle, values } = body;
+        const { sheetTitle, values, spreadsheetId } = body;
         if (!sheetTitle || !Array.isArray(values)) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle' or 'values' array for append_raw action" },
             { status: 400 },
           );
         }
-        const result = await appendRowRaw(sheetTitle, values);
+        const result = await appendRowRaw(sheetTitle, values, spreadsheetId);
+        auditLog({ sheetTitle, rowCount: 1 });
         return NextResponse.json(result, { status: 201 });
       }
 
       // ── APPEND BATCH (multiple rows) ──────────────────────
       case "append_batch": {
-        const { sheetTitle, rows } = body;
+        const { sheetTitle, rows, spreadsheetId } = body;
         if (!sheetTitle || !Array.isArray(rows) || rows.length === 0) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle' or 'rows' array for append_batch action" },
             { status: 400 },
           );
         }
-        const result = await appendRows(sheetTitle, rows);
+        const result = await appendRows(sheetTitle, rows, spreadsheetId);
+        auditLog({ sheetTitle, rowCount: rows.length });
         return NextResponse.json(result, { status: 201 });
       }
 
       // ── UPDATE (by row index) ─────────────────────────────
       case "update": {
-        const { sheetTitle, rowIndex, data } = body;
+        const { sheetTitle, rowIndex, data, spreadsheetId } = body;
         if (!sheetTitle || rowIndex == null || !data) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle', 'rowIndex', or 'data' for update action" },
             { status: 400 },
           );
         }
-        const result = await updateRow(sheetTitle, rowIndex, data);
+        const result = await updateRow(sheetTitle, rowIndex, data, spreadsheetId);
+        auditLog({ sheetTitle, rowIndex, data });
         return NextResponse.json(result);
       }
 
       // ── UPDATE BY FIELD (find + update) ───────────────────
       case "update_by_field": {
-        const { sheetTitle, matchColumn, matchValue, data } = body;
+        const { sheetTitle, matchColumn, matchValue, data, spreadsheetId } = body;
         if (!sheetTitle || !matchColumn || !matchValue || !data) {
           return NextResponse.json(
             { error: "Missing required fields for update_by_field action. Need: sheetTitle, matchColumn, matchValue, data" },
@@ -253,13 +339,15 @@ export async function POST(request: NextRequest) {
           matchColumn,
           matchValue,
           data,
+          spreadsheetId,
         );
+        auditLog({ sheetTitle, matchColumn, matchValue, data });
         return NextResponse.json(result);
       }
 
       // ── UPDATE RAW (find by column index + update entire row) ──
       case "update_raw": {
-        const { sheetTitle, matchColumnIndex, matchValue, values } = body;
+        const { sheetTitle, matchColumnIndex, matchValue, values, spreadsheetId } = body;
         if (!sheetTitle || matchColumnIndex == null || !matchValue || !Array.isArray(values)) {
           return NextResponse.json(
             { error: "Missing required fields for update_raw action. Need: sheetTitle, matchColumnIndex, matchValue, values" },
@@ -271,39 +359,44 @@ export async function POST(request: NextRequest) {
           matchColumnIndex,
           matchValue,
           values,
+          spreadsheetId,
         );
+        auditLog({ sheetTitle, matchValue });
         return NextResponse.json(result);
       }
 
       // ── WRITE RAW (clear & replace all rows) ────────────────
       case "write_raw": {
-        const { sheetTitle, values } = body;
+        const { sheetTitle, values, spreadsheetId } = body;
         if (!sheetTitle || !Array.isArray(values)) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle' or 'values' array for write_raw action" },
             { status: 400 },
           );
         }
-        const writeResult = await writeSheetRaw(sheetTitle, values);
+        const writeResult = await writeSheetRaw(sheetTitle, values, spreadsheetId);
+        auditLog({ sheetTitle, rowCount: values.length });
         return NextResponse.json(writeResult);
       }
 
       // ── DELETE ─────────────────────────────────────────────
       case "delete": {
-        const { sheetTitle, rowIndex } = body;
+        const { sheetTitle, rowIndex, spreadsheetId } = body;
         if (!sheetTitle || rowIndex == null) {
           return NextResponse.json(
             { error: "Missing 'sheetTitle' or 'rowIndex' for delete action" },
             { status: 400 },
           );
         }
-        const result = await deleteRow(sheetTitle, rowIndex);
+        const result = await deleteRow(sheetTitle, rowIndex, spreadsheetId);
+        auditLog({ sheetTitle, rowIndex });
         return NextResponse.json(result);
       }
 
       // ── LIST SHEETS ───────────────────────────────────────
       case "list_sheets": {
-        const sheets = await listSheets();
+        const { spreadsheetId } = body;
+        const sheets = await listSheets(spreadsheetId);
         return NextResponse.json({ sheets }, {
           headers: { "Cache-Control": "no-store" },
         });

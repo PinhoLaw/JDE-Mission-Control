@@ -51,6 +51,7 @@ const ENTITY_TYPE_OPTIONS = [
   { value: "roster", label: "Roster" },
   { value: "config", label: "Config" },
   { value: "lender", label: "Lender" },
+  { value: "sheet", label: "Google Sheet" },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -64,14 +65,17 @@ function truncateUuid(uuid: string | null): string {
 
 function actionBadgeClasses(action: string): string {
   const lower = action.toLowerCase();
-  if (lower === "create") {
+  if (lower === "create" || lower === "sheet_append") {
     return "bg-green-500/15 text-green-400 border-green-500/25 hover:bg-green-500/25";
   }
-  if (lower === "update") {
+  if (lower === "update" || lower === "sheet_update" || lower === "sheet_write") {
     return "bg-blue-500/15 text-blue-400 border-blue-500/25 hover:bg-blue-500/25";
   }
-  if (lower === "delete") {
+  if (lower === "delete" || lower === "sheet_delete") {
     return "bg-red-500/15 text-red-400 border-red-500/25 hover:bg-red-500/25";
+  }
+  if (lower === "sheet_read") {
+    return "bg-gray-500/15 text-gray-400 border-gray-500/25 hover:bg-gray-500/25";
   }
   return "bg-secondary text-secondary-foreground";
 }

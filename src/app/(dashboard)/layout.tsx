@@ -3,6 +3,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { EventProvider } from "@/providers/event-provider";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { OfflineIndicator } from "@/components/ui/offline-indicator";
 
 // All dashboard routes need cookies/auth — never prerender them.
 // This prevents build failures when NEXT_PUBLIC_ env vars aren't
@@ -29,6 +30,7 @@ export default function DashboardLayout({
             </main>
           </div>
         </div>
+        <OfflineIndicator />
       </EventProvider>
     </Suspense>
   );

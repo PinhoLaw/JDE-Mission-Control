@@ -26,6 +26,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
+import { resilientSheetFetch } from "@/lib/services/offlineQueue";
 import { updateDeal, lookupVehicle } from "@/lib/actions/deals";
 import { formatCurrency } from "@/lib/utils";
 import type { Deal } from "@/types/database";
@@ -255,18 +256,17 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
         "",                                                      // JDE PAY
       ];
 
-      const res = await fetch("/api/sheets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update_raw",
-          sheetTitle: "Deal Log Push",
-          matchColumnIndex: 1, // STOCK# column
-          matchValue: stockNum,
-          values,
-        }),
-      });
-
+      const payload = {
+        action: "update_raw",
+        sheetTitle: "Deal Log Push",
+        matchColumnIndex: 1, // STOCK# column
+        matchValue: stockNum,
+        values,
+        spreadsheetId: currentEvent?.sheet_id,
+        eventId: currentEvent?.id,
+      };
+      const res = await resilientSheetFetch(payload, currentEvent?.id ?? null);
+      if (!res) return { queued: true };
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Sheet update failed: ${res.status}`);
@@ -322,9 +322,13 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
 
       // Fire-and-forget push to Google Sheet
       pushDealToSheet(data)
-        .then(() => {
-          toast.success("Deal updated & pushed to sheet");
-          onSheetSynced?.();
+        .then((r) => {
+          if (r?.queued) {
+            toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
+          } else {
+            toast.success("Deal updated & pushed to sheet");
+            onSheetSynced?.();
+          }
         })
         .catch((err) =>
           toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`),

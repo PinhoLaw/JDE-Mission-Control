@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays, MapPin, Plus } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { CreateFromTemplateDialog } from "@/components/events/create-from-template-dialog";
 
 export default async function EventsPage() {
   const supabase = await createClient();
@@ -36,12 +37,15 @@ export default async function EventsPage() {
             Manage all your events in one place
           </p>
         </div>
-        <Button asChild>
-          <Link href="/dashboard/events/new">
-            <Plus className="h-4 w-4" />
-            New Event
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <CreateFromTemplateDialog />
+          <Button asChild>
+            <Link href="/dashboard/events/new">
+              <Plus className="h-4 w-4" />
+              New Event
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {!events || events.length === 0 ? (

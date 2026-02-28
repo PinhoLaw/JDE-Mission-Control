@@ -26,6 +26,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
+import { resilientSheetFetch } from "@/lib/services/offlineQueue";
 import { createDeal, lookupVehicle } from "@/lib/actions/deals";
 import { formatCurrency } from "@/lib/utils";
 
@@ -234,16 +235,15 @@ export function NewDealForm({
         "",                                                      // JDE PAY
       ];
 
-      const res = await fetch("/api/sheets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "append_raw",
-          sheetTitle: "Deal Log Push",
-          values,
-        }),
-      });
-
+      const payload = {
+        action: "append_raw",
+        sheetTitle: "Deal Log Push",
+        values,
+        spreadsheetId: currentEvent?.sheet_id,
+        eventId: currentEvent?.id,
+      };
+      const res = await resilientSheetFetch(payload, currentEvent?.id ?? null);
+      if (!res) return { queued: true };
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Sheet push failed: ${res.status}`);
@@ -298,9 +298,13 @@ export function NewDealForm({
 
       // Fire-and-forget push to Google Sheet
       pushDealToSheet(data)
-        .then(() => {
-          toast.success("Deal pushed to Google Sheet");
-          onSheetSynced?.();
+        .then((r) => {
+          if (r?.queued) {
+            toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
+          } else {
+            toast.success("Deal pushed to Google Sheet");
+            onSheetSynced?.();
+          }
         })
         .catch((err) =>
           toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`),

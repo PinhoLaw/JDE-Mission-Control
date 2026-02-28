@@ -4,12 +4,35 @@ import { createClient } from "@/lib/supabase/server";
 import type { AuditLog } from "@/types/database";
 
 // ────────────────────────────────────────────────────────
+// Action / entity type unions
+// ────────────────────────────────────────────────────────
+
+export type AuditAction =
+  | "create"
+  | "update"
+  | "delete"
+  | "sheet_read"
+  | "sheet_append"
+  | "sheet_update"
+  | "sheet_delete"
+  | "sheet_write";
+
+export type AuditEntityType =
+  | "deal"
+  | "vehicle"
+  | "roster"
+  | "config"
+  | "lender"
+  | "sheet";
+
+// ────────────────────────────────────────────────────────
 // Log an audit event (non-blocking — never throws)
+// Called from server actions
 // ────────────────────────────────────────────────────────
 export async function logAudit(
   eventId: string,
-  action: "create" | "update" | "delete",
-  entityType: "deal" | "vehicle" | "roster" | "config" | "lender",
+  action: AuditAction,
+  entityType: AuditEntityType,
   entityId: string | null,
   oldValues: Record<string, unknown> | null,
   newValues: Record<string, unknown> | null,
@@ -36,6 +59,44 @@ export async function logAudit(
     }
   } catch (err) {
     console.error("[audit] Unexpected error logging audit event:", err);
+  }
+}
+
+// ────────────────────────────────────────────────────────
+// Log a sheet audit event (used from /api/sheets route)
+// Accepts userId directly so it works outside server actions
+// ────────────────────────────────────────────────────────
+export async function logSheetAudit(params: {
+  userId: string;
+  eventId: string | null;
+  action: AuditAction;
+  sheetTitle: string;
+  spreadsheetId?: string;
+  changes?: Record<string, unknown> | null;
+}) {
+  try {
+    if (!params.eventId) return; // Can't log without an event scope
+
+    const supabase = await createClient();
+
+    const { error } = await supabase.from("audit_logs").insert({
+      event_id: params.eventId,
+      user_id: params.userId,
+      action: params.action,
+      entity_type: "sheet" as const,
+      entity_id: params.spreadsheetId ?? null,
+      old_values: null,
+      new_values: {
+        sheetTitle: params.sheetTitle,
+        ...(params.changes ?? {}),
+      },
+    });
+
+    if (error) {
+      console.error("[audit] Sheet audit insert failed:", error.message);
+    }
+  } catch (err) {
+    console.error("[audit] Sheet audit unexpected error:", err);
   }
 }
 

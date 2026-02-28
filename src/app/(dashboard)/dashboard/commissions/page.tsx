@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
 import type { Deal, EventConfig } from "@/types/database";
@@ -19,31 +19,95 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, DollarSign, Download, AlertTriangle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Loader2,
+  DollarSign,
+  AlertTriangle,
+  FileSpreadsheet,
+  FileText,
+  Filter,
+  X,
+  Users,
+  TrendingUp,
+} from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
+import type { CommissionEntry } from "@/lib/utils/commission-export";
 
-interface CommissionEntry {
-  name: string;
-  commissionRate: number;
-  fullDeals: number;
-  splitDeals: number;
-  weightedFrontGross: number;
-  totalBackGross: number;
-  totalGross: number;
-  commission: number;
-  washouts: number;
-  avgPVR: number;
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const CHART_GREEN = "#16a34a";
+
+// ---------------------------------------------------------------------------
+// Custom Recharts Tooltip
+// ---------------------------------------------------------------------------
+
+function ChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-md border bg-background px-3 py-2 shadow-md">
+      <p className="text-sm font-medium">{label}</p>
+      <p className="text-sm text-green-700 font-bold">
+        {formatCurrency(payload[0].value)}
+      </p>
+    </div>
+  );
 }
+
+// ---------------------------------------------------------------------------
+// Page Component
+// ---------------------------------------------------------------------------
 
 export default function CommissionsPage() {
   const { currentEvent } = useEvent();
+
+  // ── Data ──
   const [deals, setDeals] = useState<Deal[]>([]);
   const [config, setConfig] = useState<EventConfig | null>(null);
-  const [roster, setRoster] = useState<{ id: string; name: string; commission_pct: number | null }[]>([]);
+  const [roster, setRoster] = useState<
+    { id: string; name: string; commission_pct: number | null }[]
+  >([]);
   const [loading, setLoading] = useState(true);
+
+  // ── Filters ──
+  const [salespersonFilter, setSalespersonFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  // ── Export state ──
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
+
+  // ── Data fetching + realtime ──
 
   useEffect(() => {
     if (!currentEvent) return;
@@ -98,7 +162,8 @@ export default function CommissionsPage() {
     };
   }, [currentEvent]);
 
-  // Build per-person commission rate lookup from roster
+  // ── Derived: roster rate map ──
+
   const rosterRateMap = useMemo(() => {
     const map = new Map<string, number>();
     for (const member of roster) {
@@ -111,10 +176,43 @@ export default function CommissionsPage() {
 
   const defaultRate = config?.rep_commission_pct ?? 0.25;
 
+  // ── Unique salesperson names for filter dropdown ──
+
+  const salespersonNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const deal of deals) {
+      if (deal.salesperson) names.add(deal.salesperson);
+      if (deal.second_salesperson) names.add(deal.second_salesperson);
+    }
+    return Array.from(names).sort();
+  }, [deals]);
+
+  // ── Filtered deals ──
+
+  const filteredDeals = useMemo(() => {
+    return deals.filter((deal) => {
+      // Salesperson filter
+      if (salespersonFilter) {
+        const matchesPrimary = deal.salesperson === salespersonFilter;
+        const matchesSecondary =
+          deal.second_salesperson === salespersonFilter;
+        if (!matchesPrimary && !matchesSecondary) return false;
+      }
+      // Date range
+      if (dateFrom && deal.sale_date && deal.sale_date < dateFrom) return false;
+      if (dateTo && deal.sale_date && deal.sale_date > dateTo) return false;
+      return true;
+    });
+  }, [deals, salespersonFilter, dateFrom, dateTo]);
+
+  const hasFilters = salespersonFilter || dateFrom || dateTo;
+
+  // ── Commission calculations ──
+
   const commissions = useMemo(() => {
     const byPerson: Record<string, CommissionEntry> = {};
 
-    for (const deal of deals) {
+    for (const deal of filteredDeals) {
       const sp = deal.salesperson;
       if (!sp) continue;
 
@@ -196,40 +294,75 @@ export default function CommissionsPage() {
     }
 
     return Object.values(byPerson).sort((a, b) => b.commission - a.commission);
-  }, [deals, defaultRate, rosterRateMap]);
+  }, [filteredDeals, defaultRate, rosterRateMap]);
+
+  // ── Summary stats ──
 
   const totalComm = commissions.reduce((s, c) => s + c.commission, 0);
   const totalWashouts = commissions.reduce((s, c) => s + c.washouts, 0);
+  const avgComm =
+    commissions.length > 0 ? totalComm / commissions.length : 0;
 
-  const exportCSV = () => {
-    const headers = [
-      "Salesperson", "Rate", "Full Deals", "Splits", "Weighted Front",
-      "Back Gross", "Total Gross", "Avg PVR", "Commission", "Washouts",
-    ];
-    const rows = commissions.map((c) =>
-      [
-        c.name,
-        `${(c.commissionRate * 100).toFixed(0)}%`,
-        c.fullDeals,
-        c.splitDeals,
-        c.weightedFrontGross.toFixed(2),
-        c.totalBackGross.toFixed(2),
-        c.totalGross.toFixed(2),
-        c.avgPVR.toFixed(2),
-        c.commission.toFixed(2),
-        c.washouts,
-      ].join(","),
-    );
-    const csv = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `commissions_${currentEvent?.name ?? "export"}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Commissions exported");
-  };
+  // ── Chart data ──
+
+  const chartData = useMemo(
+    () =>
+      commissions.map((c) => ({
+        name: c.name.length > 15 ? c.name.substring(0, 14) + "…" : c.name,
+        commission: Math.round(c.commission * 100) / 100,
+      })),
+    [commissions],
+  );
+
+  // ── Export handlers ──
+
+  const handleExportExcel = useCallback(async () => {
+    if (!currentEvent) return;
+    setExporting("excel");
+    try {
+      const { generateCommissionExcel } = await import(
+        "@/lib/utils/commission-export"
+      );
+      await generateCommissionExcel(commissions, {
+        eventName: currentEvent.dealer_name ?? currentEvent.name,
+        defaultRate,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+      });
+      toast.success("Excel report downloaded");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to export Excel",
+      );
+    } finally {
+      setExporting(null);
+    }
+  }, [currentEvent, commissions, defaultRate, dateFrom, dateTo]);
+
+  const handleExportPDF = useCallback(async () => {
+    if (!currentEvent) return;
+    setExporting("pdf");
+    try {
+      const { generateCommissionPDF } = await import(
+        "@/lib/utils/commission-export"
+      );
+      await generateCommissionPDF(commissions, {
+        eventName: currentEvent.dealer_name ?? currentEvent.name,
+        defaultRate,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+      });
+      toast.success("PDF report downloaded");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to export PDF",
+      );
+    } finally {
+      setExporting(null);
+    }
+  }, [currentEvent, commissions, defaultRate, dateFrom, dateTo]);
+
+  // ── No event ──
 
   if (!currentEvent) {
     return (
@@ -241,12 +374,15 @@ export default function CommissionsPage() {
     );
   }
 
+  // ── Render ──
+
   return (
     <div className="space-y-6">
+      {/* Page Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-            Commissions
+            Commission Reports
           </h1>
           <p className="text-sm text-muted-foreground">
             {currentEvent.dealer_name ?? currentEvent.name} — Default{" "}
@@ -254,9 +390,34 @@ export default function CommissionsPage() {
             {roster.length > 0 && " (individual rates from roster)"}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={exportCSV}>
-          <Download className="h-4 w-4" /> Export
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportPDF}
+            disabled={exporting !== null || commissions.length === 0}
+          >
+            {exporting === "pdf" ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <FileText className="mr-1.5 h-4 w-4" />
+            )}
+            Export PDF
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportExcel}
+            disabled={exporting !== null || commissions.length === 0}
+          >
+            {exporting === "excel" ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+            )}
+            Export Excel
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -265,11 +426,85 @@ export default function CommissionsPage() {
         </div>
       ) : (
         <>
-          {/* Stats */}
-          <div className="grid gap-4 sm:grid-cols-4">
+          {/* Filters */}
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-end gap-4 flex-wrap">
+                <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                  <Filter className="h-4 w-4" />
+                  Filters
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Salesperson
+                  </Label>
+                  <Select
+                    value={salespersonFilter || "__all__"}
+                    onValueChange={(v) =>
+                      setSalespersonFilter(v === "__all__" ? "" : v)
+                    }
+                  >
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="All salespeople" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All salespeople</SelectItem>
+                      {salespersonNames.map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Date From
+                  </Label>
+                  <Input
+                    type="date"
+                    className="w-[160px]"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Date To
+                  </Label>
+                  <Input
+                    type="date"
+                    className="w-[160px]"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                  />
+                </div>
+                {hasFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSalespersonFilter("");
+                      setDateFrom("");
+                      setDateTo("");
+                    }}
+                  >
+                    <X className="mr-1 h-3.5 w-3.5" />
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* KPI Cards */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="pb-2">
-                <CardDescription>Total Commissions</CardDescription>
+                <CardDescription className="flex items-center gap-1.5">
+                  <DollarSign className="h-3.5 w-3.5 text-green-600" />
+                  Total Commission Owed
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold text-green-700">
@@ -279,7 +514,10 @@ export default function CommissionsPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardDescription>Reps Earning</CardDescription>
+                <CardDescription className="flex items-center gap-1.5">
+                  <Users className="h-3.5 w-3.5" />
+                  Salespeople
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold">{commissions.length}</p>
@@ -287,19 +525,23 @@ export default function CommissionsPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardDescription>Avg Commission</CardDescription>
+                <CardDescription className="flex items-center gap-1.5">
+                  <TrendingUp className="h-3.5 w-3.5" />
+                  Avg Commission
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold">
-                  {commissions.length > 0
-                    ? formatCurrency(totalComm / commissions.length)
-                    : "$0"}
+                  {formatCurrency(avgComm)}
                 </p>
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardDescription>Washouts</CardDescription>
+                <CardDescription className="flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+                  Total Washouts
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold text-red-600">
@@ -309,13 +551,61 @@ export default function CommissionsPage() {
             </Card>
           </div>
 
-          {/* Commission Table */}
+          {/* Bar Chart */}
+          {commissions.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Commission by Salesperson
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 5, right: 20, bottom: 60, left: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="name"
+                      angle={-45}
+                      textAnchor="end"
+                      interval={0}
+                      fontSize={11}
+                      height={80}
+                    />
+                    <YAxis
+                      tickFormatter={(v: number) =>
+                        `$${(v / 1000).toFixed(0)}k`
+                      }
+                      fontSize={11}
+                    />
+                    <Tooltip
+                      content={<ChartTooltip />}
+                    />
+                    <Bar
+                      dataKey="commission"
+                      fill={CHART_GREEN}
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Commission Breakdown Table */}
           <Card>
             <CardHeader>
               <CardTitle>Commission Breakdown</CardTitle>
               <CardDescription>
                 Individual rates from roster (default:{" "}
                 {(defaultRate * 100).toFixed(0)}% of weighted front gross)
+                {hasFilters && (
+                  <Badge variant="secondary" className="ml-2 text-xs">
+                    Filtered
+                  </Badge>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -323,11 +613,13 @@ export default function CommissionsPage() {
                 <div className="flex flex-col items-center py-12">
                   <DollarSign className="h-10 w-10 text-muted-foreground mb-3" />
                   <p className="text-muted-foreground">
-                    No deals with salesperson data yet.
+                    {hasFilters
+                      ? "No deals match the current filters."
+                      : "No deals with salesperson data yet."}
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto rounded-md border">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -338,7 +630,9 @@ export default function CommissionsPage() {
                         <TableHead className="text-right">
                           Weighted Front
                         </TableHead>
-                        <TableHead className="text-right">Back Gross</TableHead>
+                        <TableHead className="text-right">
+                          Back Gross
+                        </TableHead>
                         <TableHead className="text-right">
                           Total Gross
                         </TableHead>
@@ -352,7 +646,9 @@ export default function CommissionsPage() {
                     <TableBody>
                       {commissions.map((c) => (
                         <TableRow key={c.name}>
-                          <TableCell className="font-medium">{c.name}</TableCell>
+                          <TableCell className="font-medium">
+                            {c.name}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums">
                             <span
                               className={
@@ -370,19 +666,19 @@ export default function CommissionsPage() {
                           <TableCell className="text-center">
                             {c.splitDeals}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-right tabular-nums">
                             {formatCurrency(c.weightedFrontGross)}
                           </TableCell>
-                          <TableCell className="text-right text-blue-700">
+                          <TableCell className="text-right tabular-nums text-blue-700">
                             {formatCurrency(c.totalBackGross)}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-right tabular-nums">
                             {formatCurrency(c.totalGross)}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-right tabular-nums">
                             {formatCurrency(c.avgPVR)}
                           </TableCell>
-                          <TableCell className="text-right font-bold text-green-700">
+                          <TableCell className="text-right tabular-nums font-bold text-green-700">
                             {formatCurrency(c.commission)}
                           </TableCell>
                           <TableCell className="text-center">
@@ -400,7 +696,7 @@ export default function CommissionsPage() {
                         </TableRow>
                       ))}
                       {/* Totals row */}
-                      <TableRow className="border-t-2 font-bold">
+                      <TableRow className="border-t-2 font-bold bg-muted/50">
                         <TableCell>TOTALS</TableCell>
                         <TableCell className="text-right">—</TableCell>
                         <TableCell className="text-center">
@@ -409,7 +705,7 @@ export default function CommissionsPage() {
                         <TableCell className="text-center">
                           {commissions.reduce((s, c) => s + c.splitDeals, 0)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right tabular-nums">
                           {formatCurrency(
                             commissions.reduce(
                               (s, c) => s + c.weightedFrontGross,
@@ -417,7 +713,7 @@ export default function CommissionsPage() {
                             ),
                           )}
                         </TableCell>
-                        <TableCell className="text-right text-blue-700">
+                        <TableCell className="text-right tabular-nums text-blue-700">
                           {formatCurrency(
                             commissions.reduce(
                               (s, c) => s + c.totalBackGross,
@@ -425,13 +721,16 @@ export default function CommissionsPage() {
                             ),
                           )}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right tabular-nums">
                           {formatCurrency(
-                            commissions.reduce((s, c) => s + c.totalGross, 0),
+                            commissions.reduce(
+                              (s, c) => s + c.totalGross,
+                              0,
+                            ),
                           )}
                         </TableCell>
                         <TableCell className="text-right">—</TableCell>
-                        <TableCell className="text-right text-green-700">
+                        <TableCell className="text-right tabular-nums text-green-700">
                           {formatCurrency(totalComm)}
                         </TableCell>
                         <TableCell className="text-center">

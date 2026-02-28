@@ -68,6 +68,7 @@ import {
 } from "@/lib/actions/inventory";
 import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import { uploadVehiclePhoto } from "@/lib/actions/photos";
+import { resilientSheetFetch } from "@/lib/services/offlineQueue";
 
 const STATUS_COLORS: Record<string, string> = {
   available: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
@@ -630,29 +631,32 @@ export default function InventoryPage() {
           "Updated": new Date().toISOString(),
         };
         // Try update first — if the row already exists in the sheet
-        const res = await fetch("/api/sheets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "update_by_field",
-            sheetTitle: "Dashboard Push",
-            matchColumn: "Stock #",
-            matchValue: vehicle.stock_number,
-            data: sheetData,
-          }),
-        });
+        const updatePayload = {
+          action: "update_by_field",
+          sheetTitle: "Dashboard Push",
+          matchColumn: "Stock #",
+          matchValue: vehicle.stock_number,
+          data: sheetData,
+          spreadsheetId: currentEvent?.sheet_id,
+          eventId: currentEvent?.id,
+        };
+        const res = await resilientSheetFetch(updatePayload, currentEvent?.id ?? null);
+        if (!res) {
+          // Queued for retry — skip append fallback
+          pushed++;
+          continue;
+        }
         // If row not found, append it instead
         if (res.status === 404) {
-          const appendRes = await fetch("/api/sheets", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "append",
-              sheetTitle: "Dashboard Push",
-              data: { "Stock #": vehicle.stock_number, ...sheetData },
-            }),
-          });
-          if (!appendRes.ok) {
+          const appendPayload = {
+            action: "append",
+            sheetTitle: "Dashboard Push",
+            data: { "Stock #": vehicle.stock_number, ...sheetData },
+            spreadsheetId: currentEvent?.sheet_id,
+            eventId: currentEvent?.id,
+          };
+          const appendRes = await resilientSheetFetch(appendPayload, currentEvent?.id ?? null);
+          if (appendRes && !appendRes.ok) {
             const err = await appendRes.json().catch(() => ({}));
             throw new Error(err.error || `Append failed: ${appendRes.status}`);
           }
@@ -664,7 +668,7 @@ export default function InventoryPage() {
       }
       return pushed;
     },
-    [],
+    [currentEvent?.sheet_id, currentEvent?.id],
   );
 
   // ── Bulk actions with optimistic updates ──

@@ -83,7 +83,10 @@ function createAuthClient(): JWT {
   return new JWT({
     email: sa.client_email,
     key: sa.private_key,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    scopes: [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/drive",
+    ],
   });
 }
 
@@ -100,9 +103,12 @@ function getSpreadsheetId(): string {
  * Caches nothing — each call creates a fresh connection so there are
  * no stale-data issues in serverless functions.
  */
-async function loadSpreadsheet(): Promise<GoogleSpreadsheet> {
+async function loadSpreadsheet(
+  overrideSpreadsheetId?: string,
+): Promise<GoogleSpreadsheet> {
   const auth = createAuthClient();
-  const doc = new GoogleSpreadsheet(getSpreadsheetId(), auth);
+  const sid = overrideSpreadsheetId || getSpreadsheetId();
+  const doc = new GoogleSpreadsheet(sid, auth);
   await doc.loadInfo();
   return doc;
 }
@@ -139,8 +145,11 @@ export interface ReadResult {
  *
  * @param sheetTitle — e.g. "Sheet18", "FORD INVENTORY"
  */
-export async function readSheet(sheetTitle: string): Promise<ReadResult> {
-  const doc = await loadSpreadsheet();
+export async function readSheet(
+  sheetTitle: string,
+  overrideSpreadsheetId?: string,
+): Promise<ReadResult> {
+  const doc = await loadSpreadsheet(overrideSpreadsheetId);
   const sheet = getSheet(doc, sheetTitle);
 
   // getRows() uses the first row as headers automatically
@@ -189,8 +198,9 @@ export interface AppendResult {
 export async function appendRow(
   sheetTitle: string,
   data: Record<string, unknown>,
+  overrideSpreadsheetId?: string,
 ): Promise<AppendResult> {
-  const doc = await loadSpreadsheet();
+  const doc = await loadSpreadsheet(overrideSpreadsheetId);
   const sheet = getSheet(doc, sheetTitle);
 
   // Coerce all values to strings for the Sheets API
@@ -230,12 +240,13 @@ export async function appendRow(
 export async function appendRowRaw(
   sheetTitle: string,
   values: unknown[],
+  overrideSpreadsheetId?: string,
 ): Promise<AppendResult> {
   const auth = createAuthClient();
   await auth.authorize();
   const token = (await auth.getAccessToken()).token;
 
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = overrideSpreadsheetId || getSpreadsheetId();
   const range = `'${sheetTitle}'!A:ZZ`;
 
   const stringValues = values.map((v) => (v != null ? String(v) : ""));
@@ -295,8 +306,9 @@ export async function appendRowRaw(
 export async function appendRows(
   sheetTitle: string,
   rows: Record<string, unknown>[],
+  overrideSpreadsheetId?: string,
 ): Promise<{ success: boolean; count: number }> {
-  const doc = await loadSpreadsheet();
+  const doc = await loadSpreadsheet(overrideSpreadsheetId);
   const sheet = getSheet(doc, sheetTitle);
 
   const stringRows = rows.map((row) => {
@@ -347,8 +359,9 @@ export async function updateRow(
   sheetTitle: string,
   rowIndex: number,
   data: Record<string, unknown>,
+  overrideSpreadsheetId?: string,
 ): Promise<UpdateResult> {
-  const doc = await loadSpreadsheet();
+  const doc = await loadSpreadsheet(overrideSpreadsheetId);
   const sheet = getSheet(doc, sheetTitle);
 
   const rows = await sheet.getRows();
@@ -403,8 +416,9 @@ export async function updateRowByField(
   matchColumn: string,
   matchValue: string,
   data: Record<string, unknown>,
+  overrideSpreadsheetId?: string,
 ): Promise<UpdateResult> {
-  const doc = await loadSpreadsheet();
+  const doc = await loadSpreadsheet(overrideSpreadsheetId);
   const sheet = getSheet(doc, sheetTitle);
 
   const rows = await sheet.getRows();
@@ -459,12 +473,13 @@ export async function updateRowRawByField(
   matchColumnIndex: number,
   matchValue: string,
   values: unknown[],
+  overrideSpreadsheetId?: string,
 ): Promise<UpdateResult> {
   const auth = createAuthClient();
   await auth.authorize();
   const token = (await auth.getAccessToken()).token;
 
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = overrideSpreadsheetId || getSpreadsheetId();
   const readRange = `'${sheetTitle}'!A:ZZ`;
 
   // Step 1: Read all rows to find the matching one
@@ -554,12 +569,13 @@ export async function updateRowRawByField(
  */
 export async function readSheetRaw(
   sheetTitle: string,
+  overrideSpreadsheetId?: string,
 ): Promise<{ values: string[][] }> {
   const auth = createAuthClient();
   await auth.authorize();
   const token = (await auth.getAccessToken()).token;
 
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = overrideSpreadsheetId || getSpreadsheetId();
   const range = `'${sheetTitle}'!A:ZZ`;
 
   const url =
@@ -606,12 +622,13 @@ export async function readSheetRaw(
 export async function writeSheetRaw(
   sheetTitle: string,
   values: unknown[][],
+  overrideSpreadsheetId?: string,
 ): Promise<{ success: boolean; rowCount: number }> {
   const auth = createAuthClient();
   await auth.authorize();
   const token = (await auth.getAccessToken()).token;
 
-  const spreadsheetId = getSpreadsheetId();
+  const spreadsheetId = overrideSpreadsheetId || getSpreadsheetId();
   const range = `'${sheetTitle}'!A1:ZZ`;
 
   // Step 1: Clear existing data
@@ -678,8 +695,9 @@ export async function writeSheetRaw(
 export async function deleteRow(
   sheetTitle: string,
   rowIndex: number,
+  overrideSpreadsheetId?: string,
 ): Promise<{ success: boolean; deletedRowNumber: number }> {
-  const doc = await loadSpreadsheet();
+  const doc = await loadSpreadsheet(overrideSpreadsheetId);
   const sheet = getSheet(doc, sheetTitle);
 
   const rows = await sheet.getRows();
@@ -708,13 +726,70 @@ export async function deleteRow(
 /**
  * List all sheet tabs in the spreadsheet with basic metadata.
  */
-export async function listSheets(): Promise<
+export async function listSheets(
+  overrideSpreadsheetId?: string,
+): Promise<
   { title: string; rowCount: number; columnCount: number }[]
 > {
-  const doc = await loadSpreadsheet();
+  const doc = await loadSpreadsheet(overrideSpreadsheetId);
   return Object.values(doc.sheetsByTitle).map((sheet) => ({
     title: sheet.title,
     rowCount: sheet.rowCount,
     columnCount: sheet.columnCount,
   }));
+}
+
+// ─────────────────────────────────────────────────────────────
+// COPY — Duplicate a spreadsheet via Google Drive API
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Copy an entire Google Spreadsheet using the Drive files.copy API.
+ * Creates a brand new spreadsheet with all tabs, formatting, and formulas
+ * preserved. Used when creating a new event from a template.
+ *
+ * The service account must have at least Viewer access on the source
+ * spreadsheet. The copy will be owned by the service account.
+ *
+ * @param sourceSpreadsheetId — the spreadsheet to copy
+ * @param newTitle            — title for the new spreadsheet
+ * @returns { spreadsheetId, spreadsheetUrl }
+ */
+export async function copySpreadsheet(
+  sourceSpreadsheetId: string,
+  newTitle: string,
+): Promise<{ spreadsheetId: string; spreadsheetUrl: string }> {
+  const auth = createAuthClient();
+  await auth.authorize();
+  const token = (await auth.getAccessToken()).token;
+
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${sourceSpreadsheetId}/copy`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: newTitle }),
+    },
+  );
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(
+      `[GoogleSheets] copySpreadsheet failed (${res.status}): ${errBody}`,
+    );
+  }
+
+  const data = await res.json();
+
+  console.log(
+    `[GoogleSheets] copySpreadsheet("${sourceSpreadsheetId}") → new ID: ${data.id}, title: "${newTitle}"`,
+  );
+
+  return {
+    spreadsheetId: data.id,
+    spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${data.id}`,
+  };
 }

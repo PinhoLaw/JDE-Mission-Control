@@ -57,6 +57,7 @@ export type Database = {
           budget: number | null;
           notes: string | null;
           created_by: string | null;
+          sheet_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -77,6 +78,7 @@ export type Database = {
           budget?: number | null;
           notes?: string | null;
           created_by?: string | null;
+          sheet_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -97,6 +99,7 @@ export type Database = {
           budget?: number | null;
           notes?: string | null;
           created_by?: string | null;
+          sheet_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
