@@ -92,6 +92,10 @@ export default function InventoryPage() {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const [uploadingPhotoId, setUploadingPhotoId] = useState<string | null>(null);
+  // Ref to avoid stale closure — columns useMemo is defined before handleStatusChange
+  const handleStatusChangeRef = useRef<
+    (ids: string[], status: "available" | "sold" | "hold" | "pending" | "wholesale") => Promise<void>
+  >(() => Promise.resolve());
 
   // Load vehicles for current event
   useEffect(() => {
@@ -545,23 +549,23 @@ export default function InventoryPage() {
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
-                  onClick={() => handleStatusChange([vehicle.id], "sold")}
+                  onClick={() => handleStatusChangeRef.current([vehicle.id], "sold")}
                 >
                   <Handshake className="mr-2 h-4 w-4" />
                   Mark as Sold
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => handleStatusChange([vehicle.id], "hold")}
+                  onClick={() => handleStatusChangeRef.current([vehicle.id], "hold")}
                 >
                   Mark Hold
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => handleStatusChange([vehicle.id], "available")}
+                  onClick={() => handleStatusChangeRef.current([vehicle.id], "available")}
                 >
                   Mark Available
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => handleStatusChange([vehicle.id], "wholesale")}
+                  onClick={() => handleStatusChangeRef.current([vehicle.id], "wholesale")}
                 >
                   Mark Wholesale
                 </DropdownMenuItem>
@@ -695,6 +699,8 @@ export default function InventoryPage() {
     },
     [currentEvent, vehicles, pushToSheet],
   );
+  // Keep ref in sync so column cell closures always call the latest handler
+  handleStatusChangeRef.current = handleStatusChange;
 
   const handleBulkDelete = useCallback(async () => {
     if (!currentEvent || selectedIds.length === 0) return;

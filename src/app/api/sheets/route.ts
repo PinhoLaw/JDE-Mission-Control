@@ -231,7 +231,9 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isNotFound =
-      message.includes("not found") || message.includes("out of range");
+      message.toLowerCase().includes("not found") ||
+      message.toLowerCase().includes("no row found") ||
+      message.includes("out of range");
 
     console.error(`[/api/sheets] Error for action="${body.action}":`, message);
 
