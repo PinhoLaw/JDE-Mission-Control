@@ -14,11 +14,18 @@ import {
 } from "@/lib/services/offlineQueue";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
+import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
 
 // Recharts
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -53,6 +60,9 @@ import {
   WifiOff,
   Loader2,
   AlertCircle,
+  AlertTriangle,
+  XCircle,
+  X,
   CheckCircle2,
   Clock,
   Trash2,
@@ -71,6 +81,8 @@ const CHART_COLORS = {
   error: "#ef4444",
 } as const;
 
+const PIE_COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#8b5cf6"];
+
 const SHEET_ACTIONS = [
   "sheet_read",
   "sheet_append",
@@ -78,6 +90,20 @@ const SHEET_ACTIONS = [
   "sheet_delete",
   "sheet_write",
 ] as const;
+
+const AUTO_RETRY_KEY = "jde-monitoring-auto-retry";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface AlertItem {
+  key: string;
+  severity: "amber" | "red";
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -160,6 +186,16 @@ function actionBadgeClasses(action: string): string {
   return "bg-secondary text-secondary-foreground";
 }
 
+/** Format seconds remaining into a human-readable countdown string */
+function formatCountdown(diffMs: number): string {
+  if (diffMs <= 0) return "Ready";
+  const secs = Math.ceil(diffMs / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const rem = secs % 60;
+  return `${mins}m ${rem}s`;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -174,6 +210,24 @@ export default function MonitoringPage() {
   const [queueCount, setQueueCount] = useState(0);
   const [queuedActions, setQueuedActions] = useState<QueuedSheetAction[]>([]);
   const [processingQueue, setProcessingQueue] = useState(false);
+
+  // Alerts
+  const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(
+    new Set(),
+  );
+
+  // Auto-retry
+  const [autoRetry, setAutoRetry] = useState(false);
+
+  // Countdown timer tick
+  const [countdownNow, setCountdownNow] = useState(Date.now());
+
+  // ── Initialize auto-retry from localStorage ──────────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem(AUTO_RETRY_KEY);
+    if (stored === "true") setAutoRetry(true);
+  }, []);
 
   // ── Online / Offline detection ──────────────────────────────
   useEffect(() => {
@@ -286,6 +340,44 @@ export default function MonitoringPage() {
     toast.success("Queue cleared");
   }, [loadQueue]);
 
+  // ── Auto-retry interval ─────────────────────────────────────
+  useEffect(() => {
+    if (!autoRetry) return;
+    const interval = setInterval(async () => {
+      const count = await getQueueCount();
+      if (count > 0 && navigator.onLine) {
+        try {
+          const result = await processQueue();
+          if (result.processed > 0) {
+            toast.success(`Auto-retry: ${result.processed} synced`);
+          }
+          await loadQueue();
+        } catch {
+          // Silently fail on auto-retry
+        }
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [autoRetry, loadQueue]);
+
+  const toggleAutoRetry = useCallback(() => {
+    setAutoRetry((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem(AUTO_RETRY_KEY, String(next));
+      }
+      toast.success(next ? "Auto-retry enabled" : "Auto-retry disabled");
+      return next;
+    });
+  }, []);
+
+  // ── Countdown timer tick (1s interval when queue has items) ──
+  useEffect(() => {
+    if (queuedActions.length === 0) return;
+    const interval = setInterval(() => setCountdownNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [queuedActions.length]);
+
   // ── Derived data ────────────────────────────────────────────
 
   const sheetLogs = useMemo(
@@ -326,6 +418,9 @@ export default function MonitoringPage() {
 
     return {
       successRate: `${successRate}%`,
+      successRateNum: totalSheetOps > 0
+        ? ((totalSheetOps - errorLogs.length) / totalSheetOps) * 100
+        : 100,
       recentErrors,
       totalSheetOps,
     };
@@ -357,17 +452,129 @@ export default function MonitoringPage() {
     return hours;
   }, [logs]);
 
+  // Cumulative operations over 24h
+  const cumulativeOps = useMemo(() => {
+    let running = 0;
+    return sheetPushesPerHour.map((h) => {
+      running += h.count;
+      return { hour: h.hour, total: running };
+    });
+  }, [sheetPushesPerHour]);
+
+  // Operations by type (pie chart)
+  const opsByType = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const l of sheetLogs) {
+      const action = l.action;
+      counts[action] = (counts[action] ?? 0) + 1;
+    }
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name: name.replace("sheet_", ""), value }))
+      .sort((a, b) => b.value - a.value);
+  }, [sheetLogs]);
+
+  // Top 5 active users
+  const topUsers = useMemo(() => {
+    const userMap: Record<string, { count: number; lastActive: string }> = {};
+    for (const l of logs) {
+      const uid = l.user_id;
+      if (!uid) continue;
+      if (!userMap[uid]) {
+        userMap[uid] = { count: 0, lastActive: l.created_at };
+      }
+      userMap[uid].count += 1;
+      if (l.created_at > userMap[uid].lastActive) {
+        userMap[uid].lastActive = l.created_at;
+      }
+    }
+    return Object.entries(userMap)
+      .map(([userId, data]) => ({ userId, ...data }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [logs]);
+
+  // ── Proactive alerts ────────────────────────────────────────
+
+  const activeAlerts = useMemo(() => {
+    const alerts: AlertItem[] = [];
+
+    if (!isOnline) {
+      alerts.push({
+        key: "offline",
+        severity: "red",
+        icon: <WifiOff className="h-4 w-4" />,
+        title: "You are offline",
+        description:
+          "Sheet operations will be queued locally until connectivity is restored.",
+      });
+    }
+
+    if (kpis.recentErrors > 0) {
+      alerts.push({
+        key: "errors",
+        severity: "red",
+        icon: <XCircle className="h-4 w-4" />,
+        title: `${kpis.recentErrors} error${kpis.recentErrors !== 1 ? "s" : ""} in the last hour`,
+        description:
+          "Check the Sync Errors tab for details on failed operations.",
+      });
+    }
+
+    if (kpis.successRateNum < 90 && kpis.totalSheetOps > 0) {
+      alerts.push({
+        key: "sync",
+        severity: "red",
+        icon: <AlertCircle className="h-4 w-4" />,
+        title: `Sync success rate is ${kpis.successRate}`,
+        description:
+          "Success rate has dropped below 90%. Review recent errors.",
+      });
+    }
+
+    if (queueCount > 5) {
+      alerts.push({
+        key: "queue",
+        severity: "amber",
+        icon: <AlertTriangle className="h-4 w-4" />,
+        title: `${queueCount} actions queued`,
+        description:
+          "More than 5 actions are waiting to sync. Consider processing the queue manually.",
+      });
+    }
+
+    // Filter out dismissed alerts (only if condition still active)
+    return alerts.filter((a) => !dismissedAlerts.has(a.key));
+  }, [isOnline, kpis, queueCount, dismissedAlerts]);
+
+  // Auto-clear dismissed alerts when their condition resolves
+  useEffect(() => {
+    setDismissedAlerts((prev) => {
+      const activeKeys = new Set<string>();
+      if (!isOnline) activeKeys.add("offline");
+      if (kpis.recentErrors > 0) activeKeys.add("errors");
+      if (kpis.successRateNum < 90 && kpis.totalSheetOps > 0)
+        activeKeys.add("sync");
+      if (queueCount > 5) activeKeys.add("queue");
+
+      // Remove dismissed keys that are no longer active conditions
+      const next = new Set<string>();
+      for (const key of prev) {
+        if (activeKeys.has(key)) next.add(key);
+      }
+      // Only update if changed
+      if (next.size !== prev.size) return next;
+      return prev;
+    });
+  }, [isOnline, kpis, queueCount]);
+
+  const dismissAlert = useCallback((key: string) => {
+    setDismissedAlerts((prev) => new Set(prev).add(key));
+  }, []);
+
   // ── Loading / no-event states ───────────────────────────────
 
   if (isLoading || eventLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 gap-3">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          Loading monitoring data…
-        </p>
-      </div>
-    );
+    return <LoadingTableSkeleton rows={6} columns={4} />;
   }
 
   if (!currentEvent) {
@@ -411,6 +618,51 @@ export default function MonitoringPage() {
           Refresh
         </Button>
       </div>
+
+      {/* ── Proactive Alerts ──────────────────────────────────── */}
+      {activeAlerts.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {activeAlerts.map((alert) => (
+            <Card
+              key={alert.key}
+              className={
+                alert.severity === "red"
+                  ? "border-l-4 border-l-red-500 bg-red-500/10"
+                  : "border-l-4 border-l-amber-500 bg-amber-500/10"
+              }
+            >
+              <CardContent className="flex items-center justify-between py-3 px-4">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={
+                      alert.severity === "red"
+                        ? "text-red-500"
+                        : "text-amber-500"
+                    }
+                  >
+                    {alert.icon}
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold">{alert.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {alert.description}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 shrink-0"
+                  onClick={() => dismissAlert(alert.key)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  <span className="sr-only">Dismiss</span>
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -547,6 +799,16 @@ export default function MonitoringPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
+                    variant={autoRetry ? "default" : "outline"}
+                    size="sm"
+                    onClick={toggleAutoRetry}
+                  >
+                    <RefreshCw
+                      className={`mr-2 h-4 w-4 ${autoRetry ? "animate-spin" : ""}`}
+                    />
+                    Auto-Retry: {autoRetry ? "On" : "Off"}
+                  </Button>
+                  <Button
                     variant="outline"
                     size="sm"
                     onClick={handleProcessQueue}
@@ -593,47 +855,58 @@ export default function MonitoringPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {queuedActions.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell className="whitespace-nowrap text-sm">
-                            {formatDistanceToNow(new Date(item.queuedAt), {
-                              addSuffix: true,
-                            })}
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            {(item.payload?.action as string) ?? "—"}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={
-                                item.retries > 2 ? "destructive" : "secondary"
-                              }
-                            >
-                              {item.retries}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {item.nextRetryAt
-                              ? formatDistanceToNow(
-                                  new Date(item.nextRetryAt),
-                                  { addSuffix: true },
-                                )
-                              : "Ready"}
-                          </TableCell>
-                          <TableCell className="text-sm text-red-500 max-w-[200px] truncate">
-                            {item.lastError ?? "—"}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleRemoveAction(item.id!)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {queuedActions.map((item) => {
+                        const retryAt = item.nextRetryAt
+                          ? new Date(item.nextRetryAt).getTime()
+                          : null;
+                        const diffMs = retryAt
+                          ? retryAt - countdownNow
+                          : 0;
+
+                        return (
+                          <TableRow key={item.id}>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {formatDistanceToNow(new Date(item.queuedAt), {
+                                addSuffix: true,
+                              })}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {(item.payload?.action as string) ?? "—"}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={
+                                  item.retries > 2 ? "destructive" : "secondary"
+                                }
+                              >
+                                {item.retries}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                              {retryAt ? (
+                                <span className="flex items-center gap-1.5">
+                                  <Clock className="h-3 w-3" />
+                                  {formatCountdown(diffMs)}
+                                </span>
+                              ) : (
+                                "Ready"
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm text-red-500 max-w-[200px] truncate">
+                              {item.lastError ?? "—"}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemoveAction(item.id!)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -711,57 +984,224 @@ export default function MonitoringPage() {
 
         {/* ── Tab 4: Usage Stats ───────────────────────────────── */}
         <TabsContent value="usage">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                Sheet Operations (Last 24h)
-              </CardTitle>
-              <CardDescription>
-                Google Sheet push operations by hour
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {sheetPushesPerHour.every((h) => h.count === 0) ? (
-                <div className="flex flex-col items-center py-12 text-center">
-                  <Activity className="h-10 w-10 text-muted-foreground mb-3" />
-                  <p className="text-muted-foreground">
-                    No sheet operations in the last 24 hours.
-                  </p>
-                </div>
-              ) : (
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={sheetPushesPerHour}>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        className="stroke-muted"
-                      />
-                      <XAxis
-                        dataKey="hour"
-                        tick={{ fontSize: 11 }}
-                        className="fill-muted-foreground"
-                        interval="preserveStartEnd"
-                      />
-                      <YAxis
-                        tick={{ fontSize: 12 }}
-                        className="fill-muted-foreground"
-                        allowDecimals={false}
-                      />
-                      <Tooltip
-                        content={<ChartTooltipContent />}
-                      />
-                      <Bar
-                        dataKey="count"
-                        name="Operations"
-                        fill={CHART_COLORS.primary}
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* 4a. Bar Chart — Operations per Hour */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Sheet Operations (Last 24h)
+                </CardTitle>
+                <CardDescription>
+                  Google Sheet push operations by hour
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {sheetPushesPerHour.every((h) => h.count === 0) ? (
+                  <div className="flex flex-col items-center py-12 text-center">
+                    <Activity className="h-10 w-10 text-muted-foreground mb-3" />
+                    <p className="text-muted-foreground">
+                      No sheet operations in the last 24 hours.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={sheetPushesPerHour}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          className="stroke-muted"
+                        />
+                        <XAxis
+                          dataKey="hour"
+                          tick={{ fontSize: 11 }}
+                          className="fill-muted-foreground"
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 12 }}
+                          className="fill-muted-foreground"
+                          allowDecimals={false}
+                        />
+                        <Tooltip content={<ChartTooltipContent />} />
+                        <Bar
+                          dataKey="count"
+                          name="Operations"
+                          fill={CHART_COLORS.primary}
+                          radius={[4, 4, 0, 0]}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 4b. Line Chart — Cumulative Operations */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Cumulative Operations (Last 24h)
+                </CardTitle>
+                <CardDescription>
+                  Running total of sheet operations over time
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {cumulativeOps.every((h) => h.total === 0) ? (
+                  <div className="flex flex-col items-center py-12 text-center">
+                    <Activity className="h-10 w-10 text-muted-foreground mb-3" />
+                    <p className="text-muted-foreground">
+                      No data to display.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={cumulativeOps}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          className="stroke-muted"
+                        />
+                        <XAxis
+                          dataKey="hour"
+                          tick={{ fontSize: 11 }}
+                          className="fill-muted-foreground"
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 12 }}
+                          className="fill-muted-foreground"
+                          allowDecimals={false}
+                        />
+                        <Tooltip content={<ChartTooltipContent />} />
+                        <Line
+                          type="monotone"
+                          dataKey="total"
+                          name="Total Ops"
+                          stroke={CHART_COLORS.secondary}
+                          strokeWidth={2}
+                          dot={{ r: 3, fill: CHART_COLORS.secondary }}
+                          activeDot={{ r: 5 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 4c. Pie Chart — Operations by Type */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Operations by Type
+                </CardTitle>
+                <CardDescription>
+                  Breakdown of sheet actions by category
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {opsByType.length === 0 ? (
+                  <div className="flex flex-col items-center py-12 text-center">
+                    <Activity className="h-10 w-10 text-muted-foreground mb-3" />
+                    <p className="text-muted-foreground">
+                      No operations to display.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={opsByType}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={100}
+                          paddingAngle={4}
+                          dataKey="value"
+                          label={({
+                            name,
+                            percent,
+                          }: {
+                            name: string;
+                            percent: number;
+                          }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        >
+                          {opsByType.map((_, idx) => (
+                            <Cell
+                              key={idx}
+                              fill={PIE_COLORS[idx % PIE_COLORS.length]}
+                            />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 4d. Top Active Users */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Top Active Users</CardTitle>
+                <CardDescription>
+                  Most active users by operation count
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {topUsers.length === 0 ? (
+                  <div className="flex flex-col items-center py-12 text-center">
+                    <Activity className="h-10 w-10 text-muted-foreground mb-3" />
+                    <p className="text-muted-foreground">No user activity.</p>
+                  </div>
+                ) : (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-10">#</TableHead>
+                          <TableHead>User ID</TableHead>
+                          <TableHead className="text-center">
+                            Operations
+                          </TableHead>
+                          <TableHead>Last Active</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {topUsers.map((user, idx) => (
+                          <TableRow key={user.userId}>
+                            <TableCell className="font-bold text-muted-foreground">
+                              {idx + 1}
+                            </TableCell>
+                            <TableCell>
+                              <code className="text-xs font-mono">
+                                {user.userId.slice(0, 8)}…
+                              </code>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="secondary">
+                                {user.count}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {formatDistanceToNow(
+                                new Date(user.lastActive),
+                                { addSuffix: true },
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

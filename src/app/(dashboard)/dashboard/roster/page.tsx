@@ -85,6 +85,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
+import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -991,11 +992,7 @@ export default function RosterPage() {
   // ---------- Loading ----------
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <LoadingTableSkeleton rows={8} columns={6} />;
   }
 
   // ---------- Render ----------

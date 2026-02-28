@@ -62,10 +62,10 @@ interface RosterGridProps {
 }
 
 const roleColors: Record<string, string> = {
-  sales: "bg-blue-100 text-blue-800",
-  team_leader: "bg-purple-100 text-purple-800",
-  fi_manager: "bg-green-100 text-green-800",
-  closer: "bg-orange-100 text-orange-800",
+  sales: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+  team_leader: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+  fi_manager: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+  closer: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
 };
 
 export function RosterGrid({ roster, lenders, config, event }: RosterGridProps) {
@@ -188,18 +188,18 @@ export function RosterGrid({ roster, lenders, config, event }: RosterGridProps) 
                     </TableCell>
                     <TableCell>
                       {r.active ? (
-                        <Badge className="bg-green-100 text-green-800">
+                        <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                           Active
                         </Badge>
                       ) : (
-                        <Badge variant="secondary" className="bg-red-100 text-red-800">
+                        <Badge variant="secondary" className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
                           Inactive
                         </Badge>
                       )}
                     </TableCell>
                     <TableCell>
                       {r.confirmed ? (
-                        <Badge className="bg-green-100 text-green-800">
+                        <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                           Confirmed
                         </Badge>
                       ) : (

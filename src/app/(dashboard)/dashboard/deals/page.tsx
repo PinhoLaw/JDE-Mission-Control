@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
 import type { Deal } from "@/types/database";
+import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
 import {
   useReactTable,
   getCoreRowModel,
@@ -218,7 +219,7 @@ export default function DealsPage() {
           const v = row.getValue("front_gross") as number | null;
           if (v == null) return "—";
           return (
-            <span className={v >= 0 ? "font-medium" : "font-medium text-red-600"}>
+            <span className={v >= 0 ? "font-medium" : "font-medium text-red-600 dark:text-red-400"}>
               {formatCurrency(v)}
             </span>
           );
@@ -230,7 +231,7 @@ export default function DealsPage() {
         cell: ({ row }) => {
           const v = row.getValue("back_gross") as number | null;
           return v != null ? (
-            <span className="text-blue-700">{formatCurrency(v)}</span>
+            <span className="text-blue-700 dark:text-blue-400">{formatCurrency(v)}</span>
           ) : (
             "—"
           );
@@ -253,7 +254,7 @@ export default function DealsPage() {
           if (v == null) return "—";
           return (
             <span
-              className={`font-bold ${v >= 0 ? "text-green-700" : "text-red-600"}`}
+              className={`font-bold ${v >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
             >
               {formatCurrency(v)}
             </span>
@@ -495,9 +496,7 @@ export default function DealsPage() {
 
       {/* Virtualized Table */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+        <LoadingTableSkeleton rows={8} columns={7} />
       ) : rows.length === 0 ? (
         <div className="rounded-md border">
           <div className="flex flex-col items-center gap-2 py-16">

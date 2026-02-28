@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
 import type { Vehicle } from "@/types/database";
+import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
 import {
   useReactTable,
   getCoreRowModel,
@@ -210,7 +211,7 @@ export default function InventoryPage() {
   const diffCell = (val: number | null | undefined) => {
     if (val == null) return "—";
     return (
-      <span className={val >= 0 ? "text-green-700 font-semibold" : "text-red-600 font-semibold"}>
+      <span className={val >= 0 ? "text-green-700 dark:text-green-400 font-semibold" : "text-red-600 dark:text-red-400 font-semibold"}>
         {formatCurrency(val)}
       </span>
     );
@@ -815,7 +816,7 @@ export default function InventoryPage() {
             <CardDescription>Available</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-green-700">{stats.available}</p>
+            <p className="text-2xl font-bold text-green-700 dark:text-green-400">{stats.available}</p>
           </CardContent>
         </Card>
         <Card>
@@ -823,7 +824,7 @@ export default function InventoryPage() {
             <CardDescription>Sold</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-red-600">{stats.sold}</p>
+            <p className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.sold}</p>
           </CardContent>
         </Card>
         <Card>
@@ -952,9 +953,7 @@ export default function InventoryPage() {
 
       {/* Virtualized Table */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+        <LoadingTableSkeleton rows={10} columns={8} />
       ) : rows.length === 0 ? (
         <div className="rounded-md border">
           <div className="flex flex-col items-center gap-2 py-16">

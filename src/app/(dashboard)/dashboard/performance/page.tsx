@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { BarChart3, TrendingUp, Loader2, Users } from "lucide-react";
+import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -306,14 +307,7 @@ export default function PerformancePage() {
   // -----------------------------------------------------------------------
 
   if (isLoading || eventLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 gap-3">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          Loading performance data...
-        </p>
-      </div>
-    );
+    return <LoadingTableSkeleton rows={8} columns={6} />;
   }
 
   // -----------------------------------------------------------------------

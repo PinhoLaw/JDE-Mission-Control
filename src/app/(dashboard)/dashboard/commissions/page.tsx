@@ -52,6 +52,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
+import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
 import type { CommissionEntry } from "@/lib/utils/commission-export";
 
 // ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ function ChartTooltip({
   return (
     <div className="rounded-md border bg-background px-3 py-2 shadow-md">
       <p className="text-sm font-medium">{label}</p>
-      <p className="text-sm text-green-700 font-bold">
+      <p className="text-sm text-green-700 dark:text-green-400 font-bold">
         {formatCurrency(payload[0].value)}
       </p>
     </div>
@@ -421,9 +422,7 @@ export default function CommissionsPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+        <LoadingTableSkeleton rows={6} columns={8} />
       ) : (
         <>
           {/* Filters */}
@@ -507,7 +506,7 @@ export default function CommissionsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-bold text-green-700">
+                <p className="text-2xl font-bold text-green-700 dark:text-green-400">
                   {formatCurrency(totalComm)}
                 </p>
               </CardContent>
@@ -544,7 +543,7 @@ export default function CommissionsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-bold text-red-600">
+                <p className="text-2xl font-bold text-red-600 dark:text-red-400">
                   {totalWashouts}
                 </p>
               </CardContent>
@@ -653,7 +652,7 @@ export default function CommissionsPage() {
                             <span
                               className={
                                 c.commissionRate !== defaultRate
-                                  ? "text-blue-600 font-medium"
+                                  ? "text-blue-600 dark:text-blue-400 font-medium"
                                   : ""
                               }
                             >
@@ -669,7 +668,7 @@ export default function CommissionsPage() {
                           <TableCell className="text-right tabular-nums">
                             {formatCurrency(c.weightedFrontGross)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-blue-700">
+                          <TableCell className="text-right tabular-nums text-blue-700 dark:text-blue-400">
                             {formatCurrency(c.totalBackGross)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
@@ -678,7 +677,7 @@ export default function CommissionsPage() {
                           <TableCell className="text-right tabular-nums">
                             {formatCurrency(c.avgPVR)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums font-bold text-green-700">
+                          <TableCell className="text-right tabular-nums font-bold text-green-700 dark:text-green-400">
                             {formatCurrency(c.commission)}
                           </TableCell>
                           <TableCell className="text-center">
@@ -713,7 +712,7 @@ export default function CommissionsPage() {
                             ),
                           )}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums text-blue-700">
+                        <TableCell className="text-right tabular-nums text-blue-700 dark:text-blue-400">
                           {formatCurrency(
                             commissions.reduce(
                               (s, c) => s + c.totalBackGross,
@@ -730,12 +729,12 @@ export default function CommissionsPage() {
                           )}
                         </TableCell>
                         <TableCell className="text-right">—</TableCell>
-                        <TableCell className="text-right tabular-nums text-green-700">
+                        <TableCell className="text-right tabular-nums text-green-700 dark:text-green-400">
                           {formatCurrency(totalComm)}
                         </TableCell>
                         <TableCell className="text-center">
                           {totalWashouts > 0 && (
-                            <span className="flex items-center justify-center gap-1 text-red-600">
+                            <span className="flex items-center justify-center gap-1 text-red-600 dark:text-red-400">
                               <AlertTriangle className="h-3 w-3" />
                               {totalWashouts}
                             </span>

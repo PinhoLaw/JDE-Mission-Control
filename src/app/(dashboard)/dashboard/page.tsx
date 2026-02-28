@@ -8,7 +8,9 @@ import { RecentDealsTable } from "@/components/dashboard/recent-deals-table";
 import {
   KpiCardsSkeleton,
   RecentDealsSkeleton,
+  AnalyticsOverviewSkeleton,
 } from "@/components/dashboard/loading-skeletons";
+import { AnalyticsOverview } from "@/components/dashboard/analytics-overview";
 import { CsvExportButtons } from "@/components/dashboard/csv-export-buttons";
 
 interface DashboardPageProps {
@@ -21,6 +23,7 @@ export default async function DashboardPage({
   console.log("[DashboardPage] render start");
 
   let eventId: string | undefined;
+  let userId: string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let event: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,6 +43,7 @@ export default async function DashboardPage({
       "[DashboardPage] AUTH:",
       user ? `${user.email} (${user.id})` : `NO USER: ${authErr?.message}`,
     );
+    userId = user?.id;
 
     // Resolve the event ID: URL param → first active event → first event
     eventId = params.event;
@@ -173,6 +177,13 @@ export default async function DashboardPage({
       <Suspense fallback={<KpiCardsSkeleton />}>
         <KpiCards eventId={eventId} />
       </Suspense>
+
+      {/* Analytics Overview */}
+      {userId && (
+        <Suspense fallback={<AnalyticsOverviewSkeleton />}>
+          <AnalyticsOverview userId={userId} />
+        </Suspense>
+      )}
 
       {/* Recent Deals with Suspense */}
       <Suspense fallback={<RecentDealsSkeleton />}>

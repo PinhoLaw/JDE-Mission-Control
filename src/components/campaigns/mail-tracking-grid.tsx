@@ -78,7 +78,7 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
             <CardDescription>Sold from Mail</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-blue-700">
+            <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">
               {stats.totalSoldFromMail}
             </p>
           </CardContent>
@@ -88,7 +88,7 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
             <CardDescription>Response Rate</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-green-700">
+            <p className="text-2xl font-bold text-green-700 dark:text-green-400">
               {stats.rate.toFixed(2)}%
             </p>
           </CardContent>
@@ -118,7 +118,7 @@ export function MailTrackingGrid({ data }: MailTrackingGridProps) {
               >
                 <p className="text-sm font-medium">{z.town}</p>
                 <p className="text-xs text-muted-foreground">{z.zip_code}</p>
-                <p className="text-lg font-bold text-green-700">
+                <p className="text-lg font-bold text-green-700 dark:text-green-400">
                   {z.total_responses} responses
                 </p>
                 <p className="text-xs text-muted-foreground">
