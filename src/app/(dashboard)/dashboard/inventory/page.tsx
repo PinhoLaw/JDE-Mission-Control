@@ -394,6 +394,12 @@ export default function InventoryPage() {
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
+                  onClick={() => handleStatusChange([vehicle.id], "sold")}
+                >
+                  <Handshake className="mr-2 h-4 w-4" />
+                  Mark as Sold
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   onClick={() => handleStatusChange([vehicle.id], "hold")}
                 >
                   Mark Hold
@@ -450,13 +456,64 @@ export default function InventoryPage() {
     })
     .filter(Boolean) as string[];
 
+  // ── Push status change to Google Sheets (fire-and-forget) ──
+  const pushToSheet = useCallback(
+    async (vehicleList: Vehicle[], status: string) => {
+      for (const vehicle of vehicleList) {
+        if (!vehicle.stock_number) continue;
+        const sheetData = {
+          "Status": status.toUpperCase(),
+          "Price": vehicle.acquisition_cost ? String(vehicle.acquisition_cost) : "",
+          "Year": vehicle.year ? String(vehicle.year) : "",
+          "Make": vehicle.make ?? "",
+          "Model": vehicle.model ?? "",
+          "Color": vehicle.color ?? "",
+          "VIN": vehicle.vin ?? "",
+          "Notes": `Status changed to ${status}`,
+          "Updated": new Date().toISOString(),
+        };
+        try {
+          // Try update first — if the row already exists in the sheet
+          const res = await fetch("/api/sheets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "update_by_field",
+              sheetTitle: "Dashboard Push",
+              matchColumn: "Stock #",
+              matchValue: vehicle.stock_number,
+              data: sheetData,
+            }),
+          });
+          // If row not found, append it instead
+          if (res.status === 404) {
+            await fetch("/api/sheets", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "append",
+                sheetTitle: "Dashboard Push",
+                data: { "Stock #": vehicle.stock_number, ...sheetData },
+              }),
+            });
+          }
+        } catch {
+          // Sheets push is best-effort — don't block the UI
+        }
+      }
+    },
+    [],
+  );
+
   // ── Bulk actions with optimistic updates ──
   const handleStatusChange = useCallback(
     async (ids: string[], status: "available" | "sold" | "hold" | "pending" | "wholesale") => {
       if (!currentEvent) return;
       setBulkLoading(true);
-      // Optimistic update
+      // Snapshot for rollback + sheets push
       const previousVehicles = vehicles;
+      const targetVehicles = vehicles.filter((v) => ids.includes(v.id));
+      // Optimistic update
       setVehicles((prev) =>
         prev.map((v) => (ids.includes(v.id) ? { ...v, status } : v)),
       );
@@ -464,6 +521,13 @@ export default function InventoryPage() {
         await updateVehicleStatus(ids, status, currentEvent.id);
         toast.success(`${ids.length} vehicle(s) marked as ${status}`);
         setRowSelection({});
+
+        // Push to Google Sheets (fire-and-forget, don't await blocking)
+        pushToSheet(targetVehicles, status).then(() => {
+          toast.success("Pushed to Michigan City Ford Sheet");
+        }).catch(() => {
+          // Silent — sheets push is best-effort
+        });
       } catch (err) {
         // Rollback on error
         setVehicles(previousVehicles);
@@ -472,7 +536,7 @@ export default function InventoryPage() {
         setBulkLoading(false);
       }
     },
-    [currentEvent, vehicles],
+    [currentEvent, vehicles, pushToSheet],
   );
 
   const handleBulkDelete = useCallback(async () => {
@@ -665,6 +729,11 @@ export default function InventoryPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
+                <DropdownMenuItem
+                  onClick={() => handleStatusChange(selectedIds, "sold")}
+                >
+                  <Handshake className="mr-2 h-4 w-4" /> Mark as Sold
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => handleStatusChange(selectedIds, "available")}
                 >
