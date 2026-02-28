@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
-import type { Deal, EventConfig, RosterMember } from "@/types/database";
+import type { Deal, EventConfig } from "@/types/database";
 import {
   Card,
   CardContent,
@@ -42,7 +42,7 @@ export default function CommissionsPage() {
   const { currentEvent } = useEvent();
   const [deals, setDeals] = useState<Deal[]>([]);
   const [config, setConfig] = useState<EventConfig | null>(null);
-  const [roster, setRoster] = useState<RosterMember[]>([]);
+  const [roster, setRoster] = useState<{ id: string; name: string; commission_pct: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

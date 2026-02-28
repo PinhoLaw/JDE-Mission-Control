@@ -105,7 +105,7 @@ interface CSVImportDialogProps {
       name: string;
       phone?: string | null;
       email?: string | null;
-      role: string;
+      role: "manager" | "team_leader" | "fi_manager" | "sales" | "closer";
       team?: string | null;
       commission_pct?: number | null;
       notes?: string | null;
@@ -226,7 +226,7 @@ export function CSVImportDialog({
         name: string;
         phone?: string | null;
         email?: string | null;
-        role: string;
+        role: "manager" | "team_leader" | "fi_manager" | "sales" | "closer";
         team?: string | null;
         commission_pct?: number | null;
         notes?: string | null;
