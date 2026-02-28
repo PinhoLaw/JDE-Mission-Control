@@ -66,6 +66,7 @@ import {
   updateVehicleStatus,
   deleteVehicles,
 } from "@/lib/actions/inventory";
+import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import { uploadVehiclePhoto } from "@/lib/actions/photos";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -899,10 +900,11 @@ export default function InventoryPage() {
 
         {/* Bulk actions */}
         {selectedIds.length > 0 && (
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-sm text-muted-foreground">
-              {selectedIds.length} selected
-            </span>
+          <BulkActionsToolbar
+            selectedCount={selectedIds.length}
+            onClearSelection={() => setRowSelection({})}
+            isLoading={bulkLoading}
+          >
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" disabled={bulkLoading}>
@@ -910,7 +912,7 @@ export default function InventoryPage() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <>
-                      Bulk Actions <ChevronDown className="ml-1 h-3 w-3" />
+                      Change Status <ChevronDown className="ml-1 h-3 w-3" />
                     </>
                   )}
                 </Button>
@@ -936,16 +938,18 @@ export default function InventoryPage() {
                 >
                   Mark Wholesale
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="text-red-600"
-                  onClick={handleBulkDelete}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" /> Delete Selected
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              disabled={bulkLoading}
+              onClick={handleBulkDelete}
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" /> Delete Selected
+            </Button>
+          </BulkActionsToolbar>
         )}
       </div>
 

@@ -14,6 +14,9 @@ import {
   fetchRosterForEvent,
   copyRosterFromEvent,
   importRosterMembers,
+  bulkUpdateRosterStatus,
+  bulkAssignTeam,
+  bulkDeleteRosterMembers,
 } from "@/lib/actions/roster";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +59,13 @@ import { EditRosterMemberForm } from "@/components/roster/edit-roster-member-for
 import { EditLenderForm } from "@/components/roster/edit-lender-form";
 import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
 import { CSVImportDialog } from "@/components/roster/csv-import-dialog";
+import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Plus,
   Users,
@@ -70,6 +80,7 @@ import {
   Upload,
   Pencil,
   FileSpreadsheet,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
@@ -267,12 +278,17 @@ export default function RosterPage() {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [csvImportOpen, setCSVImportOpen] = useState(false);
 
+  // Bulk selection
+  const [selectedRosterIds, setSelectedRosterIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+
   // ---------- Data fetching + realtime ----------
 
   useEffect(() => {
     if (!currentEvent) return;
 
     setLoading(true);
+    setSelectedRosterIds(new Set());
     const supabase = createClient();
 
     // Initial fetch
@@ -405,6 +421,162 @@ export default function RosterPage() {
     );
     return { total, confirmed, active, byRole };
   }, [roster]);
+
+  // Unique teams for bulk assign dropdown
+  const uniqueTeams = useMemo(
+    () =>
+      Array.from(
+        new Set(roster.map((m) => m.team).filter((t): t is string => !!t)),
+      ).sort(),
+    [roster],
+  );
+
+  // ---------- Selection helpers ----------
+
+  const toggleRosterSelection = useCallback((id: string) => {
+    setSelectedRosterIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAllRoster = useCallback(() => {
+    setSelectedRosterIds((prev) => {
+      if (prev.size === roster.length) return new Set();
+      return new Set(roster.map((m) => m.id));
+    });
+  }, [roster]);
+
+  const clearRosterSelection = useCallback(() => {
+    setSelectedRosterIds(new Set());
+  }, []);
+
+  // ---------- Bulk action handlers ----------
+
+  const handleBulkMarkConfirmed = useCallback(
+    async (confirmed: boolean) => {
+      if (!currentEvent || selectedRosterIds.size === 0) return;
+      setBulkLoading(true);
+      try {
+        await bulkUpdateRosterStatus(
+          Array.from(selectedRosterIds),
+          currentEvent.id,
+          { confirmed },
+        );
+        toast.success(
+          `${selectedRosterIds.size} member${selectedRosterIds.size !== 1 ? "s" : ""} ${confirmed ? "confirmed" : "unconfirmed"}`,
+        );
+
+        // Fire-and-forget: update sheet rows
+        const members = roster.filter((m) => selectedRosterIds.has(m.id));
+        for (const member of members) {
+          updateRosterMemberOnSheet({ ...member, confirmed })
+            .then(() => setLastSyncedAt(new Date()))
+            .catch(() => {});
+        }
+
+        clearRosterSelection();
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to update members",
+        );
+      } finally {
+        setBulkLoading(false);
+      }
+    },
+    [currentEvent, selectedRosterIds, roster, clearRosterSelection],
+  );
+
+  const handleBulkMarkActive = useCallback(
+    async (active: boolean) => {
+      if (!currentEvent || selectedRosterIds.size === 0) return;
+      setBulkLoading(true);
+      try {
+        await bulkUpdateRosterStatus(
+          Array.from(selectedRosterIds),
+          currentEvent.id,
+          { active },
+        );
+        toast.success(
+          `${selectedRosterIds.size} member${selectedRosterIds.size !== 1 ? "s" : ""} ${active ? "activated" : "deactivated"}`,
+        );
+
+        // Fire-and-forget: update sheet rows
+        const members = roster.filter((m) => selectedRosterIds.has(m.id));
+        for (const member of members) {
+          updateRosterMemberOnSheet({ ...member, active })
+            .then(() => setLastSyncedAt(new Date()))
+            .catch(() => {});
+        }
+
+        clearRosterSelection();
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to update members",
+        );
+      } finally {
+        setBulkLoading(false);
+      }
+    },
+    [currentEvent, selectedRosterIds, roster, clearRosterSelection],
+  );
+
+  const handleBulkAssignTeam = useCallback(
+    async (team: string) => {
+      if (!currentEvent || selectedRosterIds.size === 0) return;
+      setBulkLoading(true);
+      try {
+        await bulkAssignTeam(
+          Array.from(selectedRosterIds),
+          currentEvent.id,
+          team,
+        );
+        toast.success(
+          `${selectedRosterIds.size} member${selectedRosterIds.size !== 1 ? "s" : ""} assigned to ${team}`,
+        );
+
+        // Fire-and-forget: update sheet rows
+        const members = roster.filter((m) => selectedRosterIds.has(m.id));
+        for (const member of members) {
+          updateRosterMemberOnSheet({ ...member, team })
+            .then(() => setLastSyncedAt(new Date()))
+            .catch(() => {});
+        }
+
+        clearRosterSelection();
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to assign team",
+        );
+      } finally {
+        setBulkLoading(false);
+      }
+    },
+    [currentEvent, selectedRosterIds, roster, clearRosterSelection],
+  );
+
+  const handleBulkDeleteRoster = useCallback(async () => {
+    if (!currentEvent || selectedRosterIds.size === 0) return;
+    setBulkLoading(true);
+    try {
+      await bulkDeleteRosterMembers(
+        Array.from(selectedRosterIds),
+        currentEvent.id,
+      );
+      toast.success(
+        `${selectedRosterIds.size} member${selectedRosterIds.size !== 1 ? "s" : ""} removed`,
+      );
+      clearRosterSelection();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to delete members",
+      );
+    } finally {
+      setBulkLoading(false);
+    }
+  }, [currentEvent, selectedRosterIds, clearRosterSelection]);
 
   // ---------- Handlers ----------
 
@@ -1392,6 +1564,72 @@ export default function RosterPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Bulk actions toolbar */}
+          <BulkActionsToolbar
+            selectedCount={selectedRosterIds.size}
+            onClearSelection={clearRosterSelection}
+            isLoading={bulkLoading}
+          >
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={bulkLoading}
+              onClick={() => handleBulkMarkConfirmed(true)}
+            >
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+              Mark Confirmed
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={bulkLoading}
+              onClick={() => handleBulkMarkActive(true)}
+            >
+              Mark Active
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={bulkLoading}
+              onClick={() => handleBulkMarkActive(false)}
+            >
+              Mark Inactive
+            </Button>
+            {uniqueTeams.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={bulkLoading}
+                  >
+                    Assign Team
+                    <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {uniqueTeams.map((team) => (
+                    <DropdownMenuItem
+                      key={team}
+                      onClick={() => handleBulkAssignTeam(team)}
+                    >
+                      {team}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={bulkLoading}
+              onClick={handleBulkDeleteRoster}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Delete
+            </Button>
+          </BulkActionsToolbar>
+
           {roster.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Users className="h-12 w-12 text-muted-foreground/50 mb-3" />
@@ -1410,6 +1648,16 @@ export default function RosterPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={
+                          roster.length > 0 &&
+                          selectedRosterIds.size === roster.length
+                        }
+                        onCheckedChange={toggleAllRoster}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead className="hidden sm:table-cell">Team</TableHead>
@@ -1426,7 +1674,19 @@ export default function RosterPage() {
                     <TableRow
                       key={member.id}
                       className={!member.active ? "opacity-50" : undefined}
+                      data-state={
+                        selectedRosterIds.has(member.id) ? "selected" : undefined
+                      }
                     >
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedRosterIds.has(member.id)}
+                          onCheckedChange={() =>
+                            toggleRosterSelection(member.id)
+                          }
+                          aria-label={`Select ${member.name}`}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium whitespace-nowrap">
                         {member.name}
                       </TableCell>

@@ -318,3 +318,61 @@ export async function deleteLender(lenderId: string, eventId: string) {
   revalidatePath("/dashboard/roster");
   return { success: true };
 }
+
+// ── Bulk roster operations ──────────────────────────────
+
+export async function bulkUpdateRosterStatus(
+  memberIds: string[],
+  eventId: string,
+  updates: { confirmed?: boolean; active?: boolean },
+) {
+  const { supabase } = await requireMembership(eventId, ["owner", "manager"]);
+  if (memberIds.length === 0) return { success: true, count: 0 };
+
+  const { error } = await supabase
+    .from("roster")
+    .update(updates)
+    .in("id", memberIds)
+    .eq("event_id", eventId);
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard/roster");
+  return { success: true, count: memberIds.length };
+}
+
+export async function bulkAssignTeam(
+  memberIds: string[],
+  eventId: string,
+  team: string,
+) {
+  const { supabase } = await requireMembership(eventId, ["owner", "manager"]);
+  if (memberIds.length === 0) return { success: true, count: 0 };
+
+  const { error } = await supabase
+    .from("roster")
+    .update({ team })
+    .in("id", memberIds)
+    .eq("event_id", eventId);
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard/roster");
+  return { success: true, count: memberIds.length };
+}
+
+export async function bulkDeleteRosterMembers(
+  memberIds: string[],
+  eventId: string,
+) {
+  const { supabase } = await requireMembership(eventId, ["owner", "manager"]);
+  if (memberIds.length === 0) return { success: true, count: 0 };
+
+  const { error } = await supabase
+    .from("roster")
+    .delete()
+    .in("id", memberIds)
+    .eq("event_id", eventId);
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard/roster");
+  return { success: true, count: memberIds.length };
+}

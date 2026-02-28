@@ -323,3 +323,42 @@ export async function lookupVehicle(stockNumber: string, eventId: string) {
 
   return vehicle;
 }
+
+// ── Bulk deal operations ────────────────────────────────
+
+export async function bulkDeleteDeals(
+  dealIds: string[],
+  eventId: string,
+) {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", eventId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership || !["owner", "manager"].includes(membership.role)) {
+    throw new Error("Only owners and managers can delete deals");
+  }
+
+  if (dealIds.length === 0) return { success: true, count: 0 };
+
+  const { error } = await supabase
+    .from("sales_deals")
+    .delete()
+    .in("id", dealIds)
+    .eq("event_id", eventId);
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard");
+  return { success: true, count: dealIds.length };
+}

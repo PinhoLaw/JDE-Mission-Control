@@ -12,6 +12,7 @@ import {
   getSortedRowModel,
   type ColumnDef,
   type SortingState,
+  type RowSelectionState,
   flexRender,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -26,6 +27,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import {
   Card,
   CardContent,
@@ -61,11 +64,13 @@ import {
   Handshake,
   MoreHorizontal,
   Pencil,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import { EditDealForm } from "@/components/deals/edit-deal-form";
 import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
+import { bulkDeleteDeals } from "@/lib/actions/deals";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
@@ -86,6 +91,8 @@ export default function DealsPage() {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   useEffect(() => {
     if (!currentEvent) return;
@@ -151,6 +158,25 @@ export default function DealsPage() {
 
   const columns: ColumnDef<Deal>[] = useMemo(
     () => [
+      {
+        id: "select",
+        header: ({ table: t }) => (
+          <Checkbox
+            checked={t.getIsAllRowsSelected()}
+            onCheckedChange={(value) => t.toggleAllRowsSelected(!!value)}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label="Select row"
+          />
+        ),
+        enableSorting: false,
+        size: 40,
+      },
       { accessorKey: "deal_number", header: "Deal #", size: 60 },
       {
         accessorKey: "status",
@@ -273,15 +299,42 @@ export default function DealsPage() {
   const table = useReactTable({
     data: filteredDeals,
     columns,
-    state: { sorting, globalFilter },
+    state: { sorting, globalFilter, rowSelection },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    enableRowSelection: true,
   });
 
   const { rows } = table.getRowModel();
+
+  const selectedIds = Object.keys(rowSelection)
+    .filter((key) => rowSelection[key])
+    .map((key) => {
+      const row = rows[parseInt(key)];
+      return row?.original?.id;
+    })
+    .filter(Boolean) as string[];
+
+  const handleBulkDeleteDeals = async () => {
+    if (!currentEvent || selectedIds.length === 0) return;
+    setBulkLoading(true);
+    const previousDeals = deals;
+    setDeals((prev) => prev.filter((d) => !selectedIds.includes(d.id)));
+    try {
+      await bulkDeleteDeals(selectedIds, currentEvent.id);
+      toast.success(`${selectedIds.length} deal(s) deleted`);
+      setRowSelection({});
+    } catch (err) {
+      setDeals(previousDeals);
+      toast.error(err instanceof Error ? err.message : "Failed to delete deals");
+    } finally {
+      setBulkLoading(false);
+    }
+  };
 
   // Virtualization for large deal lists
   const rowVirtualizer = useVirtualizer({
@@ -419,6 +472,26 @@ export default function DealsPage() {
           </SelectContent>
         </Select>
       </div>
+
+      {/* Bulk Actions */}
+      {selectedIds.length > 0 && (
+        <BulkActionsToolbar
+          selectedCount={selectedIds.length}
+          onClearSelection={() => setRowSelection({})}
+          isLoading={bulkLoading}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            disabled={bulkLoading}
+            onClick={handleBulkDeleteDeals}
+          >
+            <Trash2 className="mr-1.5 h-4 w-4" />
+            Delete Selected
+          </Button>
+        </BulkActionsToolbar>
+      )}
 
       {/* Virtualized Table */}
       {loading ? (
