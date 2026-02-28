@@ -198,7 +198,7 @@ export default function SheetsTestPage() {
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                Sheets Test &mdash; Dashboard Push Push
+                Sheets Test &mdash; Dashboard Push
               </h1>
               {lastFetched && (
                 <p className="text-xs text-slate-500 dark:text-slate-400">
