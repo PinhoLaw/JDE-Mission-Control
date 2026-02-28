@@ -40,14 +40,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
   ArrowUpDown,
   Download,
   Plus,
   Loader2,
   Handshake,
+  MoreHorizontal,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
+import { EditDealForm } from "@/components/deals/edit-deal-form";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
@@ -66,6 +83,7 @@ export default function DealsPage() {
   const [globalFilter, setGlobalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
 
   useEffect(() => {
     if (!currentEvent) return;
@@ -224,6 +242,27 @@ export default function DealsPage() {
               W
             </Badge>
           ) : null,
+      },
+      {
+        id: "actions",
+        header: "",
+        size: 50,
+        cell: ({ row }) => (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-8 w-8 p-0">
+                <span className="sr-only">Open menu</span>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setEditingDeal(row.original)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit Deal
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ),
       },
     ],
     [],
@@ -492,6 +531,33 @@ export default function DealsPage() {
           </div>
         </>
       )}
+
+      {/* Edit Deal Dialog */}
+      <Dialog
+        open={editingDeal !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingDeal(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] p-0">
+          <DialogHeader className="px-6 pt-6 pb-0">
+            <DialogTitle>Edit Deal</DialogTitle>
+            <DialogDescription>
+              {editingDeal
+                ? `${editingDeal.customer_name ?? ""} — ${editingDeal.stock_number ?? "No stock #"}`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[calc(90vh-80px)] px-6 pb-6">
+            {editingDeal && (
+              <EditDealForm
+                deal={editingDeal}
+                onSuccess={() => setEditingDeal(null)}
+              />
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

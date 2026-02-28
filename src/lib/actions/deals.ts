@@ -179,6 +179,120 @@ export async function createDeal(input: NewDealInput) {
 }
 
 // ────────────────────────────────────────────────────────
+// Update an existing sales deal
+// ────────────────────────────────────────────────────────
+const updateDealSchema = newDealSchema.extend({
+  id: z.string().uuid(),
+});
+
+export type UpdateDealInput = z.infer<typeof updateDealSchema>;
+
+export async function updateDeal(input: UpdateDealInput) {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", input.event_id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership) throw new Error("Not a member of this event");
+
+  const parsed = updateDealSchema.safeParse(input);
+  if (!parsed.success) {
+    const errs = parsed.error.issues.map((e) => `${e.path}: ${e.message}`);
+    throw new Error(errs.join("; "));
+  }
+
+  const d = parsed.data;
+
+  // Auto-calculations (same as createDeal)
+  const frontGross =
+    d.front_gross ?? (d.selling_price ?? 0) - (d.vehicle_cost ?? 0);
+  const fiTotal =
+    (d.reserve ?? 0) +
+    (d.warranty ?? 0) +
+    (d.gap ?? 0) +
+    (d.aftermarket_1 ?? 0) +
+    (d.aftermarket_2 ?? 0);
+  const backGross = fiTotal + (d.doc_fee ?? 0);
+  const totalGross = frontGross + backGross;
+  const pvr = totalGross;
+
+  const isWashout = frontGross < 0;
+  const washoutAmount = isWashout ? Math.abs(frontGross) : 0;
+
+  const { data: deal, error } = await supabase
+    .from("sales_deals")
+    .update({
+      vehicle_id: d.vehicle_id ?? null,
+      deal_number: d.deal_number ?? null,
+      sale_day: d.sale_day ?? null,
+      sale_date: d.sale_date ?? null,
+      customer_name: d.customer_name,
+      customer_zip: d.customer_zip ?? null,
+      customer_phone: d.customer_phone ?? null,
+      stock_number: d.stock_number ?? null,
+      vehicle_year: d.vehicle_year ?? null,
+      vehicle_make: d.vehicle_make ?? null,
+      vehicle_model: d.vehicle_model ?? null,
+      vehicle_type: d.vehicle_type ?? null,
+      vehicle_cost: d.vehicle_cost ?? null,
+      new_used: d.new_used,
+      trade_year: d.trade_year ?? null,
+      trade_make: d.trade_make ?? null,
+      trade_model: d.trade_model ?? null,
+      trade_type: d.trade_type ?? null,
+      trade_mileage: d.trade_mileage ?? null,
+      trade_acv: d.trade_acv ?? null,
+      trade_payoff: d.trade_payoff ?? null,
+      salesperson: d.salesperson ?? null,
+      salesperson_id: d.salesperson_id ?? null,
+      salesperson_pct: d.salesperson_pct ?? null,
+      second_salesperson: d.second_salesperson ?? null,
+      second_sp_id: d.second_sp_id ?? null,
+      second_sp_pct: d.second_sp_pct ?? null,
+      selling_price: d.selling_price,
+      front_gross: frontGross,
+      lender: d.lender ?? null,
+      rate: d.rate ?? null,
+      finance_type: d.finance_type,
+      reserve: d.reserve ?? null,
+      warranty: d.warranty ?? null,
+      gap: d.gap ?? null,
+      aftermarket_1: d.aftermarket_1 ?? null,
+      aftermarket_2: d.aftermarket_2 ?? null,
+      doc_fee: d.doc_fee ?? null,
+      fi_total: fiTotal,
+      back_gross: backGross,
+      total_gross: totalGross,
+      pvr: pvr,
+      is_washout: isWashout,
+      washout_amount: isWashout ? washoutAmount : null,
+      source: d.source ?? null,
+      notes: d.notes ?? null,
+    })
+    .eq("id", d.id)
+    .eq("event_id", d.event_id)
+    .select("id")
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard");
+
+  return { success: true, dealId: deal.id };
+}
+
+// ────────────────────────────────────────────────────────
 // Look up vehicle by stock number for deal form
 // ────────────────────────────────────────────────────────
 export async function lookupVehicle(stockNumber: string, eventId: string) {

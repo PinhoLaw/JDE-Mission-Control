@@ -441,6 +441,233 @@ export async function updateRowByField(
   };
 }
 
+/**
+ * Update an existing row by matching a column value, using the raw
+ * Google Sheets API. Bypasses the google-spreadsheet library so it
+ * works on sheets with duplicate headers (e.g. YEAR appears twice).
+ *
+ * 1. GET all values to find the row where column[matchColumnIndex] === matchValue
+ * 2. PUT the new values into that row
+ *
+ * @param sheetTitle       — e.g. "FORD DEAL LOG"
+ * @param matchColumnIndex — 0-based column index to search (e.g. 1 for STOCK#)
+ * @param matchValue       — value to match in that column
+ * @param values           — full row of values in column order (A, B, C, ...)
+ */
+export async function updateRowRawByField(
+  sheetTitle: string,
+  matchColumnIndex: number,
+  matchValue: string,
+  values: unknown[],
+): Promise<UpdateResult> {
+  const auth = createAuthClient();
+  await auth.authorize();
+  const token = (await auth.getAccessToken()).token;
+
+  const spreadsheetId = getSpreadsheetId();
+  const readRange = `'${sheetTitle}'!A:ZZ`;
+
+  // Step 1: Read all rows to find the matching one
+  const readUrl =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `/values/${encodeURIComponent(readRange)}`;
+
+  const readRes = await fetch(readUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!readRes.ok) {
+    const errBody = await readRes.text();
+    throw new Error(
+      `[GoogleSheets] updateRowRawByField read failed (${readRes.status}): ${errBody}`,
+    );
+  }
+
+  const readData = await readRes.json();
+  const allRows: string[][] = readData.values ?? [];
+
+  // Find matching row (skip header row at index 0)
+  let targetSheetRow = -1;
+  for (let i = 1; i < allRows.length; i++) {
+    const cellValue = allRows[i]?.[matchColumnIndex] ?? "";
+    if (cellValue === matchValue) {
+      targetSheetRow = i + 1; // 1-based sheet row number (index 0 = row 1)
+      break;
+    }
+  }
+
+  if (targetSheetRow === -1) {
+    throw new Error(
+      `[GoogleSheets] No row found where column ${matchColumnIndex} = "${matchValue}" ` +
+        `in sheet "${sheetTitle}".`,
+    );
+  }
+
+  // Step 2: Update that row
+  const stringValues = values.map((v) => (v != null ? String(v) : ""));
+  const updateRange = `'${sheetTitle}'!A${targetSheetRow}:ZZ${targetSheetRow}`;
+
+  const updateUrl =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `/values/${encodeURIComponent(updateRange)}` +
+    `?valueInputOption=USER_ENTERED`;
+
+  const updateRes = await fetch(updateUrl, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ values: [stringValues] }),
+  });
+
+  if (!updateRes.ok) {
+    const errBody = await updateRes.text();
+    throw new Error(
+      `[GoogleSheets] updateRowRawByField update failed (${updateRes.status}): ${errBody}`,
+    );
+  }
+
+  console.log(
+    `[GoogleSheets] updateRowRawByField("${sheetTitle}", col ${matchColumnIndex}="${matchValue}") → ` +
+      `row ${targetSheetRow}, ${stringValues.length} columns`,
+  );
+
+  return {
+    success: true,
+    rowNumber: targetSheetRow,
+    updatedFields: ["raw_update"],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// READ RAW — Pull all values as a 2D array (bypasses header parsing)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Read all values from a sheet as a raw 2D string array.
+ * Bypasses the google-spreadsheet library's header parsing —
+ * useful for sheets with duplicate headers or when you need
+ * positional column access.
+ *
+ * @param sheetTitle — e.g. "Roster Push"
+ */
+export async function readSheetRaw(
+  sheetTitle: string,
+): Promise<{ values: string[][] }> {
+  const auth = createAuthClient();
+  await auth.authorize();
+  const token = (await auth.getAccessToken()).token;
+
+  const spreadsheetId = getSpreadsheetId();
+  const range = `'${sheetTitle}'!A:ZZ`;
+
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `/values/${encodeURIComponent(range)}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(
+      `[GoogleSheets] readSheetRaw failed (${res.status}): ${errBody}`,
+    );
+  }
+
+  const data = await res.json();
+  const values: string[][] = (data.values ?? []).map((row: unknown[]) =>
+    row.map((cell) => (cell != null ? String(cell) : "")),
+  );
+
+  console.log(
+    `[GoogleSheets] readSheetRaw("${sheetTitle}") → ${values.length} rows`,
+  );
+
+  return { values };
+}
+
+// ─────────────────────────────────────────────────────────────
+// WRITE RAW — Clear and replace all data in a sheet
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Clear the sheet and write all rows from scratch.
+ * Uses the raw Google Sheets API (values.clear + values.update).
+ *
+ * Useful for full-sync operations where the dashboard is the
+ * source of truth and we want the sheet to mirror it exactly.
+ *
+ * @param sheetTitle — e.g. "Roster Push"
+ * @param values     — 2D array of values (row 0 = header, row 1+ = data)
+ */
+export async function writeSheetRaw(
+  sheetTitle: string,
+  values: unknown[][],
+): Promise<{ success: boolean; rowCount: number }> {
+  const auth = createAuthClient();
+  await auth.authorize();
+  const token = (await auth.getAccessToken()).token;
+
+  const spreadsheetId = getSpreadsheetId();
+  const range = `'${sheetTitle}'!A1:ZZ`;
+
+  // Step 1: Clear existing data
+  const clearUrl =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `/values/${encodeURIComponent(range)}:clear`;
+
+  const clearRes = await fetch(clearUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!clearRes.ok) {
+    const errBody = await clearRes.text();
+    throw new Error(
+      `[GoogleSheets] writeSheetRaw clear failed (${clearRes.status}): ${errBody}`,
+    );
+  }
+
+  // Step 2: Write new data
+  const stringValues = values.map((row) =>
+    row.map((v) => (v != null ? String(v) : "")),
+  );
+
+  const updateUrl =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `/values/${encodeURIComponent(range)}` +
+    `?valueInputOption=USER_ENTERED`;
+
+  const updateRes = await fetch(updateUrl, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ values: stringValues }),
+  });
+
+  if (!updateRes.ok) {
+    const errBody = await updateRes.text();
+    throw new Error(
+      `[GoogleSheets] writeSheetRaw write failed (${updateRes.status}): ${errBody}`,
+    );
+  }
+
+  console.log(
+    `[GoogleSheets] writeSheetRaw("${sheetTitle}") → ${values.length} rows written`,
+  );
+
+  return { success: true, rowCount: values.length };
+}
+
 // ─────────────────────────────────────────────────────────────
 // DELETE — Remove a row from the sheet
 // ─────────────────────────────────────────────────────────────

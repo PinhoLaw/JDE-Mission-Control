@@ -36,11 +36,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
   readSheet,
+  readSheetRaw,
   appendRow,
   appendRowRaw,
   appendRows,
   updateRow,
   updateRowByField,
+  updateRowRawByField,
+  writeSheetRaw,
   deleteRow,
   listSheets,
 } from "@/lib/services/googleSheets";
@@ -93,17 +96,39 @@ interface AppendRawAction {
   values: unknown[];
 }
 
+interface UpdateRawAction {
+  action: "update_raw";
+  sheetTitle: string;
+  matchColumnIndex: number;
+  matchValue: string;
+  values: unknown[];
+}
+
+interface ReadRawAction {
+  action: "read_raw";
+  sheetTitle: string;
+}
+
+interface WriteRawAction {
+  action: "write_raw";
+  sheetTitle: string;
+  values: unknown[][];
+}
+
 interface ListSheetsAction {
   action: "list_sheets";
 }
 
 type SheetAction =
   | ReadAction
+  | ReadRawAction
   | AppendAction
   | AppendRawAction
   | AppendBatchAction
   | UpdateAction
   | UpdateByFieldAction
+  | UpdateRawAction
+  | WriteRawAction
   | DeleteAction
   | ListSheetsAction;
 
@@ -125,7 +150,7 @@ export async function POST(request: NextRequest) {
 
   if (!body.action) {
     return NextResponse.json(
-      { error: "Missing 'action' field. Expected: read | append | append_raw | append_batch | update | update_by_field | delete | list_sheets" },
+      { error: "Missing 'action' field. Expected: read | read_raw | append | append_raw | append_batch | update | update_by_field | update_raw | write_raw | delete | list_sheets" },
       { status: 400 },
     );
   }
@@ -143,6 +168,21 @@ export async function POST(request: NextRequest) {
         }
         const result = await readSheet(sheetTitle);
         return NextResponse.json(result, {
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+
+      // ── READ RAW (positional 2D array) ──────────────────────
+      case "read_raw": {
+        const { sheetTitle } = body;
+        if (!sheetTitle) {
+          return NextResponse.json(
+            { error: "Missing 'sheetTitle' for read_raw action" },
+            { status: 400 },
+          );
+        }
+        const rawResult = await readSheetRaw(sheetTitle);
+        return NextResponse.json(rawResult, {
           headers: { "Cache-Control": "no-store" },
         });
       }
@@ -217,6 +257,37 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(result);
       }
 
+      // ── UPDATE RAW (find by column index + update entire row) ──
+      case "update_raw": {
+        const { sheetTitle, matchColumnIndex, matchValue, values } = body;
+        if (!sheetTitle || matchColumnIndex == null || !matchValue || !Array.isArray(values)) {
+          return NextResponse.json(
+            { error: "Missing required fields for update_raw action. Need: sheetTitle, matchColumnIndex, matchValue, values" },
+            { status: 400 },
+          );
+        }
+        const result = await updateRowRawByField(
+          sheetTitle,
+          matchColumnIndex,
+          matchValue,
+          values,
+        );
+        return NextResponse.json(result);
+      }
+
+      // ── WRITE RAW (clear & replace all rows) ────────────────
+      case "write_raw": {
+        const { sheetTitle, values } = body;
+        if (!sheetTitle || !Array.isArray(values)) {
+          return NextResponse.json(
+            { error: "Missing 'sheetTitle' or 'values' array for write_raw action" },
+            { status: 400 },
+          );
+        }
+        const writeResult = await writeSheetRaw(sheetTitle, values);
+        return NextResponse.json(writeResult);
+      }
+
       // ── DELETE ─────────────────────────────────────────────
       case "delete": {
         const { sheetTitle, rowIndex } = body;
@@ -243,7 +314,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error: `Unknown action: "${(body as Record<string, unknown>).action}". ` +
-              `Expected: read | append | append_raw | append_batch | update | update_by_field | delete | list_sheets`,
+              `Expected: read | read_raw | append | append_raw | append_batch | update | update_by_field | update_raw | write_raw | delete | list_sheets`,
           },
           { status: 400 },
         );

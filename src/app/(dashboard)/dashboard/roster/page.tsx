@@ -10,6 +10,9 @@ import {
   deleteRosterMember,
   addLender,
   deleteLender,
+  fetchRosterForEvent,
+  copyRosterFromEvent,
+  importRosterMembers,
 } from "@/lib/actions/roster";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +49,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { EditRosterMemberForm } from "@/components/roster/edit-roster-member-form";
 import {
   Plus,
   Users,
@@ -55,6 +61,10 @@ import {
   XCircle,
   UserPlus,
   Building2,
+  Copy,
+  Download,
+  Upload,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
@@ -72,6 +82,11 @@ const ROLE_LABELS: Record<RosterRole, string> = {
   closer: "Closer",
   manager: "Manager",
 };
+
+// Reverse mapping: display label → DB key (for sheet import)
+const ROLE_FROM_LABEL: Record<string, RosterRole> = Object.fromEntries(
+  Object.entries(ROLE_LABELS).map(([key, label]) => [label.toLowerCase(), key as RosterRole]),
+) as Record<string, RosterRole>;
 
 const ROLE_COLORS: Record<RosterRole, string> = {
   sales: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
@@ -100,11 +115,113 @@ const EMPTY_LENDER_FORM = {
 };
 
 // ---------------------------------------------------------------------------
+// Sheet push helpers — "Roster Push" column mapping:
+// A=ID, B=NAME, C=PHONE, D=EMAIL, E=ROLE, F=TEAM, G=COMM %, H=CONFIRMED, I=ACTIVE, J=NOTES
+// ---------------------------------------------------------------------------
+
+function rosterMemberToRow(member: {
+  id: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  role: string;
+  team?: string | null;
+  commission_pct?: number | null;
+  confirmed: boolean;
+  active: boolean;
+  notes?: string | null;
+}): unknown[] {
+  return [
+    member.id,
+    member.name,
+    member.phone ?? "",
+    member.email ?? "",
+    ROLE_LABELS[member.role as RosterRole] ?? member.role,
+    member.team ?? "",
+    member.commission_pct != null ? (member.commission_pct * 100).toFixed(0) : "",
+    member.confirmed ? "YES" : "NO",
+    member.active ? "YES" : "NO",
+    member.notes ?? "",
+  ];
+}
+
+async function pushRosterMemberToSheet(member: {
+  id: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  role: string;
+  team?: string | null;
+  commission_pct?: number | null;
+  confirmed: boolean;
+  active: boolean;
+  notes?: string | null;
+}) {
+  const values = rosterMemberToRow(member);
+  const res = await fetch("/api/sheets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "append_raw",
+      sheetTitle: "Roster Push",
+      values,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? "Sheet push failed");
+  }
+  return res.json();
+}
+
+async function updateRosterMemberOnSheet(member: {
+  id: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  role: string;
+  team?: string | null;
+  commission_pct?: number | null;
+  confirmed: boolean;
+  active: boolean;
+  notes?: string | null;
+}) {
+  const values = rosterMemberToRow(member);
+  const res = await fetch("/api/sheets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "update_raw",
+      sheetTitle: "Roster Push",
+      matchColumnIndex: 0, // Match by ID (column A)
+      matchValue: member.id,
+      values,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? "Sheet update failed");
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Page Component
 // ---------------------------------------------------------------------------
 
+type SourceRosterMember = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  role: string;
+  team: string | null;
+  commission_pct: number | null;
+  notes: string | null;
+};
+
 export default function RosterPage() {
-  const { currentEvent } = useEvent();
+  const { currentEvent, availableEvents } = useEvent();
 
   // Data
   const [roster, setRoster] = useState<RosterMember[]>([]);
@@ -124,6 +241,23 @@ export default function RosterPage() {
   const [submittingLender, setSubmittingLender] = useState(false);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+
+  // Copy from event dialog
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false);
+  const [selectedSourceEventId, setSelectedSourceEventId] = useState("");
+  const [sourceRoster, setSourceRoster] = useState<SourceRosterMember[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [loadingSource, setLoadingSource] = useState(false);
+  const [copying, setCopying] = useState(false);
+
+  // Import / Push sheet sync
+  const [importingFromSheet, setImportingFromSheet] = useState(false);
+  const [pushingToSheet, setPushingToSheet] = useState(false);
+
+  // Edit member dialog
+  const [editingMember, setEditingMember] = useState<RosterMember | null>(null);
 
   // ---------- Data fetching + realtime ----------
 
@@ -239,6 +373,13 @@ export default function RosterPage() {
     };
   }, [currentEvent]);
 
+  // ---------- Derived: other events for copy ----------
+
+  const otherEvents = useMemo(
+    () => availableEvents.filter((e) => e.id !== currentEvent?.id),
+    [availableEvents, currentEvent],
+  );
+
   // ---------- Stats ----------
 
   const stats = useMemo(() => {
@@ -268,19 +409,38 @@ export default function RosterPage() {
 
     setSubmittingRoster(true);
     try {
-      await addRosterMember(currentEvent.id, {
+      const formData = {
         name: rosterForm.name.trim(),
         phone: rosterForm.phone.trim() || undefined,
         email: rosterForm.email.trim() || undefined,
         role: rosterForm.role,
         team: rosterForm.team.trim() || undefined,
         commission_pct: rosterForm.commission_pct
-          ? parseFloat(rosterForm.commission_pct)
+          ? parseFloat(rosterForm.commission_pct) / 100
           : undefined,
-      });
-      toast.success(`${rosterForm.name.trim()} added to roster`);
+      };
+      const result = await addRosterMember(currentEvent.id, formData);
+      toast.success(`${formData.name} added to roster`);
       setRosterForm(EMPTY_ROSTER_FORM);
       setRosterDialogOpen(false);
+
+      // Fire-and-forget: push to "Roster Push" sheet
+      pushRosterMemberToSheet({
+        id: result.memberId,
+        name: formData.name,
+        phone: formData.phone ?? null,
+        email: formData.email ?? null,
+        role: formData.role,
+        team: formData.team ?? null,
+        commission_pct: formData.commission_pct ?? null,
+        confirmed: false,
+        active: true,
+        notes: null,
+      })
+        .then(() => toast.success("Roster synced to sheet", { duration: 2000 }))
+        .catch((e: Error) =>
+          toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
+        );
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to add roster member",
@@ -295,12 +455,23 @@ export default function RosterPage() {
       if (!currentEvent) return;
       setTogglingIds((prev) => new Set(prev).add(member.id));
       try {
+        const newConfirmed = !member.confirmed;
         await updateRosterMember(member.id, currentEvent.id, {
-          confirmed: !member.confirmed,
+          confirmed: newConfirmed,
         });
         toast.success(
-          `${member.name} ${!member.confirmed ? "confirmed" : "unconfirmed"}`,
+          `${member.name} ${newConfirmed ? "confirmed" : "unconfirmed"}`,
         );
+
+        // Fire-and-forget: update sheet row
+        updateRosterMemberOnSheet({
+          ...member,
+          confirmed: newConfirmed,
+        })
+          .then(() => toast.success("Sheet updated", { duration: 2000 }))
+          .catch((e: Error) =>
+            toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
+          );
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to update member",
@@ -321,12 +492,23 @@ export default function RosterPage() {
       if (!currentEvent) return;
       setTogglingIds((prev) => new Set(prev).add(`active-${member.id}`));
       try {
+        const newActive = !member.active;
         await updateRosterMember(member.id, currentEvent.id, {
-          active: !member.active,
+          active: newActive,
         });
         toast.success(
-          `${member.name} ${!member.active ? "activated" : "deactivated"}`,
+          `${member.name} ${newActive ? "activated" : "deactivated"}`,
         );
+
+        // Fire-and-forget: update sheet row
+        updateRosterMemberOnSheet({
+          ...member,
+          active: newActive,
+        })
+          .then(() => toast.success("Sheet updated", { duration: 2000 }))
+          .catch((e: Error) =>
+            toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
+          );
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to update member",
@@ -415,6 +597,234 @@ export default function RosterPage() {
     },
     [currentEvent],
   );
+
+  // ---------- Copy from event handlers ----------
+
+  const handleSourceEventChange = useCallback(
+    async (eventId: string) => {
+      setSelectedSourceEventId(eventId);
+      setSourceRoster([]);
+      setSelectedMemberIds(new Set());
+      if (!eventId) return;
+
+      setLoadingSource(true);
+      try {
+        const members = await fetchRosterForEvent(eventId);
+        setSourceRoster(members);
+        setSelectedMemberIds(new Set(members.map((m) => m.id)));
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to load roster",
+        );
+      } finally {
+        setLoadingSource(false);
+      }
+    },
+    [],
+  );
+
+  const toggleMember = useCallback((memberId: string) => {
+    setSelectedMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    setSelectedMemberIds((prev) => {
+      if (prev.size === sourceRoster.length) return new Set();
+      return new Set(sourceRoster.map((m) => m.id));
+    });
+  }, [sourceRoster]);
+
+  const handleCopyRoster = useCallback(async () => {
+    if (!currentEvent || !selectedSourceEventId || selectedMemberIds.size === 0)
+      return;
+
+    setCopying(true);
+    try {
+      const { inserted, skippedCount } = await copyRosterFromEvent(
+        selectedSourceEventId,
+        currentEvent.id,
+        Array.from(selectedMemberIds),
+      );
+
+      const parts: string[] = [];
+      if (inserted.length > 0)
+        parts.push(
+          `${inserted.length} member${inserted.length !== 1 ? "s" : ""} copied`,
+        );
+      if (skippedCount > 0)
+        parts.push(
+          `${skippedCount} duplicate${skippedCount !== 1 ? "s" : ""} skipped`,
+        );
+      toast.success(parts.join(", "));
+
+      // Fire-and-forget: push each inserted member to "Roster Push" sheet
+      for (const member of inserted) {
+        pushRosterMemberToSheet({
+          id: member.id,
+          name: member.name,
+          phone: member.phone,
+          email: member.email,
+          role: member.role,
+          team: member.team,
+          commission_pct: member.commission_pct,
+          confirmed: member.confirmed,
+          active: member.active,
+          notes: member.notes,
+        })
+          .then(() => {})
+          .catch((e: Error) =>
+            toast.error(`Sheet sync failed for ${member.name}: ${e.message}`, {
+              duration: 4000,
+            }),
+          );
+      }
+
+      // Close dialog and reset
+      setCopyDialogOpen(false);
+      setSelectedSourceEventId("");
+      setSourceRoster([]);
+      setSelectedMemberIds(new Set());
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to copy roster",
+      );
+    } finally {
+      setCopying(false);
+    }
+  }, [currentEvent, selectedSourceEventId, selectedMemberIds]);
+
+  // ---------- Import from Sheet ----------
+
+  const handleImportFromSheet = useCallback(async () => {
+    if (!currentEvent) return;
+    setImportingFromSheet(true);
+    try {
+      // 1. Read raw data from "Roster Push" sheet
+      const res = await fetch("/api/sheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "read_raw", sheetTitle: "Roster Push" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to read sheet");
+      }
+      const { values } = (await res.json()) as { values: string[][] };
+
+      if (!values || values.length === 0) {
+        toast.info("No data found in the Roster Push sheet");
+        return;
+      }
+
+      // 2. Parse rows → member objects
+      //    Columns: A=ID, B=NAME, C=PHONE, D=EMAIL, E=ROLE, F=TEAM,
+      //             G=COMM %, H=CONFIRMED, I=ACTIVE, J=NOTES
+      //    Skip header row (first row where col 0 = "ID" or col 1 = "NAME")
+      const dataRows = values.filter((row, idx) => {
+        if (idx === 0 && (row[0]?.toUpperCase() === "ID" || row[1]?.toUpperCase() === "NAME")) {
+          return false; // skip header
+        }
+        return true;
+      });
+
+      const members = dataRows
+        .filter((row) => row[1]?.trim()) // must have a name
+        .map((row) => {
+          const roleLabel = (row[4] ?? "").toLowerCase().trim();
+          const role = ROLE_FROM_LABEL[roleLabel] ?? "sales";
+          const commPctStr = (row[6] ?? "").replace("%", "").trim();
+          const commPct = commPctStr ? parseFloat(commPctStr) / 100 : null;
+          return {
+            id: row[0]?.trim() || undefined,
+            name: row[1].trim(),
+            phone: row[2]?.trim() || null,
+            email: row[3]?.trim() || null,
+            role,
+            team: row[5]?.trim() || null,
+            commission_pct: commPct,
+            confirmed: (row[7] ?? "").toUpperCase() === "YES",
+            active: (row[8] ?? "").toUpperCase() !== "NO", // default true
+            notes: row[9]?.trim() || null,
+          };
+        });
+
+      if (members.length === 0) {
+        toast.info("No valid roster members found in the sheet");
+        return;
+      }
+
+      // 3. Upsert into Supabase via server action
+      const result = await importRosterMembers(currentEvent.id, members);
+
+      const parts: string[] = [];
+      if (result.insertedCount > 0)
+        parts.push(`${result.insertedCount} imported`);
+      if (result.updatedCount > 0)
+        parts.push(`${result.updatedCount} updated`);
+      if (result.skippedCount > 0)
+        parts.push(`${result.skippedCount} duplicates skipped`);
+      toast.success(
+        parts.length > 0 ? parts.join(", ") : "Roster is already up to date",
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to import from sheet",
+      );
+    } finally {
+      setImportingFromSheet(false);
+    }
+  }, [currentEvent]);
+
+  // ---------- Push Roster to Sheet ----------
+
+  const handlePushRosterToSheet = useCallback(async () => {
+    if (!currentEvent || roster.length === 0) return;
+    setPushingToSheet(true);
+    try {
+      // Build header + data rows
+      const header = [
+        "ID",
+        "NAME",
+        "PHONE",
+        "EMAIL",
+        "ROLE",
+        "TEAM",
+        "COMM %",
+        "CONFIRMED",
+        "ACTIVE",
+        "NOTES",
+      ];
+      const dataRows = roster.map((m) => rosterMemberToRow(m));
+
+      // Write to sheet (clear + replace)
+      const res = await fetch("/api/sheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "write_raw",
+          sheetTitle: "Roster Push",
+          values: [header, ...dataRows],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to push to sheet");
+      }
+
+      toast.success(`${roster.length} roster members pushed to sheet`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to push roster to sheet",
+      );
+    } finally {
+      setPushingToSheet(false);
+    }
+  }, [currentEvent, roster]);
 
   // ---------- No event selected ----------
 
@@ -582,6 +992,206 @@ export default function RosterPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          {/* Copy from Event Dialog */}
+          <Dialog
+            open={copyDialogOpen}
+            onOpenChange={(open) => {
+              setCopyDialogOpen(open);
+              if (!open) {
+                setSelectedSourceEventId("");
+                setSourceRoster([]);
+                setSelectedMemberIds(new Set());
+              }
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={otherEvents.length === 0}
+              >
+                <Copy className="mr-1.5 h-4 w-4" />
+                Copy from Event
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Copy Roster from Previous Event</DialogTitle>
+                <DialogDescription>
+                  Select a previous event to copy team members into the current
+                  roster. Duplicates (by name) will be skipped automatically.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="grid gap-4 py-4">
+                {/* Event selector */}
+                <div className="grid gap-2">
+                  <Label>Source Event</Label>
+                  <Select
+                    value={selectedSourceEventId}
+                    onValueChange={handleSourceEventChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select an event..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {otherEvents.map((event) => (
+                        <SelectItem key={event.id} value={event.id}>
+                          {event.dealer_name ?? event.name}
+                          {event.start_date ? ` (${event.start_date})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Loading state */}
+                {loadingSource && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+
+                {/* Preview table */}
+                {!loadingSource && sourceRoster.length > 0 && (
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between">
+                      <Label>
+                        Team Members ({selectedMemberIds.size} of{" "}
+                        {sourceRoster.length} selected)
+                      </Label>
+                      <Button variant="ghost" size="sm" onClick={toggleAll}>
+                        {selectedMemberIds.size === sourceRoster.length
+                          ? "Deselect All"
+                          : "Select All"}
+                      </Button>
+                    </div>
+                    <ScrollArea className="h-[300px] rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-10">
+                              <Checkbox
+                                checked={
+                                  selectedMemberIds.size ===
+                                  sourceRoster.length
+                                }
+                                onCheckedChange={toggleAll}
+                              />
+                            </TableHead>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Role</TableHead>
+                            <TableHead className="hidden sm:table-cell">
+                              Team
+                            </TableHead>
+                            <TableHead className="text-right">
+                              Comm %
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {sourceRoster.map((member) => (
+                            <TableRow key={member.id}>
+                              <TableCell>
+                                <Checkbox
+                                  checked={selectedMemberIds.has(member.id)}
+                                  onCheckedChange={() =>
+                                    toggleMember(member.id)
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {member.name}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="secondary"
+                                  className={
+                                    ROLE_COLORS[member.role as RosterRole]
+                                  }
+                                >
+                                  {ROLE_LABELS[member.role as RosterRole] ??
+                                    member.role}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="hidden sm:table-cell text-muted-foreground">
+                                {member.team ?? "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {member.commission_pct != null
+                                  ? `${(member.commission_pct * 100).toFixed(0)}%`
+                                  : "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </ScrollArea>
+                  </div>
+                )}
+
+                {/* Empty state */}
+                {!loadingSource &&
+                  selectedSourceEventId &&
+                  sourceRoster.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No team members found in the selected event.
+                    </p>
+                  )}
+              </div>
+
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setCopyDialogOpen(false)}
+                  disabled={copying}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleCopyRoster}
+                  disabled={copying || selectedMemberIds.size === 0}
+                >
+                  {copying && (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  )}
+                  Copy {selectedMemberIds.size} Member
+                  {selectedMemberIds.size !== 1 ? "s" : ""}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Import from Google Sheet */}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={importingFromSheet}
+            onClick={handleImportFromSheet}
+          >
+            {importingFromSheet ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-1.5 h-4 w-4" />
+            )}
+            Import from Sheet
+          </Button>
+
+          {/* Push Roster to Sheet */}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pushingToSheet || roster.length === 0}
+            onClick={handlePushRosterToSheet}
+          >
+            {pushingToSheet ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="mr-1.5 h-4 w-4" />
+            )}
+            Push to Sheet
+          </Button>
 
           {/* Add Lender Dialog */}
           <Dialog open={lenderDialogOpen} onOpenChange={setLenderDialogOpen}>
@@ -780,7 +1390,7 @@ export default function RosterPage() {
                     <TableHead className="text-right">Comm %</TableHead>
                     <TableHead className="text-center">Confirmed</TableHead>
                     <TableHead className="text-center">Active</TableHead>
-                    <TableHead className="w-10" />
+                    <TableHead className="w-20" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -811,7 +1421,7 @@ export default function RosterPage() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {member.commission_pct != null
-                          ? `${member.commission_pct}%`
+                          ? `${(member.commission_pct * 100).toFixed(0)}%`
                           : "—"}
                       </TableCell>
                       <TableCell className="text-center">
@@ -867,20 +1477,31 @@ export default function RosterPage() {
                         </Button>
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                          disabled={deletingIds.has(member.id)}
-                          onClick={() => handleDeleteRosterMember(member)}
-                          title={`Remove ${member.name}`}
-                        >
-                          {deletingIds.has(member.id) ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => setEditingMember(member)}
+                            title={`Edit ${member.name}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            disabled={deletingIds.has(member.id)}
+                            onClick={() => handleDeleteRosterMember(member)}
+                            title={`Remove ${member.name}`}
+                          >
+                            {deletingIds.has(member.id) ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -990,6 +1611,33 @@ export default function RosterPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit Roster Member Dialog */}
+      <Dialog
+        open={editingMember !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingMember(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Team Member</DialogTitle>
+            <DialogDescription>
+              Update details for {editingMember?.name ?? "this team member"}.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[70vh]">
+            {editingMember && currentEvent && (
+              <EditRosterMemberForm
+                key={editingMember.id}
+                member={editingMember}
+                eventId={currentEvent.id}
+                onSuccess={() => setEditingMember(null)}
+              />
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

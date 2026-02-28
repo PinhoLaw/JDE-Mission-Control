@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -25,8 +25,9 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
-import { createDeal, lookupVehicle } from "@/lib/actions/deals";
+import { updateDeal, lookupVehicle } from "@/lib/actions/deals";
 import { formatCurrency } from "@/lib/utils";
+import type { Deal } from "@/types/database";
 
 // Helper: coerce string to number, treat empty string as undefined
 const optNum = z.preprocess(
@@ -75,20 +76,15 @@ const dealFormSchema = z.object({
 
 type DealFormValues = z.infer<typeof dealFormSchema>;
 
-interface NewDealFormProps {
-  initialStockNumber?: string;
-  initialVehicleId?: string;
+interface EditDealFormProps {
+  deal: Deal;
   onSuccess?: () => void;
 }
 
-export function NewDealForm({
-  initialStockNumber,
-  initialVehicleId,
-  onSuccess,
-}: NewDealFormProps) {
+export function EditDealForm({ deal, onSuccess }: EditDealFormProps) {
   const { currentEvent } = useEvent();
   const [vehicleId, setVehicleId] = useState<string | null>(
-    initialVehicleId ?? null,
+    deal.vehicle_id ?? null,
   );
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -104,10 +100,39 @@ export function NewDealForm({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(dealFormSchema) as any,
     defaultValues: {
-      new_used: "Used",
-      finance_type: "retail",
-      stock_number: initialStockNumber ?? "",
-      sale_date: new Date().toISOString().split("T")[0],
+      deal_number: deal.deal_number ?? undefined,
+      sale_day: deal.sale_day ?? undefined,
+      sale_date: deal.sale_date ?? "",
+      customer_name: deal.customer_name ?? "",
+      customer_zip: deal.customer_zip ?? "",
+      customer_phone: deal.customer_phone ?? "",
+      stock_number: deal.stock_number ?? "",
+      vehicle_year: deal.vehicle_year ?? undefined,
+      vehicle_make: deal.vehicle_make ?? "",
+      vehicle_model: deal.vehicle_model ?? "",
+      vehicle_type: deal.vehicle_type ?? "",
+      vehicle_cost: deal.vehicle_cost ?? undefined,
+      new_used: deal.new_used ?? "Used",
+      trade_year: deal.trade_year ?? undefined,
+      trade_make: deal.trade_make ?? "",
+      trade_model: deal.trade_model ?? "",
+      trade_mileage: deal.trade_mileage ?? undefined,
+      trade_acv: deal.trade_acv ?? undefined,
+      trade_payoff: deal.trade_payoff ?? undefined,
+      salesperson: deal.salesperson ?? "",
+      second_salesperson: deal.second_salesperson ?? "",
+      selling_price: deal.selling_price ?? 0,
+      lender: deal.lender ?? "",
+      rate: deal.rate ?? undefined,
+      finance_type: deal.finance_type ?? "retail",
+      reserve: deal.reserve ?? undefined,
+      warranty: deal.warranty ?? undefined,
+      gap: deal.gap ?? undefined,
+      aftermarket_1: deal.aftermarket_1 ?? undefined,
+      aftermarket_2: deal.aftermarket_2 ?? undefined,
+      doc_fee: deal.doc_fee ?? undefined,
+      source: deal.source ?? "",
+      notes: deal.notes ?? "",
     },
   });
 
@@ -154,8 +179,6 @@ export function NewDealForm({
           `Found: ${vehicle.year} ${vehicle.make} ${vehicle.model}`,
         );
       } else {
-        setVehicleId(null);
-        setVehicleAgeDays(null);
         toast.info("No available vehicle found with that stock number");
       }
     } catch {
@@ -165,26 +188,15 @@ export function NewDealForm({
     }
   }, [currentEvent, setValue, watch]);
 
-  // Auto-lookup on mount if initial stock number is provided
-  useEffect(() => {
-    if (initialStockNumber && currentEvent && !initialVehicleId) {
-      handleLookup();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEvent]);
-
-  // Push deal to "FORD DEAL LOG" Google Sheet (fire-and-forget)
+  // Push deal update to Google Sheet (fire-and-forget)
   const pushDealToSheet = useCallback(
     async (data: DealFormValues) => {
-      // Column order matches FORD DEAL LOG headers:
-      // STORE, STOCK#, CUSTOMER, ZIPCODE, NEW/USED, YEAR, MAKE, MODEL,
-      // COST, AGE, YEAR, MAKE, MODEL, MILES, ACV, PAYOFF,
-      // SALESPERSON, 2ND SALESPERSON, FRONT GROSS, LENDER, RATE,
-      // RESERVE, WARRANTY, AFT 1, GAP, FI TOTALS, TOTAL GROSS,
-      // DAILY GROSS, ADD GROSS, DLR GROSS, JDE PAY
+      const stockNum = data.stock_number ?? "";
+      if (!stockNum) return; // Can't match without stock #
+
       const values = [
         currentEvent?.dealer_name ?? currentEvent?.name ?? "",  // STORE
-        data.stock_number ?? "",                                 // STOCK#
+        stockNum,                                                // STOCK#
         data.customer_name,                                      // CUSTOMER
         data.customer_zip ?? "",                                 // ZIPCODE
         data.new_used,                                           // NEW/USED
@@ -220,15 +232,17 @@ export function NewDealForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "append_raw",
+          action: "update_raw",
           sheetTitle: "Deal Log Push",
+          matchColumnIndex: 1, // STOCK# column
+          matchValue: stockNum,
           values,
         }),
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Sheet push failed: ${res.status}`);
+        throw new Error(err.error || `Sheet update failed: ${res.status}`);
       }
     },
     [currentEvent, vehicleAgeDays, frontGross, fiTotal, totalGross],
@@ -238,7 +252,8 @@ export function NewDealForm({
     if (!currentEvent) return;
     setSubmitting(true);
     try {
-      await createDeal({
+      await updateDeal({
+        id: deal.id,
         event_id: currentEvent.id,
         vehicle_id: vehicleId,
         deal_number: data.deal_number ? Number(data.deal_number) : null,
@@ -276,18 +291,18 @@ export function NewDealForm({
         source: data.source || null,
         notes: data.notes || null,
       });
-      toast.success("Deal created successfully!");
+      toast.success("Deal updated successfully!");
 
       // Fire-and-forget push to Google Sheet
       pushDealToSheet(data)
-        .then(() => toast.success("Deal pushed to Google Sheet"))
+        .then(() => toast.success("Deal updated & pushed to sheet"))
         .catch((err) =>
           toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`),
         );
 
       onSuccess?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create deal");
+      toast.error(err instanceof Error ? err.message : "Failed to update deal");
     } finally {
       setSubmitting(false);
     }
@@ -303,20 +318,20 @@ export function NewDealForm({
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-3">
           <div>
-            <Label htmlFor="deal_number">Deal #</Label>
+            <Label htmlFor="edit_deal_number">Deal #</Label>
             <Input
-              id="deal_number"
+              id="edit_deal_number"
               type="number"
               {...register("deal_number")}
             />
           </div>
           <div>
-            <Label htmlFor="sale_day">Sale Day</Label>
-            <Input id="sale_day" type="number" {...register("sale_day")} />
+            <Label htmlFor="edit_sale_day">Sale Day</Label>
+            <Input id="edit_sale_day" type="number" {...register("sale_day")} />
           </div>
           <div>
-            <Label htmlFor="sale_date">Sale Date</Label>
-            <Input id="sale_date" type="date" {...register("sale_date")} />
+            <Label htmlFor="edit_sale_date">Sale Date</Label>
+            <Input id="edit_sale_date" type="date" {...register("sale_date")} />
           </div>
         </CardContent>
       </Card>
@@ -328,10 +343,10 @@ export function NewDealForm({
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-3">
           <div>
-            <Label htmlFor="customer_name">
+            <Label htmlFor="edit_customer_name">
               Name <span className="text-red-500">*</span>
             </Label>
-            <Input id="customer_name" {...register("customer_name")} />
+            <Input id="edit_customer_name" {...register("customer_name")} />
             {errors.customer_name && (
               <p className="text-xs text-red-500 mt-1">
                 {errors.customer_name.message}
@@ -339,12 +354,12 @@ export function NewDealForm({
             )}
           </div>
           <div>
-            <Label htmlFor="customer_zip">Zip Code</Label>
-            <Input id="customer_zip" {...register("customer_zip")} />
+            <Label htmlFor="edit_customer_zip">Zip Code</Label>
+            <Input id="edit_customer_zip" {...register("customer_zip")} />
           </div>
           <div>
-            <Label htmlFor="customer_phone">Phone</Label>
-            <Input id="customer_phone" {...register("customer_phone")} />
+            <Label htmlFor="edit_customer_phone">Phone</Label>
+            <Input id="edit_customer_phone" {...register("customer_phone")} />
           </div>
         </CardContent>
       </Card>
@@ -360,9 +375,9 @@ export function NewDealForm({
         <CardContent className="space-y-4">
           <div className="flex gap-2">
             <div className="flex-1">
-              <Label htmlFor="stock_number">Stock #</Label>
+              <Label htmlFor="edit_stock_number">Stock #</Label>
               <div className="flex gap-2">
-                <Input id="stock_number" {...register("stock_number")} />
+                <Input id="edit_stock_number" {...register("stock_number")} />
                 <Button
                   type="button"
                   variant="outline"
@@ -381,7 +396,7 @@ export function NewDealForm({
             <div>
               <Label>New/Used</Label>
               <Select
-                defaultValue="Used"
+                defaultValue={deal.new_used ?? "Used"}
                 onValueChange={(v) =>
                   setValue("new_used", v as "New" | "Used" | "Certified")
                 }
@@ -400,25 +415,25 @@ export function NewDealForm({
 
           <div className="grid gap-4 sm:grid-cols-4">
             <div>
-              <Label htmlFor="vehicle_year">Year</Label>
+              <Label htmlFor="edit_vehicle_year">Year</Label>
               <Input
-                id="vehicle_year"
+                id="edit_vehicle_year"
                 type="number"
                 {...register("vehicle_year")}
               />
             </div>
             <div>
-              <Label htmlFor="vehicle_make">Make</Label>
-              <Input id="vehicle_make" {...register("vehicle_make")} />
+              <Label htmlFor="edit_vehicle_make">Make</Label>
+              <Input id="edit_vehicle_make" {...register("vehicle_make")} />
             </div>
             <div>
-              <Label htmlFor="vehicle_model">Model</Label>
-              <Input id="vehicle_model" {...register("vehicle_model")} />
+              <Label htmlFor="edit_vehicle_model">Model</Label>
+              <Input id="edit_vehicle_model" {...register("vehicle_model")} />
             </div>
             <div>
-              <Label htmlFor="vehicle_cost">Acquisition Cost</Label>
+              <Label htmlFor="edit_vehicle_cost">Acquisition Cost</Label>
               <Input
-                id="vehicle_cost"
+                id="edit_vehicle_cost"
                 type="number"
                 step="0.01"
                 {...register("vehicle_cost")}
@@ -439,11 +454,11 @@ export function NewDealForm({
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
-              <Label htmlFor="selling_price">
+              <Label htmlFor="edit_selling_price">
                 Selling Price <span className="text-red-500">*</span>
               </Label>
               <Input
-                id="selling_price"
+                id="edit_selling_price"
                 type="number"
                 step="0.01"
                 {...register("selling_price")}
@@ -455,13 +470,13 @@ export function NewDealForm({
               )}
             </div>
             <div>
-              <Label htmlFor="salesperson">Salesperson</Label>
-              <Input id="salesperson" {...register("salesperson")} />
+              <Label htmlFor="edit_salesperson">Salesperson</Label>
+              <Input id="edit_salesperson" {...register("salesperson")} />
             </div>
             <div>
-              <Label htmlFor="second_salesperson">2nd Salesperson</Label>
+              <Label htmlFor="edit_second_salesperson">2nd Salesperson</Label>
               <Input
-                id="second_salesperson"
+                id="edit_second_salesperson"
                 {...register("second_salesperson")}
               />
             </div>
@@ -512,7 +527,7 @@ export function NewDealForm({
             <div>
               <Label>Finance Type</Label>
               <Select
-                defaultValue="retail"
+                defaultValue={deal.finance_type ?? "retail"}
                 onValueChange={(v) =>
                   setValue("finance_type", v as "retail" | "lease" | "cash")
                 }
@@ -528,13 +543,13 @@ export function NewDealForm({
               </Select>
             </div>
             <div>
-              <Label htmlFor="lender">Lender</Label>
-              <Input id="lender" {...register("lender")} />
+              <Label htmlFor="edit_lender">Lender</Label>
+              <Input id="edit_lender" {...register("lender")} />
             </div>
             <div>
-              <Label htmlFor="rate">Rate %</Label>
+              <Label htmlFor="edit_rate">Rate %</Label>
               <Input
-                id="rate"
+                id="edit_rate"
                 type="number"
                 step="0.01"
                 {...register("rate")}
@@ -546,54 +561,54 @@ export function NewDealForm({
 
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
-              <Label htmlFor="reserve">Reserve</Label>
+              <Label htmlFor="edit_reserve">Reserve</Label>
               <Input
-                id="reserve"
+                id="edit_reserve"
                 type="number"
                 step="0.01"
                 {...register("reserve")}
               />
             </div>
             <div>
-              <Label htmlFor="warranty">Warranty</Label>
+              <Label htmlFor="edit_warranty">Warranty</Label>
               <Input
-                id="warranty"
+                id="edit_warranty"
                 type="number"
                 step="0.01"
                 {...register("warranty")}
               />
             </div>
             <div>
-              <Label htmlFor="gap">GAP</Label>
+              <Label htmlFor="edit_gap">GAP</Label>
               <Input
-                id="gap"
+                id="edit_gap"
                 type="number"
                 step="0.01"
                 {...register("gap")}
               />
             </div>
             <div>
-              <Label htmlFor="aftermarket_1">Aftermarket 1</Label>
+              <Label htmlFor="edit_aftermarket_1">Aftermarket 1</Label>
               <Input
-                id="aftermarket_1"
+                id="edit_aftermarket_1"
                 type="number"
                 step="0.01"
                 {...register("aftermarket_1")}
               />
             </div>
             <div>
-              <Label htmlFor="aftermarket_2">Aftermarket 2</Label>
+              <Label htmlFor="edit_aftermarket_2">Aftermarket 2</Label>
               <Input
-                id="aftermarket_2"
+                id="edit_aftermarket_2"
                 type="number"
                 step="0.01"
                 {...register("aftermarket_2")}
               />
             </div>
             <div>
-              <Label htmlFor="doc_fee">Doc Fee</Label>
+              <Label htmlFor="edit_doc_fee">Doc Fee</Label>
               <Input
-                id="doc_fee"
+                id="edit_doc_fee"
                 type="number"
                 step="0.01"
                 {...register("doc_fee")}
@@ -611,42 +626,42 @@ export function NewDealForm({
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-4">
           <div>
-            <Label htmlFor="trade_year">Year</Label>
+            <Label htmlFor="edit_trade_year">Year</Label>
             <Input
-              id="trade_year"
+              id="edit_trade_year"
               type="number"
               {...register("trade_year")}
             />
           </div>
           <div>
-            <Label htmlFor="trade_make">Make</Label>
-            <Input id="trade_make" {...register("trade_make")} />
+            <Label htmlFor="edit_trade_make">Make</Label>
+            <Input id="edit_trade_make" {...register("trade_make")} />
           </div>
           <div>
-            <Label htmlFor="trade_model">Model</Label>
-            <Input id="trade_model" {...register("trade_model")} />
+            <Label htmlFor="edit_trade_model">Model</Label>
+            <Input id="edit_trade_model" {...register("trade_model")} />
           </div>
           <div>
-            <Label htmlFor="trade_mileage">Mileage</Label>
+            <Label htmlFor="edit_trade_mileage">Mileage</Label>
             <Input
-              id="trade_mileage"
+              id="edit_trade_mileage"
               type="number"
               {...register("trade_mileage")}
             />
           </div>
           <div>
-            <Label htmlFor="trade_acv">ACV</Label>
+            <Label htmlFor="edit_trade_acv">ACV</Label>
             <Input
-              id="trade_acv"
+              id="edit_trade_acv"
               type="number"
               step="0.01"
               {...register("trade_acv")}
             />
           </div>
           <div>
-            <Label htmlFor="trade_payoff">Payoff</Label>
+            <Label htmlFor="edit_trade_payoff">Payoff</Label>
             <Input
-              id="trade_payoff"
+              id="edit_trade_payoff"
               type="number"
               step="0.01"
               {...register("trade_payoff")}
@@ -662,8 +677,11 @@ export function NewDealForm({
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div>
-            <Label htmlFor="source">Source</Label>
-            <Select onValueChange={(v) => setValue("source", v)}>
+            <Label htmlFor="edit_source">Source</Label>
+            <Select
+              defaultValue={deal.source ?? undefined}
+              onValueChange={(v) => setValue("source", v)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select source" />
               </SelectTrigger>
@@ -678,8 +696,8 @@ export function NewDealForm({
             </Select>
           </div>
           <div>
-            <Label htmlFor="notes">Notes</Label>
-            <Input id="notes" {...register("notes")} />
+            <Label htmlFor="edit_notes">Notes</Label>
+            <Input id="edit_notes" {...register("notes")} />
           </div>
         </CardContent>
       </Card>
@@ -690,10 +708,10 @@ export function NewDealForm({
           {submitting ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Creating Deal...
+              Updating Deal...
             </>
           ) : (
-            "Create Deal"
+            "Update Deal"
           )}
         </Button>
       </div>

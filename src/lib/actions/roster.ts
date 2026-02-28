@@ -33,7 +33,7 @@ export async function addRosterMember(
   },
 ) {
   const { supabase } = await requireMembership(eventId, ["owner", "manager"]);
-  const { error } = await supabase.from("roster").insert({
+  const { data: inserted, error } = await supabase.from("roster").insert({
     event_id: eventId,
     name: data.name,
     phone: data.phone ?? null,
@@ -43,10 +43,10 @@ export async function addRosterMember(
     commission_pct: data.commission_pct ?? null,
     confirmed: false,
     active: true,
-  });
+  }).select("id").single();
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard/roster");
-  return { success: true };
+  return { success: true, memberId: inserted.id };
 }
 
 export async function updateRosterMember(
@@ -93,6 +93,196 @@ export async function addLender(
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard/roster");
   return { success: true };
+}
+
+// ────────────────────────────────────────────────────────
+// Fetch roster from another event (for "Copy from Event")
+// ────────────────────────────────────────────────────────
+export async function fetchRosterForEvent(eventId: string) {
+  const { supabase } = await requireMembership(eventId);
+  const { data, error } = await supabase
+    .from("roster")
+    .select("id, name, phone, email, role, team, commission_pct, notes")
+    .eq("event_id", eventId)
+    .order("name");
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+// ────────────────────────────────────────────────────────
+// Bulk copy roster members from one event to another
+// ────────────────────────────────────────────────────────
+export async function copyRosterFromEvent(
+  sourceEventId: string,
+  targetEventId: string,
+  memberIds: string[],
+) {
+  // Require manager/owner on target event
+  const { supabase, user } = await requireMembership(targetEventId, [
+    "owner",
+    "manager",
+  ]);
+
+  // Verify membership on source event (read access)
+  const { data: sourceMembership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", sourceEventId)
+    .eq("user_id", user.id)
+    .single();
+  if (!sourceMembership) throw new Error("Not a member of source event");
+
+  // 1. Fetch source members by selected IDs
+  const { data: sourceMembers, error: fetchErr } = await supabase
+    .from("roster")
+    .select("id, name, phone, email, role, team, commission_pct, notes")
+    .eq("event_id", sourceEventId)
+    .in("id", memberIds);
+  if (fetchErr) throw new Error(fetchErr.message);
+  if (!sourceMembers || sourceMembers.length === 0) {
+    return { inserted: [] as Array<{ id: string; name: string; phone: string | null; email: string | null; role: string; team: string | null; commission_pct: number | null; confirmed: boolean; active: boolean; notes: string | null }>, skippedCount: 0 };
+  }
+
+  // 2. Fetch existing target roster names for dedup
+  const { data: existingMembers } = await supabase
+    .from("roster")
+    .select("name")
+    .eq("event_id", targetEventId);
+  const existingNames = new Set(
+    (existingMembers ?? []).map((m) => m.name.toLowerCase().trim()),
+  );
+
+  // 3. Partition: insertable vs. skipped (by name dedup)
+  const toInsert = sourceMembers.filter(
+    (m) => !existingNames.has(m.name.toLowerCase().trim()),
+  );
+  const skippedCount = sourceMembers.length - toInsert.length;
+
+  if (toInsert.length === 0) {
+    return { inserted: [] as Array<{ id: string; name: string; phone: string | null; email: string | null; role: string; team: string | null; commission_pct: number | null; confirmed: boolean; active: boolean; notes: string | null }>, skippedCount };
+  }
+
+  // 4. Bulk insert
+  const rows = toInsert.map((m) => ({
+    event_id: targetEventId,
+    name: m.name,
+    phone: m.phone,
+    email: m.email,
+    role: m.role,
+    team: m.team,
+    commission_pct: m.commission_pct,
+    notes: m.notes,
+    confirmed: false,
+    active: true,
+  }));
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("roster")
+    .insert(rows)
+    .select(
+      "id, name, phone, email, role, team, commission_pct, confirmed, active, notes",
+    );
+  if (insertErr) throw new Error(insertErr.message);
+
+  revalidatePath("/dashboard/roster");
+  return { inserted: inserted ?? [], skippedCount };
+}
+
+// ────────────────────────────────────────────────────────
+// Import roster members from a Google Sheet (upsert by ID)
+// ────────────────────────────────────────────────────────
+export async function importRosterMembers(
+  eventId: string,
+  members: Array<{
+    id?: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    role: string;
+    team?: string | null;
+    commission_pct?: number | null;
+    notes?: string | null;
+    confirmed?: boolean;
+    active?: boolean;
+  }>,
+) {
+  const { supabase } = await requireMembership(eventId, ["owner", "manager"]);
+
+  // Fetch existing roster for this event (for dedup)
+  const { data: existing } = await supabase
+    .from("roster")
+    .select("id, name")
+    .eq("event_id", eventId);
+
+  const existingIds = new Set((existing ?? []).map((m) => m.id));
+  const existingNames = new Set(
+    (existing ?? []).map((m) => m.name.toLowerCase().trim()),
+  );
+
+  const toUpdate: typeof members = [];
+  const toInsert: typeof members = [];
+  let skippedCount = 0;
+
+  for (const member of members) {
+    // If the member has an ID and it exists in our roster → update
+    if (member.id && existingIds.has(member.id)) {
+      toUpdate.push(member);
+      continue;
+    }
+    // If a member with the same name already exists → skip
+    if (existingNames.has(member.name.toLowerCase().trim())) {
+      skippedCount++;
+      continue;
+    }
+    // Otherwise → insert
+    toInsert.push(member);
+  }
+
+  // Batch updates
+  let updatedCount = 0;
+  for (const member of toUpdate) {
+    const { error } = await supabase
+      .from("roster")
+      .update({
+        name: member.name,
+        phone: member.phone ?? null,
+        email: member.email ?? null,
+        role: member.role,
+        team: member.team ?? null,
+        commission_pct: member.commission_pct ?? null,
+        notes: member.notes ?? null,
+        confirmed: member.confirmed ?? false,
+        active: member.active ?? true,
+      })
+      .eq("id", member.id!)
+      .eq("event_id", eventId);
+    if (!error) updatedCount++;
+  }
+
+  // Batch insert
+  let insertedCount = 0;
+  if (toInsert.length > 0) {
+    const rows = toInsert.map((m) => ({
+      event_id: eventId,
+      name: m.name,
+      phone: m.phone ?? null,
+      email: m.email ?? null,
+      role: m.role,
+      team: m.team ?? null,
+      commission_pct: m.commission_pct ?? null,
+      notes: m.notes ?? null,
+      confirmed: m.confirmed ?? false,
+      active: m.active ?? true,
+    }));
+    const { data: inserted, error } = await supabase
+      .from("roster")
+      .insert(rows)
+      .select("id");
+    if (!error) insertedCount = inserted?.length ?? 0;
+  }
+
+  revalidatePath("/dashboard/roster");
+  return { insertedCount, updatedCount, skippedCount };
 }
 
 export async function deleteLender(lenderId: string, eventId: string) {
