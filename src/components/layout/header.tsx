@@ -18,19 +18,14 @@ export async function Header() {
       console.error("[Header] auth.getUser error:", authError.message);
     }
     user = data?.user ?? null;
-    console.log("[Header] user:", user ? user.email : "null (not authenticated)");
 
     if (user) {
-      const { data: profileData, error: profileError } = await supabase
+      const { data: profileData } = await supabase
         .from("profiles")
         .select("full_name, avatar_url")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
-      if (profileError) {
-        // profiles table might not exist or user has no profile row — non-fatal
-        console.warn("[Header] profiles query error (non-fatal):", profileError.message);
-      }
       profile = profileData;
     }
   } catch (error) {

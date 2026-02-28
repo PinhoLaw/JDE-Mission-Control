@@ -46,12 +46,12 @@ export async function KpiCards({ eventId }: KpiCardsProps) {
         .from("v_event_kpis")
         .select("*")
         .eq("event_id", eventId)
-        .single(),
+        .maybeSingle(),
       supabase
         .from("event_config")
         .select("target_units, target_gross, target_pvr")
         .eq("event_id", eventId)
-        .single(),
+        .maybeSingle(),
       supabase
         .from("roster")
         .select("id")
@@ -59,23 +59,9 @@ export async function KpiCards({ eventId }: KpiCardsProps) {
         .eq("active", true),
     ]);
 
-    if (kpiRes.error) {
-      console.warn("[KpiCards] v_event_kpis ERROR:", kpiRes.error.message, "code:", kpiRes.error.code);
-    } else {
-      console.log("[KpiCards] v_event_kpis OK:", JSON.stringify(kpiRes.data));
-    }
-    if (configRes.error) {
-      console.warn("[KpiCards] event_config ERROR:", configRes.error.message);
-    }
-    if (rosterRes.error) {
-      console.warn("[KpiCards] roster ERROR:", rosterRes.error.message);
-    }
-
     kpi = kpiRes.data;
     config = configRes.data;
     teamSize = rosterRes.data?.length ?? 0;
-
-    console.log("[KpiCards] RESULT — kpi:", kpi ? "HAS DATA" : "NULL", "| config:", config ? "HAS DATA" : "NULL", "| teamSize:", teamSize);
   } catch (error) {
     console.error("[KpiCards] CRASH:", error);
     // Render with zero values — better than crashing the page
