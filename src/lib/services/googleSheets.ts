@@ -36,7 +36,7 @@ import { JWT } from "google-auth-library";
 // ─────────────────────────────────────────────────────────────
 
 /** Default spreadsheet — JDE Mission Control master sheet */
-const DEFAULT_SPREADSHEET_ID = "1Kop5IRQxA1yQZ4Ci78CVqZhBo0agoirW";
+const DEFAULT_SPREADSHEET_ID = "10NUwAoUAsHsSCL4GrTiwjumvpa3TqMN56wqQ-rFPfrA";
 
 /**
  * Parse the service account JSON from the single env var.
