@@ -20,6 +20,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // TEMPORARY: Let /sheets-test through without auth for push testing
+  // TODO: Remove this bypass after testing is complete
+  if (pathname.startsWith("/sheets-test")) {
+    console.log("[proxy] sheets-test — auth bypassed for testing:", pathname);
+    return NextResponse.next();
+  }
+
   // Fail-safe: if Supabase env vars are missing, let the request through
   if (
     !process.env.NEXT_PUBLIC_SUPABASE_URL ||

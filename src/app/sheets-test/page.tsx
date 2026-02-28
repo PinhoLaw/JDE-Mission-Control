@@ -163,6 +163,11 @@ export default function SheetsTestPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
+      {/* ── TEST MODE BANNER ── */}
+      <div className="border-b-2 border-red-400 bg-red-600 px-4 py-2.5 text-center text-sm font-bold tracking-wide text-white">
+        TEST MODE — AUTH BYPASSED FOR PUSH TESTING ONLY (remove after test)
+      </div>
+
       {/* ── Toast Notifications ── */}
       <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
         {toasts.map((t) => (
