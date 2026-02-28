@@ -20,9 +20,12 @@
  *     the Google Sheet as a stable data source
  *
  * Env vars required (in .env.local):
- *   GOOGLE_SERVICE_ACCOUNT_EMAIL  — service account email from GCP console
- *   GOOGLE_PRIVATE_KEY            — PEM private key (with \n line breaks)
- *   GOOGLE_SPREADSHEET_ID         — the long ID from the Google Sheet URL
+ *   GOOGLE_SERVICE_ACCOUNT_JSON  — full JSON key from GCP (the entire
+ *                                  downloaded .json file contents, on one line)
+ *   GOOGLE_SPREADSHEET_ID        — (optional) override the default spreadsheet
+ *
+ * The default spreadsheet ID is hard-coded for the JDE master sheet.
+ * Set GOOGLE_SPREADSHEET_ID in .env.local to point at a different sheet.
  */
 
 import { GoogleSpreadsheet, GoogleSpreadsheetRow } from "google-spreadsheet";
@@ -32,15 +35,43 @@ import { JWT } from "google-auth-library";
 // Config & Auth
 // ─────────────────────────────────────────────────────────────
 
-function getEnvOrThrow(key: string): string {
-  const val = process.env[key];
-  if (!val) {
+/** Default spreadsheet — JDE Mission Control master sheet */
+const DEFAULT_SPREADSHEET_ID = "1Kop5IRQxA1yQZ4Ci78CVqZhBo0agoirW";
+
+/**
+ * Parse the service account JSON from the single env var.
+ * The entire GCP JSON key file is stored as one env var for simplicity —
+ * no need to split email and private key into separate vars.
+ */
+function getServiceAccount(): { client_email: string; private_key: string } {
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (!raw) {
     throw new Error(
-      `[GoogleSheets] Missing env var: ${key}. ` +
-        `Add it to .env.local — see the README for setup instructions.`,
+      "[GoogleSheets] Missing env var: GOOGLE_SERVICE_ACCOUNT_JSON. " +
+        "Paste the full contents of your GCP service account JSON key file " +
+        "into this variable in .env.local (all on one line).",
     );
   }
-  return val;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed.client_email || !parsed.private_key) {
+      throw new Error(
+        "[GoogleSheets] GOOGLE_SERVICE_ACCOUNT_JSON is missing 'client_email' or 'private_key'. " +
+          "Make sure you pasted the full JSON key file (not just a fragment).",
+      );
+    }
+    return parsed;
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(
+        "[GoogleSheets] GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON. " +
+          "Paste the entire contents of the downloaded .json key file on one line. " +
+          `Parse error: ${err.message}`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -48,12 +79,20 @@ function getEnvOrThrow(key: string): string {
  * The service account must be shared as Editor on the target spreadsheet.
  */
 function createAuthClient(): JWT {
+  const sa = getServiceAccount();
   return new JWT({
-    email: getEnvOrThrow("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-    // Private key comes from .env with literal \n — replace them
-    key: getEnvOrThrow("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n"),
+    email: sa.client_email,
+    key: sa.private_key,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
+}
+
+/**
+ * Get the spreadsheet ID — uses GOOGLE_SPREADSHEET_ID env var if set,
+ * otherwise falls back to the hard-coded JDE master sheet ID.
+ */
+function getSpreadsheetId(): string {
+  return process.env.GOOGLE_SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID;
 }
 
 /**
@@ -63,10 +102,7 @@ function createAuthClient(): JWT {
  */
 async function loadSpreadsheet(): Promise<GoogleSpreadsheet> {
   const auth = createAuthClient();
-  const doc = new GoogleSpreadsheet(
-    getEnvOrThrow("GOOGLE_SPREADSHEET_ID"),
-    auth,
-  );
+  const doc = new GoogleSpreadsheet(getSpreadsheetId(), auth);
   await doc.loadInfo();
   return doc;
 }
