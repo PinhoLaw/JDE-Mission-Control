@@ -73,6 +73,8 @@ export async function logSheetAudit(params: {
   sheetTitle: string;
   spreadsheetId?: string;
   changes?: Record<string, unknown> | null;
+  /** The user's event role at the time of the action */
+  role?: string;
 }) {
   try {
     if (!params.eventId) return; // Can't log without an event scope
@@ -88,6 +90,7 @@ export async function logSheetAudit(params: {
       old_values: null,
       new_values: {
         sheetTitle: params.sheetTitle,
+        ...(params.role ? { role: params.role } : {}),
         ...(params.changes ?? {}),
       },
     });

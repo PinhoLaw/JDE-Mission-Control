@@ -8,6 +8,11 @@
  *
  * SECURITY:
  *   - Requires Supabase authentication (returns 401 if not logged in)
+ *   - Role-based access control per action:
+ *       READ  (read, read_raw, list_sheets) — any authenticated member
+ *       WRITE (append*, update*)            — any event member
+ *       ADMIN (delete, write_raw)           — owner or manager only
+ *   - Write actions require `eventId` for membership verification
  *   - Every write action is logged to the audit_logs table
  *   - Google auth uses a service account — no user OAuth needed
  *
@@ -15,21 +20,25 @@
  * specific spreadsheet (per-event routing). If omitted, falls back
  * to the global default (env var or hard-coded JDE master sheet).
  *
- * All actions also accept an optional `eventId` field for audit logging.
- *
  * Supported actions:
  *   POST { action: "read",   sheetTitle: "Sheet18", spreadsheetId?: "...", eventId?: "..." }
- *   POST { action: "append", sheetTitle: "Sheet18", data: { ... }, ... }
- *   POST { action: "append_batch", sheetTitle: "Sheet18", rows: [...], ... }
- *   POST { action: "update", sheetTitle: "Sheet18", rowIndex: 0, data: {...}, ... }
- *   POST { action: "update_by_field", sheetTitle, matchColumn, matchValue, data, ... }
- *   POST { action: "delete", sheetTitle: "Sheet18", rowIndex: 0, ... }
+ *   POST { action: "append", sheetTitle: "Sheet18", data: { ... }, eventId: "...", ... }
+ *   POST { action: "append_batch", sheetTitle: "Sheet18", rows: [...], eventId: "...", ... }
+ *   POST { action: "update", sheetTitle: "Sheet18", rowIndex: 0, data: {...}, eventId: "...", ... }
+ *   POST { action: "update_by_field", sheetTitle, matchColumn, matchValue, data, eventId, ... }
+ *   POST { action: "delete", sheetTitle: "Sheet18", rowIndex: 0, eventId: "...", ... }
  *   POST { action: "list_sheets", spreadsheetId?: "..." }
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { logSheetAudit } from "@/lib/actions/audit";
+import {
+  requireEventRole,
+  NotMemberError,
+  InsufficientRoleError,
+  type EventRole,
+} from "@/lib/auth/roles";
 import {
   readSheet,
   readSheetRaw,
@@ -180,9 +189,15 @@ function toAuditAction(
   }
 }
 
+/** Read-only actions — no event membership required */
+const READ_ACTIONS = ["read", "read_raw", "list_sheets"];
+
+/** Admin-only actions — require owner or manager role */
+const ADMIN_ACTIONS = ["delete", "write_raw"];
+
 /** Whether the action is a write (should always be logged) */
 function isWriteAction(action: string): boolean {
-  return !["read", "read_raw", "list_sheets"].includes(action);
+  return !READ_ACTIONS.includes(action);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -223,17 +238,72 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ── Role-based access control ───────────────────────────
+  const eventId: string | null = body.eventId ?? null;
+  let userRole: EventRole | null = null;
+
+  if (isWriteAction(body.action)) {
+    // All write actions require an eventId so we can verify membership
+    if (!eventId) {
+      return NextResponse.json(
+        { error: "Missing 'eventId' — required for write actions" },
+        { status: 400 },
+      );
+    }
+
+    try {
+      // Admin actions (delete, write_raw) → owner/manager only
+      // Regular write actions → any event member
+      const requiredRoles = ADMIN_ACTIONS.includes(body.action)
+        ? (["owner", "manager"] as EventRole[])
+        : undefined; // any member
+
+      userRole = await requireEventRole(
+        supabase,
+        user.id,
+        eventId,
+        requiredRoles,
+      );
+    } catch (err) {
+      if (err instanceof NotMemberError) {
+        return NextResponse.json(
+          { error: "Forbidden — you are not a member of this event" },
+          { status: 403 },
+        );
+      }
+      if (err instanceof InsufficientRoleError) {
+        return NextResponse.json(
+          {
+            error: `Forbidden — action "${body.action}" requires role: ${err.requiredRoles.join(" or ")} (your role: ${err.actualRole})`,
+          },
+          { status: 403 },
+        );
+      }
+      throw err;
+    }
+  } else if (eventId) {
+    // Read actions: soft membership check (verify but don't block if
+    // no eventId provided for backward compat with list_sheets, etc.)
+    try {
+      userRole = await requireEventRole(supabase, user.id, eventId);
+    } catch {
+      // Allow reads to proceed even if membership check fails —
+      // Google Sheets service account auth is the real gate for reads
+    }
+  }
+
   // ── Helper: fire-and-forget audit log for write actions ─
   const auditLog = (changes?: Record<string, unknown> | null) => {
     if (!isWriteAction(body.action)) return;
     const sheetTitle = "sheetTitle" in body ? body.sheetTitle : "unknown";
     logSheetAudit({
       userId: user.id,
-      eventId: body.eventId ?? null,
+      eventId,
       action: toAuditAction(body.action),
       sheetTitle,
       spreadsheetId: body.spreadsheetId,
       changes,
+      role: userRole ?? undefined,
     }).catch(() => {}); // never block the response
   };
 
