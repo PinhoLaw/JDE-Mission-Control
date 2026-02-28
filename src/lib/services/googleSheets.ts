@@ -201,15 +201,17 @@ export async function appendRow(
 
   const newRow = await sheet.addRow(stringData);
 
+  const rowNum = newRow?.rowNumber ?? -1;
   console.log(
-    `[GoogleSheets] appendRow("${sheetTitle}") → row ${newRow.rowNumber}`,
+    `[GoogleSheets] appendRow("${sheetTitle}") → row ${rowNum}`,
     Object.keys(stringData).length,
     "fields",
+    "| sheet headers:", sheet.headerValues?.join(", "),
   );
 
   return {
     success: true,
-    rowNumber: newRow.rowNumber,
+    rowNumber: rowNum,
     data: stringData,
   };
 }
