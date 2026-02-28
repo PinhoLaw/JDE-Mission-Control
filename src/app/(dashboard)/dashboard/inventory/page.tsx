@@ -607,9 +607,10 @@ export default function InventoryPage() {
     })
     .filter(Boolean) as string[];
 
-  // ── Push status change to Google Sheets (fire-and-forget) ──
+  // ── Push status change to Google Sheets ──
   const pushToSheet = useCallback(
     async (vehicleList: Vehicle[], status: string) => {
+      let pushed = 0;
       for (const vehicle of vehicleList) {
         if (!vehicle.stock_number) continue;
         const sheetData = {
@@ -623,35 +624,40 @@ export default function InventoryPage() {
           "Notes": `Status changed to ${status}`,
           "Updated": new Date().toISOString(),
         };
-        try {
-          // Try update first — if the row already exists in the sheet
-          const res = await fetch("/api/sheets", {
+        // Try update first — if the row already exists in the sheet
+        const res = await fetch("/api/sheets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "update_by_field",
+            sheetTitle: "Dashboard Push",
+            matchColumn: "Stock #",
+            matchValue: vehicle.stock_number,
+            data: sheetData,
+          }),
+        });
+        // If row not found, append it instead
+        if (res.status === 404) {
+          const appendRes = await fetch("/api/sheets", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              action: "update_by_field",
+              action: "append",
               sheetTitle: "Dashboard Push",
-              matchColumn: "Stock #",
-              matchValue: vehicle.stock_number,
-              data: sheetData,
+              data: { "Stock #": vehicle.stock_number, ...sheetData },
             }),
           });
-          // If row not found, append it instead
-          if (res.status === 404) {
-            await fetch("/api/sheets", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "append",
-                sheetTitle: "Dashboard Push",
-                data: { "Stock #": vehicle.stock_number, ...sheetData },
-              }),
-            });
+          if (!appendRes.ok) {
+            const err = await appendRes.json().catch(() => ({}));
+            throw new Error(err.error || `Append failed: ${appendRes.status}`);
           }
-        } catch {
-          // Sheets push is best-effort — don't block the UI
+        } else if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Update failed: ${res.status}`);
         }
+        pushed++;
       }
+      return pushed;
     },
     [],
   );
@@ -674,10 +680,10 @@ export default function InventoryPage() {
         setRowSelection({});
 
         // Push to Google Sheets (fire-and-forget, don't await blocking)
-        pushToSheet(targetVehicles, status).then(() => {
-          toast.success("Pushed to Michigan City Ford Sheet");
-        }).catch(() => {
-          // Silent — sheets push is best-effort
+        pushToSheet(targetVehicles, status).then((count) => {
+          toast.success(`Pushed ${count} vehicle(s) to Google Sheet`);
+        }).catch((err) => {
+          toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       } catch (err) {
         // Rollback on error
