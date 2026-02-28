@@ -88,6 +88,7 @@ export default function InventoryPage() {
   const [makeFilter, setMakeFilter] = useState("all");
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [pricingMode, setPricingMode] = useState<"trade" | "retail">("trade");
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const [uploadingPhotoId, setUploadingPhotoId] = useState<string | null>(null);
@@ -235,17 +236,71 @@ export default function InventoryPage() {
         size: 40,
       },
       // ── 1. Stock # ──
-      { accessorKey: "stock_number", header: "Stock #", size: 90 },
+      {
+        accessorKey: "stock_number",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Stock # <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 90,
+      },
       // ── 2. Year ──
-      { accessorKey: "year", header: "Year", size: 55 },
+      {
+        accessorKey: "year",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Year <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 55,
+      },
       // ── 3. Make ──
-      { accessorKey: "make", header: "Make", size: 80 },
+      {
+        accessorKey: "make",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Make <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 80,
+      },
       // ── 4. Model ──
-      { accessorKey: "model", header: "Model", size: 100 },
+      {
+        accessorKey: "model",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Model <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 100,
+      },
       // ── 5. Class (body_style) ──
-      { accessorKey: "body_style", header: "Class", size: 70 },
+      {
+        accessorKey: "body_style",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Class <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 70,
+      },
       // ── 6. Color ──
-      { accessorKey: "color", header: "Color", size: 80 },
+      {
+        accessorKey: "color",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Color <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 80,
+      },
       // ── 7. Odometer (mileage) ──
       {
         accessorKey: "mileage",
@@ -266,11 +321,38 @@ export default function InventoryPage() {
         size: 90,
       },
       // ── 8. VIN # ──
-      { accessorKey: "vin", header: "VIN #", size: 160 },
+      {
+        accessorKey: "vin",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            VIN # <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 160,
+      },
       // ── 9. Series (trim) ──
-      { accessorKey: "trim", header: "Series", size: 100 },
+      {
+        accessorKey: "trim",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Series <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 100,
+      },
       // ── 10. Age ──
-      { accessorKey: "age_days", header: "Age", size: 50 },
+      {
+        accessorKey: "age_days",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Age <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        size: 50,
+      },
       // ── 11. Clean Trade (jd_trade_clean) ──
       {
         accessorKey: "jd_trade_clean",
@@ -290,7 +372,12 @@ export default function InventoryPage() {
       // ── 12. Clean Retail (jd_retail_clean) ──
       {
         accessorKey: "jd_retail_clean",
-        header: "Clean Retail",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Clean Retail <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
         cell: ({ row }) => currencyCell(row.getValue("jd_retail_clean") as number | null),
         size: 110,
       },
@@ -310,9 +397,14 @@ export default function InventoryPage() {
         cell: ({ row }) => currencyCell(row.getValue("acquisition_cost") as number | null),
         size: 100,
       },
-      // ── 14. DIFF (retail_spread = jd_trade_clean - acquisition_cost) ──
+      // ── 14. DIFF (dynamic: trade or retail based) ──
       {
-        accessorKey: "retail_spread",
+        id: "diff",
+        accessorFn: (row) => {
+          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
+          if (base == null || row.acquisition_cost == null) return null;
+          return base - row.acquisition_cost;
+        },
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -323,41 +415,100 @@ export default function InventoryPage() {
             DIFF <ArrowUpDown className="ml-1 h-3 w-3" />
           </Button>
         ),
-        cell: ({ row }) => diffCell(row.original.retail_spread),
+        cell: ({ row }) => {
+          const v = row.original;
+          const base = pricingMode === "trade" ? v.jd_trade_clean : v.jd_retail_clean;
+          if (base == null || v.acquisition_cost == null) return "—";
+          const diff = base - v.acquisition_cost;
+          return diffCell(diff);
+        },
         size: 90,
       },
-      // ── 15. 115% ──
+      // ── 15. 115% (dynamic) ──
       {
-        accessorKey: "asking_price_115",
-        header: "115%",
-        cell: ({ row }) => currencyCell(row.getValue("asking_price_115") as number | null),
+        id: "pct_115",
+        accessorFn: (row) => {
+          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
+          return base != null ? Math.round(base * 1.15) : null;
+        },
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            115% <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        cell: ({ row }) => {
+          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
+          return currencyCell(base != null ? Math.round(base * 1.15) : null);
+        },
         size: 90,
       },
-      // ── 16. 120% ──
+      // ── 16. 120% (dynamic) ──
       {
-        accessorKey: "asking_price_120",
-        header: "120%",
-        cell: ({ row }) => currencyCell(row.getValue("asking_price_120") as number | null),
+        id: "pct_120",
+        accessorFn: (row) => {
+          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
+          return base != null ? Math.round(base * 1.20) : null;
+        },
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            120% <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        cell: ({ row }) => {
+          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
+          return currencyCell(base != null ? Math.round(base * 1.20) : null);
+        },
         size: 90,
       },
-      // ── 17. 125% ──
+      // ── 17. 125% (dynamic) ──
       {
-        accessorKey: "asking_price_125",
-        header: "125%",
-        cell: ({ row }) => currencyCell(row.getValue("asking_price_125") as number | null),
+        id: "pct_125",
+        accessorFn: (row) => {
+          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
+          return base != null ? Math.round(base * 1.25) : null;
+        },
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            125% <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        cell: ({ row }) => {
+          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
+          return currencyCell(base != null ? Math.round(base * 1.25) : null);
+        },
         size: 90,
       },
-      // ── 18. 130% ──
+      // ── 18. 130% (dynamic) ──
       {
-        accessorKey: "asking_price_130",
-        header: "130%",
-        cell: ({ row }) => currencyCell(row.getValue("asking_price_130") as number | null),
+        id: "pct_130",
+        accessorFn: (row) => {
+          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
+          return base != null ? Math.round(base * 1.30) : null;
+        },
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            130% <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
+        cell: ({ row }) => {
+          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
+          return currencyCell(base != null ? Math.round(base * 1.30) : null);
+        },
         size: 90,
       },
       // ── Utility: status badge ──
       {
         accessorKey: "status",
-        header: "Status",
+        header: ({ column }) => (
+          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+            Status <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
         cell: ({ row }) => {
           const st = row.getValue("status") as string;
           return (
@@ -422,7 +573,7 @@ export default function InventoryPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [uploadingPhotoId],
+    [uploadingPhotoId, pricingMode],
   );
 
   const table = useReactTable({
@@ -709,6 +860,30 @@ export default function InventoryPage() {
             ))}
           </SelectContent>
         </Select>
+        <div className="flex items-center rounded-md border h-9">
+          <button
+            type="button"
+            className={`px-3 h-full text-sm font-medium rounded-l-md transition-colors ${
+              pricingMode === "trade"
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-muted"
+            }`}
+            onClick={() => setPricingMode("trade")}
+          >
+            Trade
+          </button>
+          <button
+            type="button"
+            className={`px-3 h-full text-sm font-medium rounded-r-md transition-colors ${
+              pricingMode === "retail"
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-muted"
+            }`}
+            onClick={() => setPricingMode("retail")}
+          >
+            Retail
+          </button>
+        </div>
 
         {/* Bulk actions */}
         {selectedIds.length > 0 && (
