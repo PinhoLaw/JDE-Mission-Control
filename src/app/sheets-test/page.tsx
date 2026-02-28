@@ -1,80 +1,189 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, AlertCircle, FileSpreadsheet } from "lucide-react";
+import { useCallback, useState } from "react";
+import {
+  RefreshCw,
+  AlertCircle,
+  FileSpreadsheet,
+  Plus,
+  Search,
+  CheckCircle2,
+  Loader2,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
-type SheetRow = Record<string, string | number | null>;
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
+
+type SheetRow = Record<string, string>;
+
+interface Toast {
+  id: number;
+  type: "success" | "error";
+  message: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helper: call /api/sheets
+// ─────────────────────────────────────────────────────────────
+
+async function sheetsApi(body: Record<string, unknown>) {
+  const res = await fetch("/api/sheets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────
 
 export default function SheetsTestPage() {
+  // ── Table state ──
   const [rows, setRows] = useState<SheetRow[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [tableError, setTableError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
+  // ── Append form state ──
+  const [appendForm, setAppendForm] = useState({
+    "Stock #": "",
+    Year: "",
+    Make: "",
+    Model: "",
+    Status: "",
+    Price: "",
+  });
+  const [appending, setAppending] = useState(false);
+
+  // ── Update form state ──
+  const [updateStockNum, setUpdateStockNum] = useState("");
+  const [updateStatus, setUpdateStatus] = useState("");
+  const [updating, setUpdating] = useState(false);
+
+  // ── Toast notifications ──
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  let toastId = 0;
+
+  function showToast(type: "success" | "error", message: string) {
+    const id = ++toastId;
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }
+
+  // ── Load Sheet18 ──
+  const loadSheet = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setTableError(null);
     try {
-      const res = await fetch("/api/sheets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "read", sheetTitle: "Sheet18" }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
-      }
-
-      const data = await res.json();
-
-      // Support both { rows: [...] } and direct array responses
-      const rawRows: unknown[][] = Array.isArray(data)
-        ? data
-        : Array.isArray(data.rows)
-          ? data.rows
-          : Array.isArray(data.values)
-            ? data.values
-            : [];
-
-      if (rawRows.length === 0) {
-        setHeaders([]);
-        setRows([]);
-        setLastFetched(new Date().toLocaleTimeString());
-        return;
-      }
-
-      // First row → headers
-      const hdrs = (rawRows[0] as (string | number | null)[]).map(
-        (h, i) => (h != null && String(h).trim() !== "" ? String(h).trim() : `Column ${i + 1}`),
-      );
-      setHeaders(hdrs);
-
-      // Remaining rows → data objects keyed by header
-      const dataRows = rawRows.slice(1).map((row) => {
-        const obj: SheetRow = {};
-        hdrs.forEach((h, i) => {
-          obj[h] = (row as (string | number | null)[])[i] ?? null;
-        });
-        return obj;
-      });
-
-      setRows(dataRows);
+      const data = await sheetsApi({ action: "read", sheetTitle: "Sheet18" });
+      setHeaders(data.headers || []);
+      setRows(data.rows || []);
       setLastFetched(new Date().toLocaleTimeString());
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setTableError(msg);
+      showToast("error", msg);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  // ── Append row ──
+  async function handleAppend(e: React.FormEvent) {
+    e.preventDefault();
+    const hasValue = Object.values(appendForm).some((v) => v.trim() !== "");
+    if (!hasValue) {
+      showToast("error", "Fill in at least one field");
+      return;
+    }
+    setAppending(true);
+    try {
+      const result = await sheetsApi({
+        action: "append",
+        sheetTitle: "Sheet18",
+        data: appendForm,
+      });
+      showToast("success", `Row added at row ${result.rowNumber}`);
+      setAppendForm({ "Stock #": "", Year: "", Make: "", Model: "", Status: "", Price: "" });
+      await loadSheet();
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setAppending(false);
+    }
+  }
+
+  // ── Update by field ──
+  async function handleUpdate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!updateStockNum.trim() || !updateStatus.trim()) {
+      showToast("error", "Both Stock # and new Status are required");
+      return;
+    }
+    setUpdating(true);
+    try {
+      const result = await sheetsApi({
+        action: "update_by_field",
+        sheetTitle: "Sheet18",
+        matchColumn: "Stock #",
+        matchValue: updateStockNum.trim(),
+        data: { Status: updateStatus.trim() },
+      });
+      showToast(
+        "success",
+        `Updated row ${result.rowNumber}: Status → "${updateStatus.trim()}"`,
+      );
+      setUpdateStockNum("");
+      setUpdateStatus("");
+      await loadSheet();
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setUpdating(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
+      {/* ── Toast Notifications ── */}
+      <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`animate-in slide-in-from-right fade-in flex items-center gap-2 rounded-lg border px-4 py-3 shadow-lg ${
+              t.type === "success"
+                ? "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200"
+                : "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+            }`}
+          >
+            {t.type === "success" ? (
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+            ) : (
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            )}
+            <p className="text-sm font-medium">{t.message}</p>
+          </div>
+        ))}
+      </div>
+
       {/* ── Header Bar ── */}
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
@@ -84,149 +193,296 @@ export default function SheetsTestPage() {
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                Sheets Test &mdash; Sheet18
+                Sheets Test &mdash; Sheet18 Push
               </h1>
               {lastFetched && (
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Last updated {lastFetched}
+                  {rows.length} rows &middot; Last loaded {lastFetched}
                 </p>
               )}
             </div>
           </div>
-
-          <button
-            onClick={fetchData}
+          <Button
+            variant="outline"
+            onClick={loadSheet}
             disabled={loading}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:shadow active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            {loading ? "Refreshing..." : "Refresh Data"}
-          </button>
+            {loading ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            {loading ? "Loading..." : "Load Sheet18"}
+          </Button>
         </div>
       </header>
 
       {/* ── Main Content ── */}
-      <main className="mx-auto max-w-7xl px-6 py-8">
-        {/* Loading State */}
-        {loading && rows.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-24">
-            <div className="relative mb-4">
-              <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-primary dark:border-slate-700 dark:border-t-primary" />
-            </div>
-            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
-              Loading Sheet18 data&hellip;
-            </p>
-          </div>
-        )}
+      <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+        {/* ── Action Cards ── */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* ── Append Row Card ── */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Plus className="h-4 w-4 text-primary" />
+                Add Row to Sheet18
+              </CardTitle>
+              <CardDescription>
+                Push a new vehicle row from Dashboard to Google Sheets
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleAppend} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="stock">Stock #</Label>
+                    <Input
+                      id="stock"
+                      placeholder="MF1503A"
+                      value={appendForm["Stock #"]}
+                      onChange={(e) =>
+                        setAppendForm((f) => ({ ...f, "Stock #": e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="year">Year</Label>
+                    <Input
+                      id="year"
+                      placeholder="2024"
+                      value={appendForm.Year}
+                      onChange={(e) =>
+                        setAppendForm((f) => ({ ...f, Year: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="make">Make</Label>
+                    <Input
+                      id="make"
+                      placeholder="FORD"
+                      value={appendForm.Make}
+                      onChange={(e) =>
+                        setAppendForm((f) => ({ ...f, Make: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="model">Model</Label>
+                    <Input
+                      id="model"
+                      placeholder="F150 RAPTOR"
+                      value={appendForm.Model}
+                      onChange={(e) =>
+                        setAppendForm((f) => ({ ...f, Model: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="status">Status</Label>
+                    <Input
+                      id="status"
+                      placeholder="AVAILABLE"
+                      value={appendForm.Status}
+                      onChange={(e) =>
+                        setAppendForm((f) => ({ ...f, Status: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="price">Price</Label>
+                    <Input
+                      id="price"
+                      placeholder="$28,500"
+                      value={appendForm.Price}
+                      onChange={(e) =>
+                        setAppendForm((f) => ({ ...f, Price: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+                <Button type="submit" className="w-full" disabled={appending}>
+                  {appending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="mr-2 h-4 w-4" />
+                  )}
+                  {appending ? "Adding..." : "Add to Sheet18"}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
 
-        {/* Error State */}
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-6 dark:border-red-900/50 dark:bg-red-950/30">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
-              <div>
-                <h3 className="text-sm font-semibold text-red-800 dark:text-red-300">
-                  Failed to load data
-                </h3>
-                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
-                <button
-                  onClick={fetchData}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+          {/* ── Update Status Card ── */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Search className="h-4 w-4 text-primary" />
+                Update Status by Stock #
+              </CardTitle>
+              <CardDescription>
+                Find a vehicle by Stock # and change its Status in Sheet18
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleUpdate} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="find-stock">Stock # to find</Label>
+                  <Input
+                    id="find-stock"
+                    placeholder="MF1503A"
+                    value={updateStockNum}
+                    onChange={(e) => setUpdateStockNum(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-status">New Status</Label>
+                  <Input
+                    id="new-status"
+                    placeholder="SOLD"
+                    value={updateStatus}
+                    onChange={(e) => setUpdateStatus(e.target.value)}
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  className="w-full"
+                  disabled={updating}
                 >
-                  <RefreshCw className="h-3 w-3" />
-                  Try Again
-                </button>
+                  {updating ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                  )}
+                  {updating ? "Updating..." : "Update Status"}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ── Data Table ── */}
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Sheet18 Data</CardTitle>
+              {rows.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-semibold text-foreground">
+                    {rows.length}
+                  </span>{" "}
+                  {rows.length === 1 ? "row" : "rows"} &middot;{" "}
+                  <span className="font-semibold text-foreground">
+                    {headers.length}
+                  </span>{" "}
+                  columns
+                </p>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="px-0 pb-0">
+            {/* Loading */}
+            {loading && rows.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-16">
+                <Loader2 className="mb-3 h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">
+                  Loading Sheet18 data&hellip;
+                </p>
               </div>
-            </div>
-          </div>
-        )}
+            )}
 
-        {/* Empty State */}
-        {!loading && !error && rows.length === 0 && (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 py-20 dark:border-slate-700">
-            <FileSpreadsheet className="mb-3 h-10 w-10 text-slate-300 dark:text-slate-600" />
-            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
-              No data found in Sheet18
-            </p>
-            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-              The sheet may be empty or the API returned no rows.
-            </p>
-          </div>
-        )}
-
-        {/* Data Table */}
-        {!loading && !error && rows.length > 0 && (
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {/* Table info bar */}
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                <span className="font-semibold text-slate-700 dark:text-slate-200">
-                  {rows.length}
-                </span>{" "}
-                {rows.length === 1 ? "row" : "rows"} &middot;{" "}
-                <span className="font-semibold text-slate-700 dark:text-slate-200">
-                  {headers.length}
-                </span>{" "}
-                columns
-              </p>
-            </div>
-
-            {/* Scrollable table container */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-800/50">
-                    <th className="sticky left-0 z-[1] whitespace-nowrap bg-slate-50 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                      #
-                    </th>
-                    {headers.map((h) => (
-                      <th
-                        key={h}
-                        className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {rows.map((row, ri) => (
-                    <tr
-                      key={ri}
-                      className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-800/40"
+            {/* Error */}
+            {tableError && (
+              <div className="mx-6 mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-950/30">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
+                  <div>
+                    <p className="text-sm font-medium text-red-800 dark:text-red-300">
+                      {tableError}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2 text-red-700 hover:text-red-800 dark:text-red-400"
+                      onClick={loadSheet}
                     >
-                      <td className="sticky left-0 z-[1] whitespace-nowrap bg-white px-5 py-3 text-xs font-medium tabular-nums text-slate-400 dark:bg-slate-900 dark:text-slate-500">
-                        {ri + 1}
-                      </td>
-                      {headers.map((h) => {
-                        const val = row[h];
-                        const display = val != null && val !== "" ? String(val) : "";
-                        const isDollar = /^-?\$/.test(display);
-                        const isNeg = /^-/.test(display);
-                        return (
-                          <td
-                            key={h}
-                            className={`whitespace-nowrap px-5 py-3 text-sm ${
-                              isDollar
-                                ? isNeg
-                                  ? "font-medium tabular-nums text-red-600 dark:text-red-400"
-                                  : "font-medium tabular-nums text-emerald-600 dark:text-emerald-400"
-                                : display === ""
-                                  ? "text-slate-300 dark:text-slate-600"
-                                  : "text-slate-700 dark:text-slate-300"
-                            }`}
-                          >
-                            {display || "\u2014"}
-                          </td>
-                        );
-                      })}
+                      <RefreshCw className="mr-1.5 h-3 w-3" />
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Empty — not yet loaded */}
+            {!loading && !tableError && rows.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-16">
+                <FileSpreadsheet className="mb-3 h-10 w-10 text-muted-foreground/30" />
+                <p className="text-sm font-medium text-muted-foreground">
+                  {lastFetched ? "No data in Sheet18" : "Click \"Load Sheet18\" to fetch data"}
+                </p>
+              </div>
+            )}
+
+            {/* Table */}
+            {rows.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-y border-border bg-muted/50">
+                      <th className="sticky left-0 z-[1] whitespace-nowrap bg-muted/80 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        #
+                      </th>
+                      {headers.map((h) => (
+                        <th
+                          key={h}
+                          className="whitespace-nowrap px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                        >
+                          {h}
+                        </th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {rows.map((row, ri) => (
+                      <tr
+                        key={ri}
+                        className="transition-colors hover:bg-muted/30"
+                      >
+                        <td className="sticky left-0 z-[1] whitespace-nowrap bg-card px-4 py-2.5 text-xs font-medium tabular-nums text-muted-foreground">
+                          {ri + 1}
+                        </td>
+                        {headers.map((h) => {
+                          const val = row[h] || "";
+                          const isDollar = /^-?\$/.test(val);
+                          const isNeg = /^-/.test(val);
+                          return (
+                            <td
+                              key={h}
+                              className={`whitespace-nowrap px-4 py-2.5 text-sm ${
+                                isDollar
+                                  ? isNeg
+                                    ? "font-medium tabular-nums text-red-600 dark:text-red-400"
+                                    : "font-medium tabular-nums text-emerald-600 dark:text-emerald-400"
+                                  : val === ""
+                                    ? "text-muted-foreground/40"
+                                    : "text-foreground"
+                              }`}
+                            >
+                              {val || "\u2014"}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </main>
     </div>
   );
