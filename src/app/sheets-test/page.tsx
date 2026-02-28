@@ -88,12 +88,12 @@ export default function SheetsTestPage() {
     }, 4000);
   }
 
-  // ── Load Sheet18 ──
+  // ── Load Dashboard Push ──
   const loadSheet = useCallback(async () => {
     setLoading(true);
     setTableError(null);
     try {
-      const data = await sheetsApi({ action: "read", sheetTitle: "Sheet18" });
+      const data = await sheetsApi({ action: "read", sheetTitle: "Dashboard Push" });
       setHeaders(data.headers || []);
       setRows(data.rows || []);
       setLastFetched(new Date().toLocaleTimeString());
@@ -118,7 +118,7 @@ export default function SheetsTestPage() {
     try {
       const result = await sheetsApi({
         action: "append",
-        sheetTitle: "Sheet18",
+        sheetTitle: "Dashboard Push",
         data: appendForm,
       });
       showToast("success", `Row added at row ${result.rowNumber}`);
@@ -142,7 +142,7 @@ export default function SheetsTestPage() {
     try {
       const result = await sheetsApi({
         action: "update_by_field",
-        sheetTitle: "Sheet18",
+        sheetTitle: "Dashboard Push",
         matchColumn: "Stock #",
         matchValue: updateStockNum.trim(),
         data: { Status: updateStatus.trim() },
@@ -198,7 +198,7 @@ export default function SheetsTestPage() {
             </div>
             <div>
               <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                Sheets Test &mdash; Sheet18 Push
+                Sheets Test &mdash; Dashboard Push Push
               </h1>
               {lastFetched && (
                 <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -217,7 +217,7 @@ export default function SheetsTestPage() {
             ) : (
               <RefreshCw className="mr-2 h-4 w-4" />
             )}
-            {loading ? "Loading..." : "Load Sheet18"}
+            {loading ? "Loading..." : "Load Dashboard Push"}
           </Button>
         </div>
       </header>
@@ -231,7 +231,7 @@ export default function SheetsTestPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Plus className="h-4 w-4 text-primary" />
-                Add Row to Sheet18
+                Add Row to Dashboard Push
               </CardTitle>
               <CardDescription>
                 Push a new vehicle row from Dashboard to Google Sheets
@@ -313,7 +313,7 @@ export default function SheetsTestPage() {
                   ) : (
                     <Plus className="mr-2 h-4 w-4" />
                   )}
-                  {appending ? "Adding..." : "Add to Sheet18"}
+                  {appending ? "Adding..." : "Add to Dashboard Push"}
                 </Button>
               </form>
             </CardContent>
@@ -327,7 +327,7 @@ export default function SheetsTestPage() {
                 Update Status by Stock #
               </CardTitle>
               <CardDescription>
-                Find a vehicle by Stock # and change its Status in Sheet18
+                Find a vehicle by Stock # and change its Status in Dashboard Push
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -372,7 +372,7 @@ export default function SheetsTestPage() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Sheet18 Data</CardTitle>
+              <CardTitle className="text-base">Dashboard Push Data</CardTitle>
               {rows.length > 0 && (
                 <p className="text-sm text-muted-foreground">
                   <span className="font-semibold text-foreground">
@@ -393,7 +393,7 @@ export default function SheetsTestPage() {
               <div className="flex flex-col items-center justify-center py-16">
                 <Loader2 className="mb-3 h-8 w-8 animate-spin text-primary" />
                 <p className="text-sm text-muted-foreground">
-                  Loading Sheet18 data&hellip;
+                  Loading Dashboard Push data&hellip;
                 </p>
               </div>
             )}
@@ -426,7 +426,7 @@ export default function SheetsTestPage() {
               <div className="flex flex-col items-center justify-center py-16">
                 <FileSpreadsheet className="mb-3 h-10 w-10 text-muted-foreground/30" />
                 <p className="text-sm font-medium text-muted-foreground">
-                  {lastFetched ? "No data in Sheet18" : "Click \"Load Sheet18\" to fetch data"}
+                  {lastFetched ? "No data in Dashboard Push" : "Click \"Load Dashboard Push\" to fetch data"}
                 </p>
               </div>
             )}
