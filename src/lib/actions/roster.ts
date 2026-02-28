@@ -95,6 +95,28 @@ export async function addLender(
   return { success: true };
 }
 
+export async function updateLender(
+  lenderId: string,
+  eventId: string,
+  updates: {
+    name?: string;
+    buy_rate_pct?: number | null;
+    max_advance?: number | null;
+    notes?: string | null;
+    active?: boolean;
+  },
+) {
+  const { supabase } = await requireMembership(eventId, ["owner", "manager"]);
+  const { error } = await supabase
+    .from("lenders")
+    .update(updates)
+    .eq("id", lenderId)
+    .eq("event_id", eventId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard/roster");
+  return { success: true };
+}
+
 // ────────────────────────────────────────────────────────
 // Fetch roster from another event (for "Copy from Event")
 // ────────────────────────────────────────────────────────

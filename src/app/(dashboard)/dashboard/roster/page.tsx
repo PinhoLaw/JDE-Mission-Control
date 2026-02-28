@@ -9,6 +9,7 @@ import {
   updateRosterMember,
   deleteRosterMember,
   addLender,
+  updateLender,
   deleteLender,
   fetchRosterForEvent,
   copyRosterFromEvent,
@@ -52,6 +53,9 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EditRosterMemberForm } from "@/components/roster/edit-roster-member-form";
+import { EditLenderForm } from "@/components/roster/edit-lender-form";
+import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
+import { CSVImportDialog } from "@/components/roster/csv-import-dialog";
 import {
   Plus,
   Users,
@@ -65,6 +69,7 @@ import {
   Download,
   Upload,
   Pencil,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
@@ -258,6 +263,9 @@ export default function RosterPage() {
 
   // Edit member dialog
   const [editingMember, setEditingMember] = useState<RosterMember | null>(null);
+  const [editingLender, setEditingLender] = useState<Lender | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [csvImportOpen, setCSVImportOpen] = useState(false);
 
   // ---------- Data fetching + realtime ----------
 
@@ -437,7 +445,10 @@ export default function RosterPage() {
         active: true,
         notes: null,
       })
-        .then(() => toast.success("Roster synced to sheet", { duration: 2000 }))
+        .then(() => {
+          toast.success("Roster synced to sheet", { duration: 2000 });
+          setLastSyncedAt(new Date());
+        })
         .catch((e: Error) =>
           toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
         );
@@ -468,7 +479,10 @@ export default function RosterPage() {
           ...member,
           confirmed: newConfirmed,
         })
-          .then(() => toast.success("Sheet updated", { duration: 2000 }))
+          .then(() => {
+            toast.success("Sheet updated", { duration: 2000 });
+            setLastSyncedAt(new Date());
+          })
           .catch((e: Error) =>
             toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
           );
@@ -505,7 +519,10 @@ export default function RosterPage() {
           ...member,
           active: newActive,
         })
-          .then(() => toast.success("Sheet updated", { duration: 2000 }))
+          .then(() => {
+            toast.success("Sheet updated", { duration: 2000 });
+            setLastSyncedAt(new Date());
+          })
           .catch((e: Error) =>
             toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
           );
@@ -817,6 +834,7 @@ export default function RosterPage() {
       }
 
       toast.success(`${roster.length} roster members pushed to sheet`);
+      setLastSyncedAt(new Date());
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to push roster to sheet",
@@ -1177,6 +1195,14 @@ export default function RosterPage() {
             )}
             Import from Sheet
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setCSVImportOpen(true)}
+          >
+            <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+            CSV Import
+          </Button>
 
           {/* Push Roster to Sheet */}
           <Button
@@ -1192,6 +1218,8 @@ export default function RosterPage() {
             )}
             Push to Sheet
           </Button>
+
+          <LastSyncedIndicator syncedAt={lastSyncedAt} />
 
           {/* Add Lender Dialog */}
           <Dialog open={lenderDialogOpen} onOpenChange={setLenderDialogOpen}>
@@ -1548,7 +1576,7 @@ export default function RosterPage() {
                     <TableHead className="text-right">Buy Rate %</TableHead>
                     <TableHead className="text-right">Max Advance</TableHead>
                     <TableHead className="text-center">Status</TableHead>
-                    <TableHead className="w-10" />
+                    <TableHead className="w-20" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1588,20 +1616,31 @@ export default function RosterPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                          disabled={deletingIds.has(`lender-${lender.id}`)}
-                          onClick={() => handleDeleteLender(lender)}
-                          title={`Remove ${lender.name}`}
-                        >
-                          {deletingIds.has(`lender-${lender.id}`) ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => setEditingLender(lender)}
+                            title={`Edit ${lender.name}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            disabled={deletingIds.has(`lender-${lender.id}`)}
+                            onClick={() => handleDeleteLender(lender)}
+                            title={`Remove ${lender.name}`}
+                          >
+                            {deletingIds.has(`lender-${lender.id}`) ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1638,6 +1677,49 @@ export default function RosterPage() {
           </ScrollArea>
         </DialogContent>
       </Dialog>
+
+      {/* Edit Lender Dialog */}
+      <Dialog
+        open={editingLender !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingLender(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Lender</DialogTitle>
+            <DialogDescription>
+              Update details for {editingLender?.name ?? "this lender"}.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[70vh]">
+            {editingLender && currentEvent && (
+              <EditLenderForm
+                key={editingLender.id}
+                lender={editingLender}
+                eventId={currentEvent.id}
+                onSuccess={() => setEditingLender(null)}
+              />
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* CSV Import Dialog */}
+      {currentEvent && (
+        <CSVImportDialog
+          open={csvImportOpen}
+          onOpenChange={setCSVImportOpen}
+          eventId={currentEvent.id}
+          onImport={async (members) => {
+            const result = await importRosterMembers(
+              currentEvent.id,
+              members,
+            );
+            return result;
+          }}
+        />
+      )}
     </div>
   );
 }

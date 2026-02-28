@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useEvent } from "@/providers/event-provider";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,12 +80,14 @@ interface NewDealFormProps {
   initialStockNumber?: string;
   initialVehicleId?: string;
   onSuccess?: () => void;
+  onSheetSynced?: () => void;
 }
 
 export function NewDealForm({
   initialStockNumber,
   initialVehicleId,
   onSuccess,
+  onSheetSynced,
 }: NewDealFormProps) {
   const { currentEvent } = useEvent();
   const [vehicleId, setVehicleId] = useState<string | null>(
@@ -93,6 +96,8 @@ export function NewDealForm({
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [vehicleAgeDays, setVehicleAgeDays] = useState<number | null>(null);
+  const [lenders, setLenders] = useState<Array<{ id: string; name: string }>>([]);
+  const [manualLender, setManualLender] = useState(false);
 
   const {
     register,
@@ -171,6 +176,19 @@ export function NewDealForm({
       handleLookup();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEvent]);
+
+  // Fetch active lenders for dropdown
+  useEffect(() => {
+    if (!currentEvent) return;
+    const supabase = createClient();
+    supabase
+      .from("lenders")
+      .select("id, name")
+      .eq("event_id", currentEvent.id)
+      .eq("active", true)
+      .order("name")
+      .then(({ data }) => setLenders(data ?? []));
   }, [currentEvent]);
 
   // Push deal to "FORD DEAL LOG" Google Sheet (fire-and-forget)
@@ -280,7 +298,10 @@ export function NewDealForm({
 
       // Fire-and-forget push to Google Sheet
       pushDealToSheet(data)
-        .then(() => toast.success("Deal pushed to Google Sheet"))
+        .then(() => {
+          toast.success("Deal pushed to Google Sheet");
+          onSheetSynced?.();
+        })
         .catch((err) =>
           toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`),
         );
@@ -529,7 +550,55 @@ export function NewDealForm({
             </div>
             <div>
               <Label htmlFor="lender">Lender</Label>
-              <Input id="lender" {...register("lender")} />
+              {manualLender || lenders.length === 0 ? (
+                <div className="flex gap-2">
+                  <Input
+                    id="lender"
+                    {...register("lender")}
+                    placeholder="Type lender name"
+                  />
+                  {lenders.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => setManualLender(false)}
+                    >
+                      List
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <Select
+                  value={watch("lender") || "__none__"}
+                  onValueChange={(v) => {
+                    if (v === "__manual__") {
+                      setManualLender(true);
+                      setValue("lender", "");
+                    } else if (v === "__none__") {
+                      setValue("lender", "");
+                    } else {
+                      setValue("lender", v);
+                    }
+                  }}
+                >
+                  <SelectTrigger id="lender">
+                    <SelectValue placeholder="Select lender" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None (Cash)</SelectItem>
+                    {lenders.map((l) => (
+                      <SelectItem key={l.id} value={l.name}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__manual__">
+                      Other (type manually)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div>
               <Label htmlFor="rate">Rate %</Label>

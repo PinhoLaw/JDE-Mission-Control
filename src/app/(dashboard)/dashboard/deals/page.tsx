@@ -65,6 +65,7 @@ import {
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import { EditDealForm } from "@/components/deals/edit-deal-form";
+import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
@@ -84,6 +85,7 @@ export default function DealsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     if (!currentEvent) return;
@@ -334,6 +336,7 @@ export default function DealsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <LastSyncedIndicator syncedAt={lastSyncedAt} />
           <Button variant="outline" size="sm" onClick={exportCSV}>
             <Download className="h-4 w-4" />
             Export
@@ -553,6 +556,7 @@ export default function DealsPage() {
               <EditDealForm
                 deal={editingDeal}
                 onSuccess={() => setEditingDeal(null)}
+                onSheetSynced={() => setLastSyncedAt(new Date())}
               />
             )}
           </ScrollArea>

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
-import type { Deal, EventConfig } from "@/types/database";
+import type { Deal, EventConfig, RosterMember } from "@/types/database";
 import {
   Card,
   CardContent,
@@ -27,6 +27,7 @@ import { formatCurrency } from "@/lib/utils";
 
 interface CommissionEntry {
   name: string;
+  commissionRate: number;
   fullDeals: number;
   splitDeals: number;
   weightedFrontGross: number;
@@ -41,6 +42,7 @@ export default function CommissionsPage() {
   const { currentEvent } = useEvent();
   const [deals, setDeals] = useState<Deal[]>([]);
   const [config, setConfig] = useState<EventConfig | null>(null);
+  const [roster, setRoster] = useState<RosterMember[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -59,9 +61,14 @@ export default function CommissionsPage() {
         .select("*")
         .eq("event_id", currentEvent.id)
         .maybeSingle(),
-    ]).then(([dealsRes, configRes]) => {
+      supabase
+        .from("roster")
+        .select("id, name, commission_pct")
+        .eq("event_id", currentEvent.id),
+    ]).then(([dealsRes, configRes, rosterRes]) => {
       setDeals(dealsRes.data ?? []);
       setConfig(configRes.data);
+      setRoster(rosterRes.data ?? []);
       setLoading(false);
     });
 
@@ -91,8 +98,18 @@ export default function CommissionsPage() {
     };
   }, [currentEvent]);
 
-  // Commission calculation using configurable rates
-  const commissionRate = config?.rep_commission_pct ?? 0.25; // Default 25%
+  // Build per-person commission rate lookup from roster
+  const rosterRateMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const member of roster) {
+      if (member.commission_pct != null) {
+        map.set(member.name.toLowerCase().trim(), member.commission_pct);
+      }
+    }
+    return map;
+  }, [roster]);
+
+  const defaultRate = config?.rep_commission_pct ?? 0.25;
 
   const commissions = useMemo(() => {
     const byPerson: Record<string, CommissionEntry> = {};
@@ -101,9 +118,14 @@ export default function CommissionsPage() {
       const sp = deal.salesperson;
       if (!sp) continue;
 
+      // Per-person rate from roster, fallback to config default
+      const spRate =
+        rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
+
       if (!byPerson[sp]) {
         byPerson[sp] = {
           name: sp,
+          commissionRate: spRate,
           fullDeals: 0,
           splitDeals: 0,
           weightedFrontGross: 0,
@@ -121,18 +143,22 @@ export default function CommissionsPage() {
       const pct1 = deal.salesperson_pct ?? 1;
 
       if (deal.second_salesperson) {
-        // Split deal
+        // Split deal — primary salesperson
         byPerson[sp].splitDeals += 1;
         byPerson[sp].weightedFrontGross += front * pct1;
         byPerson[sp].totalBackGross += back * pct1;
         byPerson[sp].totalGross += total * pct1;
-        byPerson[sp].commission += front * commissionRate * pct1;
+        byPerson[sp].commission += front * spRate * pct1;
 
         // Second salesperson
         const sp2 = deal.second_salesperson;
+        const sp2Rate =
+          rosterRateMap.get(sp2.toLowerCase().trim()) ?? defaultRate;
+
         if (!byPerson[sp2]) {
           byPerson[sp2] = {
             name: sp2,
+            commissionRate: sp2Rate,
             fullDeals: 0,
             splitDeals: 0,
             weightedFrontGross: 0,
@@ -148,14 +174,14 @@ export default function CommissionsPage() {
         byPerson[sp2].weightedFrontGross += front * pct2;
         byPerson[sp2].totalBackGross += back * pct2;
         byPerson[sp2].totalGross += total * pct2;
-        byPerson[sp2].commission += front * commissionRate * pct2;
+        byPerson[sp2].commission += front * sp2Rate * pct2;
       } else {
         // Full deal
         byPerson[sp].fullDeals += 1;
         byPerson[sp].weightedFrontGross += front;
         byPerson[sp].totalBackGross += back;
         byPerson[sp].totalGross += total;
-        byPerson[sp].commission += front * commissionRate;
+        byPerson[sp].commission += front * spRate;
       }
 
       if (deal.is_washout) {
@@ -170,21 +196,28 @@ export default function CommissionsPage() {
     }
 
     return Object.values(byPerson).sort((a, b) => b.commission - a.commission);
-  }, [deals, commissionRate]);
+  }, [deals, defaultRate, rosterRateMap]);
 
   const totalComm = commissions.reduce((s, c) => s + c.commission, 0);
   const totalWashouts = commissions.reduce((s, c) => s + c.washouts, 0);
 
   const exportCSV = () => {
     const headers = [
-      "Salesperson", "Full Deals", "Splits", "Weighted Front", "Back Gross",
-      "Total Gross", "Avg PVR", "Commission", "Washouts",
+      "Salesperson", "Rate", "Full Deals", "Splits", "Weighted Front",
+      "Back Gross", "Total Gross", "Avg PVR", "Commission", "Washouts",
     ];
     const rows = commissions.map((c) =>
       [
-        c.name, c.fullDeals, c.splitDeals, c.weightedFrontGross.toFixed(2),
-        c.totalBackGross.toFixed(2), c.totalGross.toFixed(2),
-        c.avgPVR.toFixed(2), c.commission.toFixed(2), c.washouts,
+        c.name,
+        `${(c.commissionRate * 100).toFixed(0)}%`,
+        c.fullDeals,
+        c.splitDeals,
+        c.weightedFrontGross.toFixed(2),
+        c.totalBackGross.toFixed(2),
+        c.totalGross.toFixed(2),
+        c.avgPVR.toFixed(2),
+        c.commission.toFixed(2),
+        c.washouts,
       ].join(","),
     );
     const csv = [headers.join(","), ...rows].join("\n");
@@ -216,8 +249,9 @@ export default function CommissionsPage() {
             Commissions
           </h1>
           <p className="text-sm text-muted-foreground">
-            {currentEvent.dealer_name ?? currentEvent.name} —{" "}
-            {(commissionRate * 100).toFixed(0)}% front gross commission rate
+            {currentEvent.dealer_name ?? currentEvent.name} — Default{" "}
+            {(defaultRate * 100).toFixed(0)}% commission rate
+            {roster.length > 0 && " (individual rates from roster)"}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={exportCSV}>
@@ -280,8 +314,8 @@ export default function CommissionsPage() {
             <CardHeader>
               <CardTitle>Commission Breakdown</CardTitle>
               <CardDescription>
-                Based on {(commissionRate * 100).toFixed(0)}% of weighted
-                front gross
+                Individual rates from roster (default:{" "}
+                {(defaultRate * 100).toFixed(0)}% of weighted front gross)
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -298,6 +332,7 @@ export default function CommissionsPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Salesperson</TableHead>
+                        <TableHead className="text-right">Rate</TableHead>
                         <TableHead className="text-center">Full</TableHead>
                         <TableHead className="text-center">Splits</TableHead>
                         <TableHead className="text-right">
@@ -318,6 +353,17 @@ export default function CommissionsPage() {
                       {commissions.map((c) => (
                         <TableRow key={c.name}>
                           <TableCell className="font-medium">{c.name}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            <span
+                              className={
+                                c.commissionRate !== defaultRate
+                                  ? "text-blue-600 font-medium"
+                                  : ""
+                              }
+                            >
+                              {(c.commissionRate * 100).toFixed(0)}%
+                            </span>
+                          </TableCell>
                           <TableCell className="text-center">
                             {c.fullDeals}
                           </TableCell>
@@ -356,6 +402,7 @@ export default function CommissionsPage() {
                       {/* Totals row */}
                       <TableRow className="border-t-2 font-bold">
                         <TableCell>TOTALS</TableCell>
+                        <TableCell className="text-right">—</TableCell>
                         <TableCell className="text-center">
                           {commissions.reduce((s, c) => s + c.fullDeals, 0)}
                         </TableCell>

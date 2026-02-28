@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useEvent } from "@/providers/event-provider";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,9 +80,10 @@ type DealFormValues = z.infer<typeof dealFormSchema>;
 interface EditDealFormProps {
   deal: Deal;
   onSuccess?: () => void;
+  onSheetSynced?: () => void;
 }
 
-export function EditDealForm({ deal, onSuccess }: EditDealFormProps) {
+export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormProps) {
   const { currentEvent } = useEvent();
   const [vehicleId, setVehicleId] = useState<string | null>(
     deal.vehicle_id ?? null,
@@ -89,6 +91,8 @@ export function EditDealForm({ deal, onSuccess }: EditDealFormProps) {
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [vehicleAgeDays, setVehicleAgeDays] = useState<number | null>(null);
+  const [lenders, setLenders] = useState<Array<{ id: string; name: string }>>([]);
+  const [manualLender, setManualLender] = useState(false);
 
   const {
     register,
@@ -187,6 +191,29 @@ export function EditDealForm({ deal, onSuccess }: EditDealFormProps) {
       setLookingUp(false);
     }
   }, [currentEvent, setValue, watch]);
+
+  // Fetch active lenders for dropdown
+  useEffect(() => {
+    if (!currentEvent) return;
+    const supabase = createClient();
+    supabase
+      .from("lenders")
+      .select("id, name")
+      .eq("event_id", currentEvent.id)
+      .eq("active", true)
+      .order("name")
+      .then(({ data }) => {
+        setLenders(data ?? []);
+        // If deal has a lender not in the active list, switch to manual mode
+        if (
+          deal.lender &&
+          data &&
+          !data.some((l) => l.name === deal.lender)
+        ) {
+          setManualLender(true);
+        }
+      });
+  }, [currentEvent, deal.lender]);
 
   // Push deal update to Google Sheet (fire-and-forget)
   const pushDealToSheet = useCallback(
@@ -295,7 +322,10 @@ export function EditDealForm({ deal, onSuccess }: EditDealFormProps) {
 
       // Fire-and-forget push to Google Sheet
       pushDealToSheet(data)
-        .then(() => toast.success("Deal updated & pushed to sheet"))
+        .then(() => {
+          toast.success("Deal updated & pushed to sheet");
+          onSheetSynced?.();
+        })
         .catch((err) =>
           toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`),
         );
@@ -544,7 +574,55 @@ export function EditDealForm({ deal, onSuccess }: EditDealFormProps) {
             </div>
             <div>
               <Label htmlFor="edit_lender">Lender</Label>
-              <Input id="edit_lender" {...register("lender")} />
+              {manualLender || lenders.length === 0 ? (
+                <div className="flex gap-2">
+                  <Input
+                    id="edit_lender"
+                    {...register("lender")}
+                    placeholder="Type lender name"
+                  />
+                  {lenders.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => setManualLender(false)}
+                    >
+                      List
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <Select
+                  value={watch("lender") || "__none__"}
+                  onValueChange={(v) => {
+                    if (v === "__manual__") {
+                      setManualLender(true);
+                      setValue("lender", "");
+                    } else if (v === "__none__") {
+                      setValue("lender", "");
+                    } else {
+                      setValue("lender", v);
+                    }
+                  }}
+                >
+                  <SelectTrigger id="edit_lender">
+                    <SelectValue placeholder="Select lender" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None (Cash)</SelectItem>
+                    {lenders.map((l) => (
+                      <SelectItem key={l.id} value={l.name}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__manual__">
+                      Other (type manually)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div>
               <Label htmlFor="edit_rate">Rate %</Label>
