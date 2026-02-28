@@ -17,7 +17,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { resilientSheetFetch } from "@/lib/services/offlineQueue";
+import { useSheetPush } from "@/hooks/useSheetPush";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,41 +67,6 @@ function rosterMemberToRow(member: {
   ];
 }
 
-async function updateRosterMemberOnSheet(
-  member: {
-    id: string;
-    name: string;
-    phone?: string | null;
-    email?: string | null;
-    role: string;
-    team?: string | null;
-    commission_pct?: number | null;
-    confirmed: boolean;
-    active: boolean;
-    notes?: string | null;
-  },
-  spreadsheetId?: string | null,
-  eventId?: string | null,
-) {
-  const values = rosterMemberToRow(member);
-  const payload = {
-    action: "update_raw",
-    sheetTitle: "Roster Push",
-    matchColumnIndex: 0, // Match by ID (column A)
-    matchValue: member.id,
-    values,
-    spreadsheetId: spreadsheetId ?? undefined,
-    eventId: eventId ?? undefined,
-  };
-  const res = await resilientSheetFetch(payload, eventId ?? null);
-  if (!res) return { queued: true };
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error ?? "Sheet update failed");
-  }
-  return res.json();
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -116,9 +81,11 @@ interface EditRosterMemberFormProps {
 export function EditRosterMemberForm({
   member,
   eventId,
-  sheetId,
+  // sheetId no longer needed — useSheetPush injects it from EventProvider
   onSuccess,
 }: EditRosterMemberFormProps) {
+  const { push: sheetPush } = useSheetPush();
+
   const [form, setForm] = useState({
     name: member.name,
     phone: member.phone ?? "",
@@ -162,32 +129,29 @@ export function EditRosterMemberForm({
       toast.success(`${form.name.trim()} updated`);
 
       // Fire-and-forget: push updated member to Google Sheet
-      updateRosterMemberOnSheet({
-        id: member.id,
-        name: form.name.trim(),
-        phone: form.phone.trim() || null,
-        email: form.email.trim() || null,
-        role: form.role,
-        team: form.team.trim() || null,
-        commission_pct: form.commission_pct
-          ? parseFloat(form.commission_pct) / 100
-          : null,
-        confirmed: form.confirmed,
-        active: form.active,
-        notes: form.notes.trim() || null,
-      }, sheetId, eventId)
-        .then((r) => {
-          if (r?.queued) {
-            toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
-          } else {
-            toast.success("Sheet updated", { duration: 2000 });
-          }
-        })
-        .catch((e: Error) =>
-          toast.error(`Sheet sync failed: ${e.message}`, {
-            duration: 4000,
+      sheetPush(
+        {
+          action: "update_raw",
+          sheetTitle: "Roster Push",
+          matchColumnIndex: 0,
+          matchValue: member.id,
+          values: rosterMemberToRow({
+            id: member.id,
+            name: form.name.trim(),
+            phone: form.phone.trim() || null,
+            email: form.email.trim() || null,
+            role: form.role,
+            team: form.team.trim() || null,
+            commission_pct: form.commission_pct
+              ? parseFloat(form.commission_pct) / 100
+              : null,
+            confirmed: form.confirmed,
+            active: form.active,
+            notes: form.notes.trim() || null,
           }),
-        );
+        },
+        { successMessage: "Sheet updated" },
+      );
 
       onSuccess?.();
     } catch (err) {
@@ -197,7 +161,7 @@ export function EditRosterMemberForm({
     } finally {
       setSubmitting(false);
     }
-  }, [form, member.id, eventId, onSuccess]);
+  }, [form, member.id, eventId, onSuccess, sheetPush]);
 
   return (
     <div className="grid gap-4 py-4">

@@ -26,7 +26,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
-import { resilientSheetFetch } from "@/lib/services/offlineQueue";
+import { useSheetPush } from "@/hooks/useSheetPush";
 import { createDeal, lookupVehicle } from "@/lib/actions/deals";
 import { formatCurrency } from "@/lib/utils";
 
@@ -94,6 +94,7 @@ export function NewDealForm({
   const [vehicleId, setVehicleId] = useState<string | null>(
     initialVehicleId ?? null,
   );
+  const { push: sheetPush } = useSheetPush();
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [vehicleAgeDays, setVehicleAgeDays] = useState<number | null>(null);
@@ -192,63 +193,41 @@ export function NewDealForm({
       .then(({ data }) => setLenders(data ?? []));
   }, [currentEvent]);
 
-  // Push deal to "FORD DEAL LOG" Google Sheet (fire-and-forget)
-  const pushDealToSheet = useCallback(
-    async (data: DealFormValues) => {
-      // Column order matches FORD DEAL LOG headers:
-      // STORE, STOCK#, CUSTOMER, ZIPCODE, NEW/USED, YEAR, MAKE, MODEL,
-      // COST, AGE, YEAR, MAKE, MODEL, MILES, ACV, PAYOFF,
-      // SALESPERSON, 2ND SALESPERSON, FRONT GROSS, LENDER, RATE,
-      // RESERVE, WARRANTY, AFT 1, GAP, FI TOTALS, TOTAL GROSS,
-      // DAILY GROSS, ADD GROSS, DLR GROSS, JDE PAY
-      const values = [
-        currentEvent?.dealer_name ?? currentEvent?.name ?? "",  // STORE
-        data.stock_number ?? "",                                 // STOCK#
-        data.customer_name,                                      // CUSTOMER
-        data.customer_zip ?? "",                                 // ZIPCODE
-        data.new_used,                                           // NEW/USED
-        data.vehicle_year ?? "",                                 // YEAR (vehicle)
-        data.vehicle_make ?? "",                                 // MAKE (vehicle)
-        data.vehicle_model ?? "",                                // MODEL (vehicle)
-        data.vehicle_cost ?? "",                                 // COST
-        vehicleAgeDays ?? "",                                    // AGE
-        data.trade_year ?? "",                                   // YEAR (trade)
-        data.trade_make ?? "",                                   // MAKE (trade)
-        data.trade_model ?? "",                                  // MODEL (trade)
-        data.trade_mileage ?? "",                                // MILES
-        data.trade_acv ?? "",                                    // ACV
-        data.trade_payoff ?? "",                                 // PAYOFF
-        data.salesperson ?? "",                                  // SALESPERSON
-        data.second_salesperson ?? "",                           // 2ND SALESPERSON
-        frontGross,                                              // FRONT GROSS
-        data.lender ?? "",                                       // LENDER
-        data.rate ?? "",                                         // RATE
-        data.reserve ?? "",                                      // RESERVE
-        data.warranty ?? "",                                     // WARRANTY
-        data.aftermarket_1 ?? "",                                // AFT 1
-        data.gap ?? "",                                          // GAP
-        fiTotal,                                                 // FI TOTALS
-        totalGross,                                              // TOTAL GROSS
-        "",                                                      // DAILY GROSS
-        "",                                                      // ADD GROSS
-        "",                                                      // DLR GROSS
-        "",                                                      // JDE PAY
-      ];
-
-      const payload = {
-        action: "append_raw",
-        sheetTitle: "Deal Log Push",
-        values,
-        spreadsheetId: currentEvent?.sheet_id,
-        eventId: currentEvent?.id,
-      };
-      const res = await resilientSheetFetch(payload, currentEvent?.id ?? null);
-      if (!res) return { queued: true };
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Sheet push failed: ${res.status}`);
-      }
-    },
+  // Build deal values for "Deal Log Push" sheet
+  const buildDealValues = useCallback(
+    (data: DealFormValues) => [
+      currentEvent?.dealer_name ?? currentEvent?.name ?? "",  // STORE
+      data.stock_number ?? "",                                 // STOCK#
+      data.customer_name,                                      // CUSTOMER
+      data.customer_zip ?? "",                                 // ZIPCODE
+      data.new_used,                                           // NEW/USED
+      data.vehicle_year ?? "",                                 // YEAR (vehicle)
+      data.vehicle_make ?? "",                                 // MAKE (vehicle)
+      data.vehicle_model ?? "",                                // MODEL (vehicle)
+      data.vehicle_cost ?? "",                                 // COST
+      vehicleAgeDays ?? "",                                    // AGE
+      data.trade_year ?? "",                                   // YEAR (trade)
+      data.trade_make ?? "",                                   // MAKE (trade)
+      data.trade_model ?? "",                                  // MODEL (trade)
+      data.trade_mileage ?? "",                                // MILES
+      data.trade_acv ?? "",                                    // ACV
+      data.trade_payoff ?? "",                                 // PAYOFF
+      data.salesperson ?? "",                                  // SALESPERSON
+      data.second_salesperson ?? "",                           // 2ND SALESPERSON
+      frontGross,                                              // FRONT GROSS
+      data.lender ?? "",                                       // LENDER
+      data.rate ?? "",                                         // RATE
+      data.reserve ?? "",                                      // RESERVE
+      data.warranty ?? "",                                     // WARRANTY
+      data.aftermarket_1 ?? "",                                // AFT 1
+      data.gap ?? "",                                          // GAP
+      fiTotal,                                                 // FI TOTALS
+      totalGross,                                              // TOTAL GROSS
+      "",                                                      // DAILY GROSS
+      "",                                                      // ADD GROSS
+      "",                                                      // DLR GROSS
+      "",                                                      // JDE PAY
+    ],
     [currentEvent, vehicleAgeDays, frontGross, fiTotal, totalGross],
   );
 
@@ -297,18 +276,10 @@ export function NewDealForm({
       toast.success("Deal created successfully!");
 
       // Fire-and-forget push to Google Sheet
-      pushDealToSheet(data)
-        .then((r) => {
-          if (r?.queued) {
-            toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
-          } else {
-            toast.success("Deal pushed to Google Sheet");
-            onSheetSynced?.();
-          }
-        })
-        .catch((err) =>
-          toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`),
-        );
+      sheetPush(
+        { action: "append_raw", sheetTitle: "Deal Log Push", values: buildDealValues(data) },
+        { successMessage: "Deal pushed to Google Sheet", onSuccess: () => onSheetSynced?.() },
+      );
 
       onSuccess?.();
     } catch (err) {

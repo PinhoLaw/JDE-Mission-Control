@@ -58,7 +58,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { EditRosterMemberForm } from "@/components/roster/edit-roster-member-form";
 import { EditLenderForm } from "@/components/roster/edit-lender-form";
 import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
-import { resilientSheetFetch } from "@/lib/services/offlineQueue";
+import { useSheetPush } from "@/hooks/useSheetPush";
 import { CSVImportDialog } from "@/components/roster/csv-import-dialog";
 import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import {
@@ -162,74 +162,6 @@ function rosterMemberToRow(member: {
   ];
 }
 
-async function pushRosterMemberToSheet(
-  member: {
-    id: string;
-    name: string;
-    phone?: string | null;
-    email?: string | null;
-    role: string;
-    team?: string | null;
-    commission_pct?: number | null;
-    confirmed: boolean;
-    active: boolean;
-    notes?: string | null;
-  },
-  spreadsheetId?: string | null,
-  eventId?: string | null,
-) {
-  const values = rosterMemberToRow(member);
-  const payload = {
-    action: "append_raw",
-    sheetTitle: "Roster Push",
-    values,
-    spreadsheetId: spreadsheetId ?? undefined,
-    eventId: eventId ?? undefined,
-  };
-  const res = await resilientSheetFetch(payload, eventId ?? null);
-  if (!res) return { queued: true };
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error ?? "Sheet push failed");
-  }
-  return res.json();
-}
-
-async function updateRosterMemberOnSheet(
-  member: {
-    id: string;
-    name: string;
-    phone?: string | null;
-    email?: string | null;
-    role: string;
-    team?: string | null;
-    commission_pct?: number | null;
-    confirmed: boolean;
-    active: boolean;
-    notes?: string | null;
-  },
-  spreadsheetId?: string | null,
-  eventId?: string | null,
-) {
-  const values = rosterMemberToRow(member);
-  const payload = {
-    action: "update_raw",
-    sheetTitle: "Roster Push",
-    matchColumnIndex: 0, // Match by ID (column A)
-    matchValue: member.id,
-    values,
-    spreadsheetId: spreadsheetId ?? undefined,
-    eventId: eventId ?? undefined,
-  };
-  const res = await resilientSheetFetch(payload, eventId ?? null);
-  if (!res) return { queued: true };
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error ?? "Sheet update failed");
-  }
-  return res.json();
-}
-
 // ---------------------------------------------------------------------------
 // Page Component
 // ---------------------------------------------------------------------------
@@ -247,6 +179,9 @@ type SourceRosterMember = {
 
 export default function RosterPage() {
   const { currentEvent, availableEvents } = useEvent();
+
+  // Centralized sheet push
+  const { push: sheetPush } = useSheetPush();
 
   // Data
   const [roster, setRoster] = useState<RosterMember[]>([]);
@@ -481,9 +416,16 @@ export default function RosterPage() {
         // Fire-and-forget: update sheet rows
         const members = roster.filter((m) => selectedRosterIds.has(m.id));
         for (const member of members) {
-          updateRosterMemberOnSheet({ ...member, confirmed }, currentEvent?.sheet_id, currentEvent?.id)
-            .then(() => setLastSyncedAt(new Date()))
-            .catch(() => {});
+          sheetPush(
+            {
+              action: "update_raw",
+              sheetTitle: "Roster Push",
+              matchColumnIndex: 0,
+              matchValue: member.id,
+              values: rosterMemberToRow({ ...member, confirmed }),
+            },
+            { successMessage: false, queuedMessage: false, onSuccess: () => setLastSyncedAt(new Date()) },
+          );
         }
 
         clearRosterSelection();
@@ -495,7 +437,7 @@ export default function RosterPage() {
         setBulkLoading(false);
       }
     },
-    [currentEvent, selectedRosterIds, roster, clearRosterSelection],
+    [currentEvent, selectedRosterIds, roster, clearRosterSelection, sheetPush],
   );
 
   const handleBulkMarkActive = useCallback(
@@ -515,9 +457,16 @@ export default function RosterPage() {
         // Fire-and-forget: update sheet rows
         const members = roster.filter((m) => selectedRosterIds.has(m.id));
         for (const member of members) {
-          updateRosterMemberOnSheet({ ...member, active }, currentEvent?.sheet_id, currentEvent?.id)
-            .then(() => setLastSyncedAt(new Date()))
-            .catch(() => {});
+          sheetPush(
+            {
+              action: "update_raw",
+              sheetTitle: "Roster Push",
+              matchColumnIndex: 0,
+              matchValue: member.id,
+              values: rosterMemberToRow({ ...member, active }),
+            },
+            { successMessage: false, queuedMessage: false, onSuccess: () => setLastSyncedAt(new Date()) },
+          );
         }
 
         clearRosterSelection();
@@ -529,7 +478,7 @@ export default function RosterPage() {
         setBulkLoading(false);
       }
     },
-    [currentEvent, selectedRosterIds, roster, clearRosterSelection],
+    [currentEvent, selectedRosterIds, roster, clearRosterSelection, sheetPush],
   );
 
   const handleBulkAssignTeam = useCallback(
@@ -549,9 +498,16 @@ export default function RosterPage() {
         // Fire-and-forget: update sheet rows
         const members = roster.filter((m) => selectedRosterIds.has(m.id));
         for (const member of members) {
-          updateRosterMemberOnSheet({ ...member, team }, currentEvent?.sheet_id, currentEvent?.id)
-            .then(() => setLastSyncedAt(new Date()))
-            .catch(() => {});
+          sheetPush(
+            {
+              action: "update_raw",
+              sheetTitle: "Roster Push",
+              matchColumnIndex: 0,
+              matchValue: member.id,
+              values: rosterMemberToRow({ ...member, team }),
+            },
+            { successMessage: false, queuedMessage: false, onSuccess: () => setLastSyncedAt(new Date()) },
+          );
         }
 
         clearRosterSelection();
@@ -563,7 +519,7 @@ export default function RosterPage() {
         setBulkLoading(false);
       }
     },
-    [currentEvent, selectedRosterIds, roster, clearRosterSelection],
+    [currentEvent, selectedRosterIds, roster, clearRosterSelection, sheetPush],
   );
 
   const handleBulkDeleteRoster = useCallback(async () => {
@@ -614,29 +570,28 @@ export default function RosterPage() {
       setRosterDialogOpen(false);
 
       // Fire-and-forget: push to "Roster Push" sheet
-      pushRosterMemberToSheet({
-        id: result.memberId,
-        name: formData.name,
-        phone: formData.phone ?? null,
-        email: formData.email ?? null,
-        role: formData.role,
-        team: formData.team ?? null,
-        commission_pct: formData.commission_pct ?? null,
-        confirmed: false,
-        active: true,
-        notes: null,
-      }, currentEvent?.sheet_id, currentEvent?.id)
-        .then((r) => {
-          if (r?.queued) {
-            toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
-          } else {
-            toast.success("Roster synced to sheet", { duration: 2000 });
-          }
-          setLastSyncedAt(new Date());
-        })
-        .catch((e: Error) =>
-          toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
-        );
+      sheetPush(
+        {
+          action: "append_raw",
+          sheetTitle: "Roster Push",
+          values: rosterMemberToRow({
+            id: result.memberId,
+            name: formData.name,
+            phone: formData.phone ?? null,
+            email: formData.email ?? null,
+            role: formData.role,
+            team: formData.team ?? null,
+            commission_pct: formData.commission_pct ?? null,
+            confirmed: false,
+            active: true,
+            notes: null,
+          }),
+        },
+        {
+          successMessage: "Roster synced to sheet",
+          onSuccess: () => setLastSyncedAt(new Date()),
+        },
+      );
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to add roster member",
@@ -644,7 +599,7 @@ export default function RosterPage() {
     } finally {
       setSubmittingRoster(false);
     }
-  }, [currentEvent, rosterForm]);
+  }, [currentEvent, rosterForm, sheetPush]);
 
   const handleToggleConfirmed = useCallback(
     async (member: RosterMember) => {
@@ -660,21 +615,19 @@ export default function RosterPage() {
         );
 
         // Fire-and-forget: update sheet row
-        updateRosterMemberOnSheet({
-          ...member,
-          confirmed: newConfirmed,
-        }, currentEvent?.sheet_id, currentEvent?.id)
-          .then((r) => {
-            if (r?.queued) {
-              toast.info("Sheet push queued — will retry automatically", { duration: 3000 });
-            } else {
-              toast.success("Sheet updated", { duration: 2000 });
-            }
-            setLastSyncedAt(new Date());
-          })
-          .catch((e: Error) =>
-            toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
-          );
+        sheetPush(
+          {
+            action: "update_raw",
+            sheetTitle: "Roster Push",
+            matchColumnIndex: 0,
+            matchValue: member.id,
+            values: rosterMemberToRow({ ...member, confirmed: newConfirmed }),
+          },
+          {
+            successMessage: "Sheet updated",
+            onSuccess: () => setLastSyncedAt(new Date()),
+          },
+        );
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to update member",
@@ -687,7 +640,7 @@ export default function RosterPage() {
         });
       }
     },
-    [currentEvent],
+    [currentEvent, sheetPush],
   );
 
   const handleToggleActive = useCallback(
@@ -704,17 +657,19 @@ export default function RosterPage() {
         );
 
         // Fire-and-forget: update sheet row
-        updateRosterMemberOnSheet({
-          ...member,
-          active: newActive,
-        }, currentEvent?.sheet_id, currentEvent?.id)
-          .then(() => {
-            toast.success("Sheet updated", { duration: 2000 });
-            setLastSyncedAt(new Date());
-          })
-          .catch((e: Error) =>
-            toast.error(`Sheet sync failed: ${e.message}`, { duration: 4000 }),
-          );
+        sheetPush(
+          {
+            action: "update_raw",
+            sheetTitle: "Roster Push",
+            matchColumnIndex: 0,
+            matchValue: member.id,
+            values: rosterMemberToRow({ ...member, active: newActive }),
+          },
+          {
+            successMessage: "Sheet updated",
+            onSuccess: () => setLastSyncedAt(new Date()),
+          },
+        );
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to update member",
@@ -727,7 +682,7 @@ export default function RosterPage() {
         });
       }
     },
-    [currentEvent],
+    [currentEvent, sheetPush],
   );
 
   const handleDeleteRosterMember = useCallback(
@@ -869,31 +824,15 @@ export default function RosterPage() {
       toast.success(parts.join(", "));
 
       // Fire-and-forget: push each inserted member to "Roster Push" sheet
-      let queuedCount = 0;
       for (const member of inserted) {
-        pushRosterMemberToSheet({
-          id: member.id,
-          name: member.name,
-          phone: member.phone,
-          email: member.email,
-          role: member.role,
-          team: member.team,
-          commission_pct: member.commission_pct,
-          confirmed: member.confirmed,
-          active: member.active,
-          notes: member.notes,
-        }, currentEvent?.sheet_id, currentEvent?.id)
-          .then((r) => {
-            if (r?.queued) queuedCount++;
-          })
-          .catch((e: Error) =>
-            toast.error(`Sheet sync failed for ${member.name}: ${e.message}`, {
-              duration: 4000,
-            }),
-          );
-      }
-      if (queuedCount > 0) {
-        toast.info(`${queuedCount} sheet push(es) queued — will retry automatically`);
+        sheetPush(
+          {
+            action: "append_raw",
+            sheetTitle: "Roster Push",
+            values: rosterMemberToRow(member),
+          },
+          { successMessage: false },
+        );
       }
 
       // Close dialog and reset
@@ -908,7 +847,7 @@ export default function RosterPage() {
     } finally {
       setCopying(false);
     }
-  }, [currentEvent, selectedSourceEventId, selectedMemberIds]);
+  }, [currentEvent, selectedSourceEventId, selectedMemberIds, sheetPush]);
 
   // ---------- Import from Sheet ----------
 
@@ -1014,25 +953,20 @@ export default function RosterPage() {
       const dataRows = roster.map((m) => rosterMemberToRow(m));
 
       // Write to sheet (clear + replace)
-      const payload = {
-        action: "write_raw",
-        sheetTitle: "Roster Push",
-        values: [header, ...dataRows],
-        spreadsheetId: currentEvent?.sheet_id,
-        eventId: currentEvent?.id,
-      };
-      const res = await resilientSheetFetch(payload, currentEvent?.id ?? null);
-      if (!res) {
-        toast.info("Sheet push queued — will retry when online", { duration: 3000 });
-        return;
+      const result = await sheetPush(
+        {
+          action: "write_raw",
+          sheetTitle: "Roster Push",
+          values: [header, ...dataRows],
+        },
+        {
+          successMessage: `${roster.length} roster members pushed to sheet`,
+          onSuccess: () => setLastSyncedAt(new Date()),
+        },
+      );
+      if (!result.success && !result.queued && result.error) {
+        throw new Error(result.error);
       }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? "Failed to push to sheet");
-      }
-
-      toast.success(`${roster.length} roster members pushed to sheet`);
-      setLastSyncedAt(new Date());
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to push roster to sheet",
@@ -1040,7 +974,7 @@ export default function RosterPage() {
     } finally {
       setPushingToSheet(false);
     }
-  }, [currentEvent, roster]);
+  }, [currentEvent, roster, sheetPush]);
 
   // ---------- No event selected ----------
 
