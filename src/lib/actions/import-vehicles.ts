@@ -655,6 +655,25 @@ function parseOneSheet(
 
   if (rows.length === 0) return null;
 
+  // ── Strip "ColumnN" shadow header rows ──
+  // Google Sheets QUERY/VLOOKUP formulas sometimes output a row of generic
+  // "Column1", "Column2", ... labels as the first data row. Detect and remove it.
+  if (rows.length > 1) {
+    const firstRow = rows[0];
+    const vals = Object.values(firstRow).filter((v) => v != null && v !== "");
+    const columnNCount = vals.filter(
+      (v) => typeof v === "string" && /^Column\d+$/i.test(v),
+    ).length;
+    if (vals.length > 0 && columnNCount / vals.length >= 0.5) {
+      console.log(
+        `[PARSE] "${sheetName}" — stripping shadow "ColumnN" header row (${columnNCount}/${vals.length} values match Column\\d+)`,
+      );
+      rows.shift();
+    }
+  }
+
+  if (rows.length === 0) return null;
+
   // Column coverage summary — shows which columns have data vs null
   const coverage: Record<string, number> = {};
   for (const h of headers) coverage[h] = 0;
@@ -671,6 +690,47 @@ function parseOneSheet(
   }
   if (formulaNullCount > 0) {
     console.warn(`[COVERAGE] "${sheetName}" has ${formulaNullCount} formula cells with no cached result in row ${headerRowNum + 1}`);
+  }
+
+  // ── Coverage-based column realignment ──
+  // When a named column (e.g. "Stock #") has 0% coverage but a generic "colN"
+  // column has data, the spreadsheet has misaligned headers (common in Google
+  // Sheets with QUERY/VLOOKUP formulas pulling from differently-structured sources).
+  // Fix: drop 0%-coverage columns from the LEFT and shift data to fill the gap.
+  const totalRows = rows.length;
+  let leadingEmptyCount = 0;
+  for (const h of headers) {
+    if (coverage[h] === 0 || coverage[h] / totalRows < 0.02) {
+      leadingEmptyCount++;
+    } else {
+      break; // stop at first column with data
+    }
+  }
+  if (leadingEmptyCount > 0 && leadingEmptyCount < headers.length) {
+    // Check if dropping these columns would realign data to named headers
+    const droppedHeaders = headers.slice(0, leadingEmptyCount);
+    const remainingHeaders = headers.slice(leadingEmptyCount);
+    // Only realign if at least some dropped columns had real names (not colN)
+    const namedDropped = droppedHeaders.filter((h) => !/^col\d+$/i.test(h));
+    if (namedDropped.length > 0 || leadingEmptyCount >= 2) {
+      console.log(
+        `[PARSE] "${sheetName}" — dropping ${leadingEmptyCount} leading empty columns: [${droppedHeaders.join(", ")}]` +
+        ` (named: [${namedDropped.join(", ")}])`,
+      );
+      // Rebuild rows with shifted column mapping
+      const shiftedRows = rows.map((row) => {
+        const newRow: Record<string, unknown> = {};
+        for (const h of remainingHeaders) {
+          newRow[h] = row[h];
+        }
+        return newRow;
+      });
+      rows.length = 0;
+      rows.push(...shiftedRows);
+      headers.length = 0;
+      headers.push(...remainingHeaders);
+      console.log(`[PARSE] "${sheetName}" — realigned headers (${headers.length}):`, headers.slice(0, 15).join(" | "));
+    }
   }
 
   // ── Content-based column name inference ──
