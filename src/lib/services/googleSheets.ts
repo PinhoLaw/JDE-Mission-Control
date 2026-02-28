@@ -217,6 +217,75 @@ export async function appendRow(
 }
 
 /**
+ * Append a single row by column position (array of values).
+ * Uses the raw Google Sheets API (values.append) to bypass the
+ * google-spreadsheet library's duplicate-header validation.
+ *
+ * Use this when a sheet has duplicate header names (e.g. YEAR appears
+ * twice for vehicle and trade-in).
+ *
+ * @param sheetTitle — e.g. "FORD DEAL LOG"
+ * @param values     — array of values in column order (A, B, C, ...)
+ */
+export async function appendRowRaw(
+  sheetTitle: string,
+  values: unknown[],
+): Promise<AppendResult> {
+  const auth = createAuthClient();
+  await auth.authorize();
+  const token = (await auth.getAccessToken()).token;
+
+  const spreadsheetId = getSpreadsheetId();
+  const range = `'${sheetTitle}'!A:ZZ`;
+
+  const stringValues = values.map((v) => (v != null ? String(v) : ""));
+
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `/values/${encodeURIComponent(range)}:append` +
+    `?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ values: [stringValues] }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(
+      `[GoogleSheets] appendRowRaw failed (${res.status}): ${errBody}`,
+    );
+  }
+
+  const result = await res.json();
+  // Extract row number from updatedRange (e.g. "'FORD DEAL LOG'!A7:AE7" → 7)
+  const updatedRange = result.updates?.updatedRange ?? "";
+  const rowMatch = updatedRange.match(/!.*?(\d+)/);
+  const rowNum = rowMatch ? parseInt(rowMatch[1], 10) : -1;
+
+  console.log(
+    `[GoogleSheets] appendRowRaw("${sheetTitle}") → row ${rowNum}`,
+    stringValues.length,
+    "columns",
+  );
+
+  const data: Record<string, string> = {};
+  for (let i = 0; i < stringValues.length; i++) {
+    data[`col_${i}`] = stringValues[i];
+  }
+
+  return {
+    success: true,
+    rowNumber: rowNum,
+    data,
+  };
+}
+
+/**
  * Append multiple rows at once (batch). More efficient than calling
  * appendRow() in a loop — uses a single API call.
  *

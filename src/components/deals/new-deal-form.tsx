@@ -51,6 +51,7 @@ const dealFormSchema = z.object({
   trade_year: optNum,
   trade_make: z.string().optional(),
   trade_model: z.string().optional(),
+  trade_mileage: optNum,
   trade_acv: optNum,
   trade_payoff: optNum,
   salesperson: z.string().optional(),
@@ -91,6 +92,7 @@ export function NewDealForm({
   );
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [vehicleAgeDays, setVehicleAgeDays] = useState<number | null>(null);
 
   const {
     register,
@@ -142,6 +144,7 @@ export function NewDealForm({
       const vehicle = await lookupVehicle(stockNumber, currentEvent.id);
       if (vehicle) {
         setVehicleId(vehicle.id);
+        setVehicleAgeDays(vehicle.age_days ?? null);
         setValue("vehicle_year", vehicle.year ?? undefined);
         setValue("vehicle_make", vehicle.make ?? "");
         setValue("vehicle_model", vehicle.model ?? "");
@@ -152,6 +155,7 @@ export function NewDealForm({
         );
       } else {
         setVehicleId(null);
+        setVehicleAgeDays(null);
         toast.info("No available vehicle found with that stock number");
       }
     } catch {
@@ -168,6 +172,67 @@ export function NewDealForm({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEvent]);
+
+  // Push deal to "FORD DEAL LOG" Google Sheet (fire-and-forget)
+  const pushDealToSheet = useCallback(
+    async (data: DealFormValues) => {
+      // Column order matches FORD DEAL LOG headers:
+      // STORE, STOCK#, CUSTOMER, ZIPCODE, NEW/USED, YEAR, MAKE, MODEL,
+      // COST, AGE, YEAR, MAKE, MODEL, MILES, ACV, PAYOFF,
+      // SALESPERSON, 2ND SALESPERSON, FRONT GROSS, LENDER, RATE,
+      // RESERVE, WARRANTY, AFT 1, GAP, FI TOTALS, TOTAL GROSS,
+      // DAILY GROSS, ADD GROSS, DLR GROSS, JDE PAY
+      const values = [
+        currentEvent?.dealer_name ?? currentEvent?.name ?? "",  // STORE
+        data.stock_number ?? "",                                 // STOCK#
+        data.customer_name,                                      // CUSTOMER
+        data.customer_zip ?? "",                                 // ZIPCODE
+        data.new_used,                                           // NEW/USED
+        data.vehicle_year ?? "",                                 // YEAR (vehicle)
+        data.vehicle_make ?? "",                                 // MAKE (vehicle)
+        data.vehicle_model ?? "",                                // MODEL (vehicle)
+        data.vehicle_cost ?? "",                                 // COST
+        vehicleAgeDays ?? "",                                    // AGE
+        data.trade_year ?? "",                                   // YEAR (trade)
+        data.trade_make ?? "",                                   // MAKE (trade)
+        data.trade_model ?? "",                                  // MODEL (trade)
+        data.trade_mileage ?? "",                                // MILES
+        data.trade_acv ?? "",                                    // ACV
+        data.trade_payoff ?? "",                                 // PAYOFF
+        data.salesperson ?? "",                                  // SALESPERSON
+        data.second_salesperson ?? "",                           // 2ND SALESPERSON
+        frontGross,                                              // FRONT GROSS
+        data.lender ?? "",                                       // LENDER
+        data.rate ?? "",                                         // RATE
+        data.reserve ?? "",                                      // RESERVE
+        data.warranty ?? "",                                     // WARRANTY
+        data.aftermarket_1 ?? "",                                // AFT 1
+        data.gap ?? "",                                          // GAP
+        fiTotal,                                                 // FI TOTALS
+        totalGross,                                              // TOTAL GROSS
+        "",                                                      // DAILY GROSS
+        "",                                                      // ADD GROSS
+        "",                                                      // DLR GROSS
+        "",                                                      // JDE PAY
+      ];
+
+      const res = await fetch("/api/sheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "append_raw",
+          sheetTitle: "FORD DEAL LOG",
+          values,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Sheet push failed: ${res.status}`);
+      }
+    },
+    [currentEvent, vehicleAgeDays, frontGross, fiTotal, totalGross],
+  );
 
   const onSubmit = async (data: DealFormValues) => {
     if (!currentEvent) return;
@@ -192,6 +257,7 @@ export function NewDealForm({
         trade_year: data.trade_year ? Number(data.trade_year) : null,
         trade_make: data.trade_make || null,
         trade_model: data.trade_model || null,
+        trade_mileage: data.trade_mileage ? Number(data.trade_mileage) : null,
         trade_acv: data.trade_acv ? Number(data.trade_acv) : null,
         trade_payoff: data.trade_payoff ? Number(data.trade_payoff) : null,
         salesperson: data.salesperson || null,
@@ -211,6 +277,14 @@ export function NewDealForm({
         notes: data.notes || null,
       });
       toast.success("Deal created successfully!");
+
+      // Fire-and-forget push to Google Sheet
+      pushDealToSheet(data)
+        .then(() => toast.success("Deal pushed to Google Sheet"))
+        .catch((err) =>
+          toast.error(`Sheet push failed: ${err instanceof Error ? err.message : String(err)}`),
+        );
+
       onSuccess?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create deal");
@@ -551,6 +625,14 @@ export function NewDealForm({
           <div>
             <Label htmlFor="trade_model">Model</Label>
             <Input id="trade_model" {...register("trade_model")} />
+          </div>
+          <div>
+            <Label htmlFor="trade_mileage">Mileage</Label>
+            <Input
+              id="trade_mileage"
+              type="number"
+              {...register("trade_mileage")}
+            />
           </div>
           <div>
             <Label htmlFor="trade_acv">ACV</Label>
