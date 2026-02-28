@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
     console.error(`[/api/sheets] Error for action="${body.action}":`, message);
 
     return NextResponse.json(
-      { error: message, _debug_spreadsheet_id: process.env.GOOGLE_SPREADSHEET_ID || "using-default" },
+      { error: message },
       { status: isNotFound ? 404 : 500 },
     );
   }
