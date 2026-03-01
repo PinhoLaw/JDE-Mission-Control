@@ -624,13 +624,17 @@ export default function DealsPage() {
             className="rounded-md border overflow-auto"
             style={{ maxHeight: "calc(100vh - 380px)", minHeight: 300 }}
           >
-            <div style={{ minWidth: 2800 }}>
-            <Table>
+            <div style={{ minWidth: 2400 }}>
+            <Table className="table-fixed">
               <TableHeader className="sticky top-0 z-10 bg-background">
                 {table.getHeaderGroups().map((hg) => (
                   <TableRow key={hg.id}>
                     {hg.headers.map((header) => (
-                      <TableHead key={header.id} className="whitespace-nowrap">
+                      <TableHead
+                        key={header.id}
+                        className="whitespace-nowrap"
+                        style={{ width: header.getSize(), minWidth: header.getSize() }}
+                      >
                         {header.isPlaceholder
                           ? null
                           : flexRender(
@@ -656,7 +660,11 @@ export default function DealsPage() {
                   return (
                     <TableRow key={row.id} style={{ height: ROW_HEIGHT }}>
                       {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id} className="whitespace-nowrap py-1">
+                        <TableCell
+                          key={cell.id}
+                          className="whitespace-nowrap py-1"
+                          style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
+                        >
                           {flexRender(
                             cell.column.columnDef.cell,
                             cell.getContext(),
