@@ -202,7 +202,7 @@ export default function DealsPage() {
                 // Optimistic update
                 setDeals((prev) =>
                   prev.map((d) =>
-                    d.id === deal.id ? { ...d, status: newStatus } : d,
+                    d.id === deal.id ? { ...d, status: newStatus as Deal["status"] } : d,
                   ),
                 );
                 try {
@@ -212,7 +212,7 @@ export default function DealsPage() {
                   // Revert on failure
                   setDeals((prev) =>
                     prev.map((d) =>
-                      d.id === deal.id ? { ...d, status: st } : d,
+                      d.id === deal.id ? { ...d, status: st as Deal["status"] } : d,
                     ),
                   );
                   toast.error(

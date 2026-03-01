@@ -325,7 +325,7 @@ export async function updateDealStatus(
 
   const { error } = await supabase
     .from("sales_deals")
-    .update({ status })
+    .update({ status: status as "pending" | "funded" | "unwound" | "cancelled" })
     .eq("id", dealId)
     .eq("event_id", eventId);
 
