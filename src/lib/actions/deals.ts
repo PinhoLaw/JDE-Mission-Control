@@ -337,6 +337,31 @@ export async function updateDealStatus(
 }
 
 // ────────────────────────────────────────────────────────
+// Fetch deal counts per zip code (for Campaigns page)
+// ────────────────────────────────────────────────────────
+export async function getDealsPerZip(eventId: string) {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return {};
+
+  const { data: deals } = await supabase
+    .from("sales_deals")
+    .select("customer_zip")
+    .eq("event_id", eventId)
+    .not("customer_zip", "is", null);
+
+  const counts: Record<string, number> = {};
+  for (const d of deals ?? []) {
+    const zip = (d.customer_zip ?? "").trim();
+    if (zip) counts[zip] = (counts[zip] ?? 0) + 1;
+  }
+  return counts;
+}
+
+// ────────────────────────────────────────────────────────
 // Look up vehicle by stock number for deal form
 // ────────────────────────────────────────────────────────
 export async function lookupVehicle(stockNumber: string, eventId: string) {

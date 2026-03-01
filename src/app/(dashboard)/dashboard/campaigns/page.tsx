@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
+import { getDealsPerZip } from "@/lib/actions/deals";
 import type { MailTracking } from "@/types/database";
 import {
   Card,
@@ -31,25 +32,17 @@ export default function CampaignsPage() {
   // Deal zip counts: { "62656": 5, "62526": 3, ... }
   const [soldByZip, setSoldByZip] = useState<Record<string, number>>({});
 
+  // Server-action fetch for deals per zip (reliable on production)
+  const refreshDealsPerZip = useCallback(
+    (eventId: string) =>
+      getDealsPerZip(eventId).then((counts) => setSoldByZip(counts)),
+    [],
+  );
+
   useEffect(() => {
     if (!currentEvent) return;
     setLoading(true);
     const supabase = createClient();
-
-    const fetchDealsPerZip = () =>
-      supabase
-        .from("sales_deals")
-        .select("customer_zip")
-        .eq("event_id", currentEvent.id)
-        .not("customer_zip", "is", null)
-        .then(({ data: deals }) => {
-          const counts: Record<string, number> = {};
-          for (const d of deals ?? []) {
-            const zip = (d.customer_zip ?? "").trim();
-            if (zip) counts[zip] = (counts[zip] ?? 0) + 1;
-          }
-          setSoldByZip(counts);
-        });
 
     Promise.all([
       supabase
@@ -58,7 +51,7 @@ export default function CampaignsPage() {
         .eq("event_id", currentEvent.id)
         .order("pieces_sent", { ascending: false })
         .then(({ data: rows }) => setData(rows ?? [])),
-      fetchDealsPerZip(),
+      refreshDealsPerZip(currentEvent.id),
     ]).then(() => setLoading(false));
 
     // Realtime on mail_tracking
@@ -95,7 +88,7 @@ export default function CampaignsPage() {
           filter: `event_id=eq.${currentEvent.id}`,
         },
         () => {
-          fetchDealsPerZip();
+          refreshDealsPerZip(currentEvent.id);
         },
       )
       .subscribe();
@@ -104,7 +97,7 @@ export default function CampaignsPage() {
       supabase.removeChannel(mailChannel);
       supabase.removeChannel(dealsChannel);
     };
-  }, [currentEvent]);
+  }, [currentEvent, refreshDealsPerZip]);
 
   const stats = useMemo(() => {
     const totalPieces = data.reduce((s, d) => s + (d.pieces_sent ?? 0), 0);
