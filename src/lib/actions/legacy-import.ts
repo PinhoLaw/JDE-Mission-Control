@@ -7,6 +7,7 @@ import type { Database } from "@/types/database";
 
 type DealInsert = Database["public"]["Tables"]["sales_deals"]["Insert"];
 type LenderInsert = Database["public"]["Tables"]["lenders"]["Insert"];
+type MailTrackingInsert = Database["public"]["Tables"]["mail_tracking"]["Insert"];
 
 // ────────────────────────────────────────────────────────
 // Helpers
@@ -342,6 +343,166 @@ export async function bulkImportLenders(
   }
 
   revalidatePath("/dashboard/roster");
+
+  return {
+    success: errorDetails.length === 0,
+    imported,
+    deleted: 0,
+    errors: errorDetails.length,
+    duplicatesSkipped,
+    errorDetails,
+    mode: "append",
+  };
+}
+
+// ────────────────────────────────────────────────────────
+// bulkImportMailTracking
+// ────────────────────────────────────────────────────────
+
+/**
+ * Bulk import mail tracking rows into the mail_tracking table.
+ * Deduplicates against existing rows by zip_code within the same event.
+ * Computes response_rate and total_responses automatically if not provided.
+ */
+export async function bulkImportMailTracking(
+  rows: Record<string, string>[],
+  columnMap: Record<string, string>,
+  eventId: string,
+): Promise<ImportResult> {
+  const supabase = await createClient();
+
+  // Auth check
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  // Membership check
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", eventId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership || !["owner", "manager"].includes(membership.role)) {
+    throw new Error("Only owners and managers can import mail tracking data");
+  }
+
+  // Build reverse column map
+  const reverseMap: Record<string, string> = {};
+  for (const [spreadsheetCol, dbField] of Object.entries(columnMap)) {
+    if (dbField && dbField !== "__skip__") {
+      reverseMap[spreadsheetCol] = dbField;
+    }
+  }
+
+  // Fetch existing zip codes for dedup
+  const { data: existing } = await supabase
+    .from("mail_tracking")
+    .select("zip_code")
+    .eq("event_id", eventId);
+
+  const existingZips = new Set(
+    (existing ?? []).map((r) => String(r.zip_code).trim()),
+  );
+
+  const errorDetails: { row: number; message: string }[] = [];
+  const toInsert: MailTrackingInsert[] = [];
+  let duplicatesSkipped = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const raw = rows[i];
+    const mapped: Record<string, unknown> = {};
+
+    for (const [spreadsheetCol, dbField] of Object.entries(reverseMap)) {
+      mapped[dbField] = raw[spreadsheetCol] ?? null;
+    }
+
+    // zip_code is the required field
+    const zipCode = mapped.zip_code ? String(mapped.zip_code).trim() : "";
+    if (!zipCode) continue; // skip empty rows
+
+    // Dedup check
+    if (existingZips.has(zipCode)) {
+      duplicatesSkipped++;
+      continue;
+    }
+    existingZips.add(zipCode);
+
+    // Parse day columns + pieces_sent
+    const piecesSent = parseNum(mapped.pieces_sent) ?? 0;
+    const day1 = parseNum(mapped.day_1) ?? 0;
+    const day2 = parseNum(mapped.day_2) ?? 0;
+    const day3 = parseNum(mapped.day_3) ?? 0;
+    const day4 = parseNum(mapped.day_4) ?? 0;
+    const day5 = parseNum(mapped.day_5) ?? 0;
+    const day6 = parseNum(mapped.day_6) ?? 0;
+    const day7 = parseNum(mapped.day_7) ?? 0;
+    const day8 = parseNum(mapped.day_8) ?? 0;
+    const day9 = parseNum(mapped.day_9) ?? 0;
+    const day10 = parseNum(mapped.day_10) ?? 0;
+    const day11 = parseNum(mapped.day_11) ?? 0;
+    const day12 = parseNum(mapped.day_12) ?? 0;
+
+    // Auto-compute total_responses if not explicitly mapped
+    const explicitTotal = parseNum(mapped.total_responses);
+    const totalResponses =
+      explicitTotal ??
+      day1 + day2 + day3 + day4 + day5 + day6 +
+      day7 + day8 + day9 + day10 + day11 + day12;
+
+    // Auto-compute response_rate
+    const responseRate =
+      piecesSent > 0 ? Math.round((totalResponses / piecesSent) * 10000) / 10000 : 0;
+
+    const town = mapped.town ? String(mapped.town).trim() || null : null;
+
+    toInsert.push({
+      event_id: eventId,
+      zip_code: zipCode,
+      town,
+      pieces_sent: piecesSent,
+      day_1: day1,
+      day_2: day2,
+      day_3: day3,
+      day_4: day4,
+      day_5: day5,
+      day_6: day6,
+      day_7: day7,
+      day_8: day8,
+      day_9: day9,
+      day_10: day10,
+      day_11: day11,
+      day_12: day12,
+      total_responses: totalResponses,
+      response_rate: responseRate,
+      sold_from_mail: 0,
+    });
+  }
+
+  // Batch insert in chunks of 250
+  let imported = 0;
+  const BATCH_SIZE = 250;
+
+  for (let start = 0; start < toInsert.length; start += BATCH_SIZE) {
+    const batch = toInsert.slice(start, start + BATCH_SIZE);
+    const { error } = await supabase.from("mail_tracking").insert(batch);
+
+    if (error) {
+      for (let j = 0; j < batch.length; j++) {
+        errorDetails.push({
+          row: start + j + 1,
+          message: error.message,
+        });
+      }
+    } else {
+      imported += batch.length;
+    }
+  }
+
+  revalidatePath("/dashboard/campaigns");
+  revalidatePath("/dashboard");
 
   return {
     success: errorDetails.length === 0,

@@ -12,7 +12,7 @@
 // Types
 // ────────────────────────────────────────────────────────
 
-export type TabType = "inventory" | "roster" | "deals" | "lenders" | "unknown";
+export type TabType = "inventory" | "roster" | "deals" | "lenders" | "campaigns" | "unknown";
 
 export interface FieldDef {
   value: string;
@@ -30,6 +30,14 @@ export function detectTabType(sheetName: string): TabType {
   const lower = sheetName.toLowerCase().trim();
 
   // Order matters — check more specific patterns first
+  if (
+    lower.includes("mail") ||
+    lower.includes("campaign") ||
+    lower.includes("traffic") ||
+    lower.includes("mailer")
+  ) {
+    return "campaigns";
+  }
   if (
     lower.includes("deal") ||
     lower.includes("deal log") ||
@@ -440,6 +448,80 @@ export function autoMapLenderColumn(header: string): string {
 }
 
 // ────────────────────────────────────────────────────────
+// Campaigns (Mail Tracking) Fields & Auto-Mapper
+// ────────────────────────────────────────────────────────
+
+export const CAMPAIGNS_DB_FIELDS: FieldDef[] = [
+  { value: "__skip__", label: "— Skip —" },
+  { value: "zip_code", label: "Zip Code" },
+  { value: "town", label: "Town" },
+  { value: "pieces_sent", label: "Pieces Sent" },
+  { value: "day_1", label: "Day 1" },
+  { value: "day_2", label: "Day 2" },
+  { value: "day_3", label: "Day 3" },
+  { value: "day_4", label: "Day 4" },
+  { value: "day_5", label: "Day 5" },
+  { value: "day_6", label: "Day 6" },
+  { value: "day_7", label: "Day 7" },
+  { value: "day_8", label: "Day 8" },
+  { value: "day_9", label: "Day 9" },
+  { value: "day_10", label: "Day 10" },
+  { value: "day_11", label: "Day 11" },
+  { value: "day_12", label: "Day 12" },
+  { value: "total_responses", label: "Total Responses" },
+];
+
+/**
+ * Best-effort auto-mapping from header text to mail_tracking DB field.
+ */
+export function autoMapCampaignsColumn(header: string): string {
+  const h = header.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+
+  const exactMap: Record<string, string> = {
+    zip: "zip_code", zipcode: "zip_code", zipcodes: "zip_code",
+    postalcode: "zip_code", postal: "zip_code",
+    town: "town", city: "town", townname: "town", cityname: "town",
+    area: "town", municipality: "town",
+    pieces: "pieces_sent", piecessent: "pieces_sent", mailpieces: "pieces_sent",
+    qty: "pieces_sent", quantity: "pieces_sent", count: "pieces_sent",
+    sent: "pieces_sent", mailed: "pieces_sent", total: "pieces_sent",
+    totalpieces: "pieces_sent",
+    day1: "day_1", d1: "day_1", "1": "day_1",
+    day2: "day_2", d2: "day_2", "2": "day_2",
+    day3: "day_3", d3: "day_3", "3": "day_3",
+    day4: "day_4", d4: "day_4", "4": "day_4",
+    day5: "day_5", d5: "day_5", "5": "day_5",
+    day6: "day_6", d6: "day_6", "6": "day_6",
+    day7: "day_7", d7: "day_7", "7": "day_7",
+    day8: "day_8", d8: "day_8", "8": "day_8",
+    day9: "day_9", d9: "day_9", "9": "day_9",
+    day10: "day_10", d10: "day_10", "10": "day_10",
+    day11: "day_11", d11: "day_11", "11": "day_11",
+    day12: "day_12", d12: "day_12", "12": "day_12",
+    totalresponses: "total_responses", responses: "total_responses",
+    totalresp: "total_responses", resp: "total_responses",
+  };
+
+  if (exactMap[h]) return exactMap[h];
+
+  const raw = header.toLowerCase().trim();
+  if (raw.includes("zip") && (raw.includes("code") || raw.includes("#"))) return "zip_code";
+  if (raw.includes("pieces") && raw.includes("sent")) return "pieces_sent";
+  if (raw.includes("mail") && raw.includes("piece")) return "pieces_sent";
+  if (raw.includes("total") && raw.includes("resp")) return "total_responses";
+  if (raw.includes("total") && raw.includes("show")) return "total_responses";
+
+  // Match "Day X" patterns
+  const dayMatch = raw.match(/day\s*(\d{1,2})/);
+  if (dayMatch) {
+    const num = parseInt(dayMatch[1]);
+    if (num >= 1 && num <= 12) return `day_${num}`;
+  }
+
+  return "__skip__";
+}
+
+// ────────────────────────────────────────────────────────
 // Dynamic lookups by TabType
 // ────────────────────────────────────────────────────────
 
@@ -452,6 +534,7 @@ export function getFieldsForType(tabType: TabType): FieldDef[] {
     case "roster": return ROSTER_DB_FIELDS;
     case "deals": return DEAL_DB_FIELDS;
     case "lenders": return LENDER_DB_FIELDS;
+    case "campaigns": return CAMPAIGNS_DB_FIELDS;
     default: return [];
   }
 }
@@ -465,6 +548,7 @@ export function getMapperForType(tabType: TabType): (header: string) => string {
     case "roster": return autoMapRosterColumn;
     case "deals": return autoMapDealColumn;
     case "lenders": return autoMapLenderColumn;
+    case "campaigns": return autoMapCampaignsColumn;
     default: return () => "__skip__";
   }
 }

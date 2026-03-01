@@ -50,7 +50,7 @@ import {
   type ParsedSheet,
   type ImportResult,
 } from "@/lib/actions/import-vehicles";
-import { bulkImportDeals, bulkImportLenders } from "@/lib/actions/legacy-import";
+import { bulkImportDeals, bulkImportLenders, bulkImportMailTracking } from "@/lib/actions/legacy-import";
 import {
   type TabType,
   detectTabType,
@@ -84,6 +84,7 @@ const SHEET_TITLE_MAP: Record<string, string> = {
   roster: "Roster & Tables",
   deals: "Deal Log",
   lenders: "Lenders",
+  campaigns: "Mail Tracking",
 };
 
 // Tab type badge colors
@@ -92,6 +93,7 @@ const TAB_TYPE_COLORS: Record<TabType, string> = {
   roster: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
   deals: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
   lenders: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  campaigns: "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400",
   unknown: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400",
 };
 
@@ -282,6 +284,9 @@ function LegacySpreadsheetUpload({
           case "lenders":
             result = await bulkImportLenders(rows, config.columnMap, eventId);
             break;
+          case "campaigns":
+            result = await bulkImportMailTracking(rows, config.columnMap, eventId);
+            break;
           default:
             continue;
         }
@@ -407,6 +412,7 @@ function LegacySpreadsheetUpload({
     roster: ["name"],
     deals: ["customer_name"],
     lenders: ["name"],
+    campaigns: ["zip_code"],
   };
 
   const getWarnings = (config: SheetConfig): string[] => {
@@ -417,7 +423,7 @@ function LegacySpreadsheetUpload({
     if (missing.length > 0) {
       const fieldLabels: Record<string, string> = {
         stock_number: "Stock #", year: "Year", make: "Make", model: "Model",
-        customer_name: "Customer Name", name: "Name",
+        customer_name: "Customer Name", name: "Name", zip_code: "Zip Code",
       };
       warnings.push(
         `Missing recommended: ${missing.map((f) => fieldLabels[f] ?? f).join(", ")}`,
@@ -538,6 +544,7 @@ function LegacySpreadsheetUpload({
                             <SelectItem value="roster">Roster</SelectItem>
                             <SelectItem value="deals">Deals</SelectItem>
                             <SelectItem value="lenders">Lenders</SelectItem>
+                            <SelectItem value="campaigns">Campaigns</SelectItem>
                             <SelectItem value="unknown">Skip</SelectItem>
                           </SelectContent>
                         </Select>
