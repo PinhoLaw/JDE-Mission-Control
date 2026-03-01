@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -338,16 +339,21 @@ export async function updateDealStatus(
 
 // ────────────────────────────────────────────────────────
 // Fetch deal counts per zip code (for Campaigns page)
+// Uses service role to bypass RLS — this is a read-only
+// aggregate query and runs server-side only.
 // ────────────────────────────────────────────────────────
 export async function getDealsPerZip(eventId: string) {
-  const supabase = await createClient();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return {};
+  if (!url || !serviceKey) {
+    console.error("[getDealsPerZip] Missing Supabase env vars");
+    return {};
+  }
 
-  const { data: deals } = await supabase
+  const admin = createServiceClient(url, serviceKey);
+
+  const { data: deals } = await admin
     .from("sales_deals")
     .select("customer_zip")
     .eq("event_id", eventId)
