@@ -437,3 +437,39 @@ export async function bulkDeleteDeals(
   revalidatePath("/dashboard");
   return { success: true, count: dealIds.length };
 }
+
+// ────────────────────────────────────────────────────────
+// Save recap financial configuration
+// ────────────────────────────────────────────────────────
+export async function saveRecapConfig(
+  eventId: string,
+  config: {
+    marketing_cost?: number | null;
+    jde_commission_tiers?: { min: number; max: number | null; pct: number }[] | null;
+    misc_expenses?: number | null;
+    prize_giveaways?: number | null;
+  },
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("event_config")
+    .update({
+      marketing_cost: config.marketing_cost,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      jde_commission_tiers: config.jde_commission_tiers as any,
+      misc_expenses: config.misc_expenses,
+      prize_giveaways: config.prize_giveaways,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("event_id", eventId);
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/dashboard/recap");
+  return { success: true };
+}
