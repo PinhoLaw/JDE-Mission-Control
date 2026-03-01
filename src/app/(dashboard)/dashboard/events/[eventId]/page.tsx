@@ -29,6 +29,7 @@ import {
   Package,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { LegacyUploadButton } from "@/components/events/legacy-spreadsheet-upload";
 import type { Database } from "@/types/database";
 
 type Event = Database["public"]["Tables"]["events"]["Row"];
@@ -169,6 +170,7 @@ export default async function EventDetailPage({
               )}
             </div>
           </div>
+          <LegacyUploadButton eventId={eventId} sheetId={event.sheet_id} />
         </div>
       </div>
 
