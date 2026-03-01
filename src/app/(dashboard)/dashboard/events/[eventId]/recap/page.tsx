@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
 import { saveRecapConfig } from "@/lib/actions/deals";
@@ -32,6 +34,8 @@ import {
   Settings2,
   ChevronDown,
   ChevronUp,
+  ArrowLeft,
+  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
@@ -83,6 +87,8 @@ function pickTierPct(tiers: CommTier[], gross: number): number {
 // ═════════════════════════════════════════════════════════
 export default function RecapPage() {
   const { currentEvent } = useEvent();
+  const params = useParams<{ eventId: string }>();
+  const eventId = params.eventId;
 
   // ── Data state ──
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -387,6 +393,20 @@ export default function RecapPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/dashboard/events">
+                <ArrowLeft className="h-4 w-4" />
+                Events
+              </Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/dashboard/events/${eventId}/overview`}>
+                <BarChart3 className="h-4 w-4" />
+                Overview
+              </Link>
+            </Button>
+          </div>
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
             Event Recap
           </h1>

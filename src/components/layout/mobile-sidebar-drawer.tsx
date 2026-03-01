@@ -25,7 +25,6 @@ import {
   ScrollText,
   Activity,
   Menu,
-  ClipboardList,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -41,7 +40,6 @@ const moduleNav = [
   { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
   { name: "Commissions", href: "/dashboard/commissions", icon: DollarSign },
   { name: "Performance", href: "/dashboard/performance", icon: BarChart3 },
-  { name: "Event Recap", href: "/dashboard/recap", icon: ClipboardList },
   { name: "Audit Log", href: "/dashboard/audit", icon: ScrollText },
   { name: "Monitoring", href: "/dashboard/monitoring", icon: Activity },
 ];

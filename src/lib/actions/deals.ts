@@ -470,6 +470,6 @@ export async function saveRecapConfig(
 
   if (error) throw new Error(error.message);
 
-  revalidatePath("/dashboard/recap");
+  revalidatePath(`/dashboard/events/${eventId}/recap`);
   return { success: true };
 }
