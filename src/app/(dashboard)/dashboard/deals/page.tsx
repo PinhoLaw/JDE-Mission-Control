@@ -14,6 +14,8 @@ import {
   type ColumnDef,
   type SortingState,
   type RowSelectionState,
+  type ColumnSizingState,
+  type Column,
   flexRender,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -59,6 +61,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
   Download,
   Plus,
   Loader2,
@@ -82,6 +86,32 @@ const STATUS_COLORS: Record<string, string> = {
 
 const ROW_HEIGHT = 40;
 
+/** Reusable sortable header — shows sort direction indicator */
+function SortableHeader({
+  column,
+  children,
+}: {
+  column: Column<Deal, unknown>;
+  children: React.ReactNode;
+}) {
+  const sorted = column.getIsSorted();
+  return (
+    <button
+      className="flex items-center gap-1 hover:text-foreground text-left text-xs font-medium"
+      onClick={() => column.toggleSorting(sorted === "asc")}
+    >
+      {children}
+      {sorted === "asc" ? (
+        <ChevronUp className="h-3 w-3 shrink-0" />
+      ) : sorted === "desc" ? (
+        <ChevronDown className="h-3 w-3 shrink-0" />
+      ) : (
+        <ArrowUpDown className="h-3 w-3 shrink-0 opacity-40" />
+      )}
+    </button>
+  );
+}
+
 export default function DealsPage() {
   const { currentEvent } = useEvent();
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -93,6 +123,7 @@ export default function DealsPage() {
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const [bulkLoading, setBulkLoading] = useState(false);
 
   useEffect(() => {
@@ -186,11 +217,12 @@ export default function DealsPage() {
           />
         ),
         enableSorting: false,
+        enableResizing: false,
         size: 36,
       },
       {
         accessorKey: "status",
-        header: "Status",
+        header: ({ column }) => <SortableHeader column={column}>Status</SortableHeader>,
         size: 110,
         cell: ({ row }) => {
           const st = row.getValue("status") as string;
@@ -236,12 +268,12 @@ export default function DealsPage() {
           );
         },
       },
-      { accessorKey: "stock_number", header: "Stock #", size: 80 },
-      { accessorKey: "customer_name", header: "Customer", size: 120 },
-      { accessorKey: "customer_zip", header: "Zip", size: 60 },
+      { accessorKey: "stock_number", header: ({ column }) => <SortableHeader column={column}>Stock #</SortableHeader>, size: 80 },
+      { accessorKey: "customer_name", header: ({ column }) => <SortableHeader column={column}>Customer</SortableHeader>, size: 120 },
+      { accessorKey: "customer_zip", header: ({ column }) => <SortableHeader column={column}>Zip</SortableHeader>, size: 60 },
       {
         accessorKey: "new_used",
-        header: "N/U",
+        header: ({ column }) => <SortableHeader column={column}>N/U</SortableHeader>,
         size: 50,
         cell: ({ row }) => {
           const v = row.getValue("new_used") as string | null;
@@ -249,21 +281,21 @@ export default function DealsPage() {
           return v === "New" ? "N" : v === "Certified" ? "CPO" : "U";
         },
       },
-      { accessorKey: "vehicle_year", header: "Year", size: 50 },
-      { accessorKey: "vehicle_make", header: "Make", size: 80 },
-      { accessorKey: "vehicle_model", header: "Model", size: 100 },
+      { accessorKey: "vehicle_year", header: ({ column }) => <SortableHeader column={column}>Year</SortableHeader>, size: 50 },
+      { accessorKey: "vehicle_make", header: ({ column }) => <SortableHeader column={column}>Make</SortableHeader>, size: 80 },
+      { accessorKey: "vehicle_model", header: ({ column }) => <SortableHeader column={column}>Model</SortableHeader>, size: 100 },
       {
         ...currencyCell("vehicle_cost"),
-        header: "Cost",
+        header: ({ column }) => <SortableHeader column={column}>Cost</SortableHeader>,
         size: 85,
       },
       // Trade-in section
-      { accessorKey: "trade_year", header: "Tr Year", size: 55 },
-      { accessorKey: "trade_make", header: "Tr Make", size: 75 },
-      { accessorKey: "trade_model", header: "Tr Model", size: 90 },
+      { accessorKey: "trade_year", header: ({ column }) => <SortableHeader column={column}>Tr Year</SortableHeader>, size: 55 },
+      { accessorKey: "trade_make", header: ({ column }) => <SortableHeader column={column}>Tr Make</SortableHeader>, size: 75 },
+      { accessorKey: "trade_model", header: ({ column }) => <SortableHeader column={column}>Tr Model</SortableHeader>, size: 90 },
       {
         accessorKey: "trade_mileage",
-        header: "Miles",
+        header: ({ column }) => <SortableHeader column={column}>Miles</SortableHeader>,
         size: 70,
         cell: ({ row }) => {
           const v = row.getValue("trade_mileage") as number | null;
@@ -272,30 +304,21 @@ export default function DealsPage() {
       },
       {
         ...currencyCell("trade_acv"),
-        header: "ACV",
+        header: ({ column }) => <SortableHeader column={column}>ACV</SortableHeader>,
         size: 80,
       },
       {
         ...currencyCell("trade_payoff"),
-        header: "Payoff",
+        header: ({ column }) => <SortableHeader column={column}>Payoff</SortableHeader>,
         size: 80,
       },
       // Sales staff
-      { accessorKey: "salesperson", header: "Salesperson", size: 120 },
-      { accessorKey: "second_salesperson", header: "2nd SP", size: 110 },
+      { accessorKey: "salesperson", header: ({ column }) => <SortableHeader column={column}>Salesperson</SortableHeader>, size: 120 },
+      { accessorKey: "second_salesperson", header: ({ column }) => <SortableHeader column={column}>2nd SP</SortableHeader>, size: 110 },
       // Gross & Finance
       {
         ...currencyCell("front_gross"),
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-1 text-xs"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Front Gross <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
+        header: ({ column }) => <SortableHeader column={column}>Front Gross</SortableHeader>,
         size: 100,
         cell: ({ row }) => {
           const v = row.getValue("front_gross") as number | null;
@@ -307,10 +330,10 @@ export default function DealsPage() {
           );
         },
       },
-      { accessorKey: "lender", header: "Lender", size: 90 },
+      { accessorKey: "lender", header: ({ column }) => <SortableHeader column={column}>Lender</SortableHeader>, size: 90 },
       {
         accessorKey: "rate",
-        header: "Rate",
+        header: ({ column }) => <SortableHeader column={column}>Rate</SortableHeader>,
         size: 55,
         cell: ({ row }) => {
           const v = row.getValue("rate") as number | null;
@@ -319,41 +342,32 @@ export default function DealsPage() {
       },
       {
         ...currencyCell("reserve"),
-        header: "Reserve",
+        header: ({ column }) => <SortableHeader column={column}>Reserve</SortableHeader>,
         size: 80,
       },
       {
         ...currencyCell("warranty"),
-        header: "Warranty",
+        header: ({ column }) => <SortableHeader column={column}>Warranty</SortableHeader>,
         size: 80,
       },
       {
         ...currencyCell("aftermarket_1"),
-        header: "Aft 1",
+        header: ({ column }) => <SortableHeader column={column}>Aft 1</SortableHeader>,
         size: 70,
       },
       {
         ...currencyCell("gap"),
-        header: "GAP",
+        header: ({ column }) => <SortableHeader column={column}>GAP</SortableHeader>,
         size: 70,
       },
       {
         ...currencyCell("fi_total", "text-blue-700 dark:text-blue-400 font-medium"),
-        header: "FI Total",
+        header: ({ column }) => <SortableHeader column={column}>FI Total</SortableHeader>,
         size: 85,
       },
       {
         ...currencyCell("total_gross", "font-bold text-green-700 dark:text-green-400"),
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-1 text-xs"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Total Gross <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
+        header: ({ column }) => <SortableHeader column={column}>Total Gross</SortableHeader>,
         size: 100,
         cell: ({ row }) => {
           const v = row.getValue("total_gross") as number | null;
@@ -370,6 +384,8 @@ export default function DealsPage() {
       {
         id: "actions",
         header: "",
+        enableSorting: false,
+        enableResizing: false,
         size: 40,
         cell: ({ row }) => (
           <DropdownMenu>
@@ -395,14 +411,17 @@ export default function DealsPage() {
   const table = useReactTable({
     data: filteredDeals,
     columns,
-    state: { sorting, globalFilter, rowSelection },
+    state: { sorting, globalFilter, rowSelection, columnSizing },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     onRowSelectionChange: setRowSelection,
+    onColumnSizingChange: setColumnSizing,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     enableRowSelection: true,
+    enableColumnResizing: true,
+    columnResizeMode: "onChange",
   });
 
   const { rows } = table.getRowModel();
@@ -624,7 +643,7 @@ export default function DealsPage() {
             className="rounded-md border overflow-auto"
             style={{ maxHeight: "calc(100vh - 380px)", minHeight: 300 }}
           >
-            <div style={{ minWidth: 2400 }}>
+            <div style={{ minWidth: table.getTotalSize() }}>
             <Table className="table-fixed">
               <TableHeader className="sticky top-0 z-10 bg-background">
                 {table.getHeaderGroups().map((hg) => (
@@ -632,7 +651,7 @@ export default function DealsPage() {
                     {hg.headers.map((header) => (
                       <TableHead
                         key={header.id}
-                        className="whitespace-nowrap"
+                        className="whitespace-nowrap relative group/th"
                         style={{ width: header.getSize(), minWidth: header.getSize() }}
                       >
                         {header.isPlaceholder
@@ -641,6 +660,19 @@ export default function DealsPage() {
                               header.column.columnDef.header,
                               header.getContext(),
                             )}
+                        {/* Column resize handle */}
+                        {header.column.getCanResize() && (
+                          <div
+                            onMouseDown={header.getResizeHandler()}
+                            onTouchStart={header.getResizeHandler()}
+                            onDoubleClick={() => header.column.resetSize()}
+                            className={`absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none
+                              ${header.column.getIsResizing()
+                                ? "bg-primary"
+                                : "bg-transparent group-hover/th:bg-border hover:!bg-primary/50"
+                              }`}
+                          />
+                        )}
                       </TableHead>
                     ))}
                   </TableRow>
