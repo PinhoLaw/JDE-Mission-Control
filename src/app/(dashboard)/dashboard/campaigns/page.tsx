@@ -28,23 +28,41 @@ export default function CampaignsPage() {
   const { currentEvent } = useEvent();
   const [data, setData] = useState<MailTracking[]>([]);
   const [loading, setLoading] = useState(true);
+  // Deal zip counts: { "62656": 5, "62526": 3, ... }
+  const [soldByZip, setSoldByZip] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (!currentEvent) return;
     setLoading(true);
     const supabase = createClient();
 
-    supabase
-      .from("mail_tracking")
-      .select("*")
-      .eq("event_id", currentEvent.id)
-      .order("pieces_sent", { ascending: false })
-      .then(({ data: rows }) => {
-        setData(rows ?? []);
-        setLoading(false);
-      });
+    const fetchDealsPerZip = () =>
+      supabase
+        .from("sales_deals")
+        .select("customer_zip")
+        .eq("event_id", currentEvent.id)
+        .not("customer_zip", "is", null)
+        .then(({ data: deals }) => {
+          const counts: Record<string, number> = {};
+          for (const d of deals ?? []) {
+            const zip = (d.customer_zip ?? "").trim();
+            if (zip) counts[zip] = (counts[zip] ?? 0) + 1;
+          }
+          setSoldByZip(counts);
+        });
 
-    const channel = supabase
+    Promise.all([
+      supabase
+        .from("mail_tracking")
+        .select("*")
+        .eq("event_id", currentEvent.id)
+        .order("pieces_sent", { ascending: false })
+        .then(({ data: rows }) => setData(rows ?? [])),
+      fetchDealsPerZip(),
+    ]).then(() => setLoading(false));
+
+    // Realtime on mail_tracking
+    const mailChannel = supabase
       .channel(`mail-${currentEvent.id}`)
       .on(
         "postgres_changes",
@@ -55,7 +73,6 @@ export default function CampaignsPage() {
           filter: `event_id=eq.${currentEvent.id}`,
         },
         () => {
-          // Refetch on any change
           supabase
             .from("mail_tracking")
             .select("*")
@@ -66,21 +83,42 @@ export default function CampaignsPage() {
       )
       .subscribe();
 
+    // Realtime on deals — recount zips when deals change
+    const dealsChannel = supabase
+      .channel(`camp-deals-${currentEvent.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "sales_deals",
+          filter: `event_id=eq.${currentEvent.id}`,
+        },
+        () => {
+          fetchDealsPerZip();
+        },
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(mailChannel);
+      supabase.removeChannel(dealsChannel);
     };
   }, [currentEvent]);
 
   const stats = useMemo(() => {
     const totalPieces = data.reduce((s, d) => s + (d.pieces_sent ?? 0), 0);
     const totalResponses = data.reduce((s, d) => s + d.total_responses, 0);
-    const totalSold = data.reduce((s, d) => s + (d.sold_from_mail ?? 0), 0);
+    const totalSold = data.reduce(
+      (s, d) => s + (soldByZip[d.zip_code] ?? 0),
+      0,
+    );
     const rate = totalPieces > 0 ? (totalResponses / totalPieces) * 100 : 0;
     const topZips = [...data]
       .sort((a, b) => b.total_responses - a.total_responses)
       .slice(0, 5);
     return { totalPieces, totalResponses, totalSold, rate, topZips };
-  }, [data]);
+  }, [data, soldByZip]);
 
   const exportCSV = () => {
     const headers = [
@@ -91,7 +129,7 @@ export default function CampaignsPage() {
       [
         r.zip_code, r.town, r.pieces_sent, r.day_1, r.day_2, r.day_3,
         r.day_4, r.day_5, r.day_6, r.day_7, r.total_responses,
-        r.sold_from_mail, r.response_rate,
+        soldByZip[r.zip_code] ?? 0, r.response_rate,
       ].join(","),
     );
     const csv = [headers.join(","), ...rows].join("\n");
@@ -217,6 +255,12 @@ export default function CampaignsPage() {
                         {z.response_rate != null
                           ? `${(z.response_rate * 100).toFixed(1)}%`
                           : "—"}
+                        {(soldByZip[z.zip_code] ?? 0) > 0 && (
+                          <span className="text-blue-700 dark:text-blue-400 font-medium">
+                            {" "}
+                            • {soldByZip[z.zip_code]} sold
+                          </span>
+                        )}
                       </p>
                     </div>
                   ))}
@@ -289,7 +333,7 @@ export default function CampaignsPage() {
                           {row.total_responses}
                         </TableCell>
                         <TableCell className="text-right font-medium text-blue-700">
-                          {row.sold_from_mail}
+                          {soldByZip[row.zip_code] ?? 0}
                         </TableCell>
                         <TableCell className="text-right">
                           {row.response_rate != null

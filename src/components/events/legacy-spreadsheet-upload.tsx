@@ -401,6 +401,34 @@ function LegacySpreadsheetUpload({
   const mappedCount = (config: SheetConfig) =>
     Object.values(config.columnMap).filter((v) => v && v !== "__skip__").length;
 
+  // Pre-import warnings: check if important fields are unmapped per tab type
+  const RECOMMENDED_FIELDS: Record<string, string[]> = {
+    inventory: ["stock_number", "year", "make", "model"],
+    roster: ["name"],
+    deals: ["customer_name"],
+    lenders: ["name"],
+  };
+
+  const getWarnings = (config: SheetConfig): string[] => {
+    const mapped = new Set(Object.values(config.columnMap).filter((v) => v && v !== "__skip__"));
+    const recommended = RECOMMENDED_FIELDS[config.tabType] ?? [];
+    const missing = recommended.filter((f) => !mapped.has(f));
+    const warnings: string[] = [];
+    if (missing.length > 0) {
+      const fieldLabels: Record<string, string> = {
+        stock_number: "Stock #", year: "Year", make: "Make", model: "Model",
+        customer_name: "Customer Name", name: "Name",
+      };
+      warnings.push(
+        `Missing recommended: ${missing.map((f) => fieldLabels[f] ?? f).join(", ")}`,
+      );
+    }
+    if (mapped.size === 0) {
+      warnings.push("No columns mapped — this tab will import nothing");
+    }
+    return warnings;
+  };
+
   // ────────────────────────────────────────────────────────
   // Render
   // ────────────────────────────────────────────────────────
@@ -660,6 +688,24 @@ function LegacySpreadsheetUpload({
                 );
               })}
             </Tabs>
+
+            {/* Pre-import warnings */}
+            {enabledSheets.some((c) => getWarnings(c).length > 0) && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 p-3 space-y-1">
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-400">
+                  Mapping Warnings
+                </p>
+                {enabledSheets.map((config, idx) => {
+                  const warnings = getWarnings(config);
+                  if (warnings.length === 0) return null;
+                  return (
+                    <p key={idx} className="text-xs text-amber-700 dark:text-amber-300">
+                      <strong>{config.sheet.name}:</strong> {warnings.join("; ")}
+                    </p>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="flex justify-between pt-2">
               <Button variant="outline" onClick={() => setStep("analyze")}>

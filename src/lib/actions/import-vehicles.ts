@@ -146,8 +146,11 @@ const HEADER_KEYWORDS = new Set([
   "age", "days", "cost", "unit", "price", "trade", "retail", "diff",
   "drivetrain", "drive", "type", "hat", "label", "notes", "profit",
   "jd", "power", "clean", "asking", "spread", "acquisition",
-  // Roster keywords too
+  // Roster keywords
   "salespeople", "salesperson", "phone", "confirmed", "setup", "lenders",
+  // Deal log keywords
+  "deal", "customer", "gross", "reserve", "warranty", "gap", "lender",
+  "acv", "payoff", "finance", "selling", "store", "zipcode",
 ]);
 
 // ────────────────────────────────────────────────────────
@@ -299,13 +302,18 @@ function inferColumnType(
   return null;
 }
 
+// Check if a header name is generic (col1, col2, Column1, Column2, etc.)
+function isGenericHeader(h: string): boolean {
+  return /^col(umn)?\s*\d+$/i.test(h.trim());
+}
+
 // Infer meaningful header names from data content when headers are generic (col1, col2...)
 function inferColumnNames(
   headers: string[],
   rows: Record<string, unknown>[],
 ): { headers: string[]; rows: Record<string, unknown>[]; inferred: boolean } {
-  // Count how many headers are generic "colN"
-  const genericCount = headers.filter((h) => /^col\d+$/i.test(h)).length;
+  // Count how many headers are generic "colN" or "ColumnN"
+  const genericCount = headers.filter((h) => isGenericHeader(h)).length;
   if (genericCount < headers.length * 0.5) {
     // Most headers are real — no inference needed
     return { headers, rows, inferred: false };
@@ -318,13 +326,13 @@ function inferColumnNames(
 
   // First pass: non-generic headers stay as-is
   for (const h of headers) {
-    if (!/^col\d+$/i.test(h)) assigned.add(h);
+    if (!isGenericHeader(h)) assigned.add(h);
   }
 
   // Second pass: infer generic columns
   for (let colIdx = 0; colIdx < headers.length; colIdx++) {
     const oldName = headers[colIdx];
-    if (!/^col\d+$/i.test(oldName)) continue;
+    if (!isGenericHeader(oldName)) continue;
 
     const values = sampleRows
       .map((r) => r[oldName])
@@ -402,7 +410,7 @@ function inferPositionalColumns(
     for (let offset = 1; offset <= 2; offset++) {
       const idx = makeIdx + offset;
       if (idx >= h.length) break;
-      if (!/^col\d+$/i.test(h[idx])) continue; // already named
+      if (!isGenericHeader(h[idx])) continue; // already named
 
       const values = sampleRows
         .map((row) => row[h[idx]])
@@ -438,7 +446,7 @@ function inferPositionalColumns(
     for (let offset = 1; offset <= 3; offset++) {
       const idx = anchor + offset;
       if (idx >= h.length) break;
-      if (!/^col\d+$/i.test(h[idx])) continue;
+      if (!isGenericHeader(h[idx])) continue;
 
       const values = sampleRows
         .map((row) => row[h[idx]])
@@ -532,7 +540,10 @@ function parseOneSheet(
       } catch { /* ignore */ }
     }
     scanResults.push(`row ${r}: score=${score} [${preview.join(", ")}]`);
-    if (score > bestScore) {
+    // Prefer later rows with similar scores — many spreadsheets have a summary
+    // section followed by the real header row (e.g., DEAL LOG with a repeated header).
+    // Using >= means the LAST high-scoring row wins on ties.
+    if (score >= bestScore && score > 0) {
       bestScore = score;
       headerRowNum = r;
     }
@@ -541,9 +552,12 @@ function parseOneSheet(
   console.log(`[PARSE] "${sheetName}" — header scan:\n  ${scanResults.join("\n  ")}`);
 
   // ── Determine if file has a real header row ──
-  // If bestScore === 0, NO row looks like headers — file has no header row.
-  // In that case: use generic col1/col2 headers and include ALL rows as data.
-  const hasRealHeaders = bestScore > 0;
+  // Require a minimum score of 3 to avoid false positives from data rows.
+  // Data rows can accidentally score 1-2 when values like "TRADE", "SOLD",
+  // or body style names match keywords. Real header rows (with "Stock #",
+  // "VIN", "Year", "Make", "Model", "Cost", etc.) score 5+.
+  const MIN_HEADER_SCORE = 3;
+  const hasRealHeaders = bestScore >= MIN_HEADER_SCORE;
 
   if (hasRealHeaders) {
     console.log(
@@ -591,6 +605,21 @@ function parseOneSheet(
   }
 
   if (headers.length === 0) return null;
+
+  // ── Deduplicate headers ──
+  // Deal logs and other sheets may have duplicate headers (e.g., YEAR, MAKE, MODEL
+  // appearing twice — once for purchase vehicle, once for trade). Append _2, _3, etc.
+  // to duplicate names so each header key is unique and data isn't overwritten.
+  const headerCounts: Record<string, number> = {};
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i];
+    if (headerCounts[h]) {
+      headerCounts[h]++;
+      headers[i] = `${h}_${headerCounts[h]}`;
+    } else {
+      headerCounts[h] = 1;
+    }
+  }
 
   console.log(`[PARSE] "${sheetName}" — headers (${headers.length}):`, headers.slice(0, 20).join(" | "));
 
@@ -711,7 +740,7 @@ function parseOneSheet(
     const droppedHeaders = headers.slice(0, leadingEmptyCount);
     const remainingHeaders = headers.slice(leadingEmptyCount);
     // Only realign if at least some dropped columns had real names (not colN)
-    const namedDropped = droppedHeaders.filter((h) => !/^col\d+$/i.test(h));
+    const namedDropped = droppedHeaders.filter((h) => !isGenericHeader(h));
     if (namedDropped.length > 0 || leadingEmptyCount >= 2) {
       console.log(
         `[PARSE] "${sheetName}" — dropping ${leadingEmptyCount} leading empty columns: [${droppedHeaders.join(", ")}]` +

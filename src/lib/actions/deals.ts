@@ -293,6 +293,50 @@ export async function updateDeal(input: UpdateDealInput) {
 }
 
 // ────────────────────────────────────────────────────────
+// Quick status update (for inline dropdown)
+// ────────────────────────────────────────────────────────
+const VALID_STATUSES = ["pending", "funded", "unwound", "cancelled"] as const;
+
+export async function updateDealStatus(
+  dealId: string,
+  eventId: string,
+  status: string,
+) {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", eventId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership) throw new Error("Not a member of this event");
+
+  if (!VALID_STATUSES.includes(status as (typeof VALID_STATUSES)[number])) {
+    throw new Error(`Invalid status: ${status}`);
+  }
+
+  const { error } = await supabase
+    .from("sales_deals")
+    .update({ status })
+    .eq("id", dealId)
+    .eq("event_id", eventId);
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard");
+
+  return { success: true };
+}
+
+// ────────────────────────────────────────────────────────
 // Look up vehicle by stock number for deal form
 // ────────────────────────────────────────────────────────
 export async function lookupVehicle(stockNumber: string, eventId: string) {

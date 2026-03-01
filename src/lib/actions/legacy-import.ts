@@ -130,18 +130,21 @@ export async function bulkImportDeals(
     const tradeAcv = parseNum(mapped.trade_acv);
     const tradePayoff = parseNum(mapped.trade_payoff);
 
-    // selling_price is required for deal calculations
-    if (sellingPrice == null) {
-      errorDetails.push({
-        row: i + 1,
-        message: `Missing selling price for "${customerName}"`,
-      });
-      continue;
+    // Derive selling_price if not mapped: cost + front_gross, or cost alone
+    let derivedSellingPrice = sellingPrice;
+    if (derivedSellingPrice == null && vehicleCost != null && frontGrossRaw != null) {
+      derivedSellingPrice = vehicleCost + frontGrossRaw;
+    } else if (derivedSellingPrice == null && vehicleCost != null) {
+      derivedSellingPrice = vehicleCost; // fallback: use cost as selling price
     }
 
     // Auto-calculate derived fields (same logic as createDeal in deals.ts)
+    // front_gross: explicit value, or selling_price - cost, or 0
     const frontGross =
-      frontGrossRaw ?? sellingPrice - (vehicleCost ?? 0);
+      frontGrossRaw ??
+      (derivedSellingPrice != null && vehicleCost != null
+        ? derivedSellingPrice - vehicleCost
+        : 0);
     const fiTotal =
       (reserve ?? 0) +
       (warranty ?? 0) +
@@ -183,7 +186,7 @@ export async function bulkImportDeals(
       salesperson_pct: salespersonPct,
       second_salesperson: str(mapped.second_salesperson),
       second_sp_pct: secondSpPct,
-      selling_price: sellingPrice,
+      selling_price: derivedSellingPrice,
       front_gross: frontGross,
       lender: str(mapped.lender),
       rate: rate,

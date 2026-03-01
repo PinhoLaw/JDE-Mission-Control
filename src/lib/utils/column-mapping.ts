@@ -275,6 +275,7 @@ export function autoMapDealColumn(header: string): string {
   const exactMap: Record<string, string> = {
     // Deal / sale identification
     deal: "deal_number", dealno: "deal_number", dealnumber: "deal_number",
+    store: "deal_number",
     dealnum: "deal_number", "deal#": "deal_number",
     saleday: "sale_day", day: "sale_day",
     saledate: "sale_date", date: "sale_date", solddate: "sale_date",
@@ -291,17 +292,24 @@ export function autoMapDealColumn(header: string): string {
     model: "vehicle_model", vehiclemodel: "vehicle_model",
     vehicletype: "vehicle_type", type: "vehicle_type",
     vehiclecost: "vehicle_cost", cost: "vehicle_cost", unitcost: "vehicle_cost",
-    acv: "vehicle_cost",
     newused: "new_used", condition: "new_used", newvused: "new_used",
     nu: "new_used",
-    // Trade
+    // Trade — single-word headers in trade position
+    acv: "trade_acv",
+    miles: "trade_mileage",
+    payoff: "trade_payoff", owedontrade: "trade_payoff",
+    // Trade — prefixed headers
     tradeyear: "trade_year", tradeyr: "trade_year",
     trademake: "trade_make",
     trademodel: "trade_model",
     tradetype: "trade_type",
     trademileage: "trade_mileage", trademiles: "trade_mileage",
     tradeacv: "trade_acv", tradevalue: "trade_acv", tradein: "trade_acv",
-    tradepayoff: "trade_payoff", payoff: "trade_payoff", owedontrade: "trade_payoff",
+    tradepayoff: "trade_payoff",
+    // Trade — deduplicated headers (YEAR_2, MAKE_2, MODEL_2 from duplicate header detection)
+    year2: "trade_year", yr2: "trade_year",
+    make2: "trade_make",
+    model2: "trade_model",
     // Salesperson
     salesperson: "salesperson", sp: "salesperson", salesrep: "salesperson",
     rep: "salesperson", soldby: "salesperson",
@@ -309,6 +317,7 @@ export function autoMapDealColumn(header: string): string {
     spcommission: "salesperson_pct",
     secondsalesperson: "second_salesperson", sp2: "second_salesperson",
     secondsp: "second_salesperson", "2ndsp": "second_salesperson",
+    "2ndsalesperson": "second_salesperson",
     secondsppct: "second_sp_pct", sp2pct: "second_sp_pct",
     // Pricing
     sellingprice: "selling_price", saleprice: "selling_price",
@@ -325,11 +334,14 @@ export function autoMapDealColumn(header: string): string {
     gap: "gap", gapinsurance: "gap",
     aftermarket1: "aftermarket_1", aftermarket: "aftermarket_1",
     am1: "aftermarket_1", accessories: "aftermarket_1",
+    aft1: "aftermarket_1", aft: "aftermarket_1",
     aftermarket2: "aftermarket_2", am2: "aftermarket_2",
+    aft2: "aftermarket_2",
     docfee: "doc_fee", doc: "doc_fee", documentfee: "doc_fee",
     // Meta
     source: "source", leadsource: "source",
     notes: "notes", note: "notes", comments: "notes",
+    workdone: "notes",
   };
 
   if (exactMap[h]) return exactMap[h];
@@ -364,6 +376,22 @@ export function autoMapDealColumn(header: string): string {
   if (raw.includes("sold") && raw.includes("by")) return "salesperson";
   if (raw.includes("sales") && raw.includes("rep")) return "salesperson";
   if (raw.includes("2nd") && raw.includes("sp")) return "second_salesperson";
+
+  // Handle deduped header suffixes: "YEAR_2" → trade_year, "MAKE_2" → trade_make, etc.
+  const dedupMatch = raw.match(/^(.+?)[\s_]+(\d+)$/);
+  if (dedupMatch) {
+    const base = dedupMatch[1].trim();
+    const suffix = parseInt(dedupMatch[2]);
+    if (suffix === 2) {
+      // Second occurrence → trade fields
+      if (base === "year" || base === "yr") return "trade_year";
+      if (base === "make") return "trade_make";
+      if (base === "model") return "trade_model";
+      if (base === "type") return "trade_type";
+      if (base === "miles" || base === "mileage") return "trade_mileage";
+      if (base === "acv") return "trade_acv";
+    }
+  }
 
   return "__skip__";
 }

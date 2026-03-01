@@ -71,7 +71,7 @@ import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import { EditDealForm } from "@/components/deals/edit-deal-form";
 import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
-import { bulkDeleteDeals } from "@/lib/actions/deals";
+import { bulkDeleteDeals, updateDealStatus } from "@/lib/actions/deals";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
@@ -157,6 +157,16 @@ export default function DealsPage() {
     return { totalGross, totalFront, totalBack, avgPVR, count: filteredDeals.length };
   }, [filteredDeals]);
 
+  // Currency cell helper — compact format for the spreadsheet-style table
+  const currencyCell = (key: keyof Deal, color?: string) => ({
+    accessorKey: key,
+    cell: ({ row }: { row: { getValue: (k: string) => unknown } }) => {
+      const v = row.getValue(key as string) as number | null;
+      if (v == null) return "—";
+      return <span className={color ?? ""}>{formatCurrency(v)}</span>;
+    },
+  });
+
   const columns: ColumnDef<Deal>[] = useMemo(
     () => [
       {
@@ -176,45 +186,117 @@ export default function DealsPage() {
           />
         ),
         enableSorting: false,
-        size: 40,
+        size: 36,
       },
-      { accessorKey: "deal_number", header: "Deal #", size: 60 },
       {
         accessorKey: "status",
         header: "Status",
+        size: 110,
         cell: ({ row }) => {
           const st = row.getValue("status") as string;
+          const deal = row.original;
           return (
-            <Badge variant="secondary" className={STATUS_COLORS[st] ?? ""}>
-              {st}
-            </Badge>
+            <Select
+              value={st}
+              onValueChange={async (newStatus) => {
+                // Optimistic update
+                setDeals((prev) =>
+                  prev.map((d) =>
+                    d.id === deal.id ? { ...d, status: newStatus } : d,
+                  ),
+                );
+                try {
+                  await updateDealStatus(deal.id, deal.event_id, newStatus);
+                  toast.success(`Status → ${newStatus}`);
+                } catch (err) {
+                  // Revert on failure
+                  setDeals((prev) =>
+                    prev.map((d) =>
+                      d.id === deal.id ? { ...d, status: st } : d,
+                    ),
+                  );
+                  toast.error(
+                    err instanceof Error ? err.message : "Failed to update status",
+                  );
+                }
+              }}
+            >
+              <SelectTrigger
+                className={`h-7 w-[100px] text-[11px] font-medium border-0 px-2 ${STATUS_COLORS[st] ?? ""}`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="funded">Funded</SelectItem>
+                <SelectItem value="unwound">Unwound</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
+              </SelectContent>
+            </Select>
           );
         },
       },
-      { accessorKey: "sale_day", header: "Day", size: 50 },
-      { accessorKey: "stock_number", header: "Stock #" },
-      { accessorKey: "customer_name", header: "Customer" },
+      { accessorKey: "stock_number", header: "Stock #", size: 80 },
+      { accessorKey: "customer_name", header: "Customer", size: 120 },
+      { accessorKey: "customer_zip", header: "Zip", size: 60 },
       {
-        id: "vehicle",
-        header: "Vehicle",
-        cell: ({ row }) =>
-          `${row.original.vehicle_year ?? ""} ${row.original.vehicle_make ?? ""} ${row.original.vehicle_model ?? ""}`.trim() ||
-          "—",
+        accessorKey: "new_used",
+        header: "N/U",
+        size: 50,
+        cell: ({ row }) => {
+          const v = row.getValue("new_used") as string | null;
+          if (!v) return "—";
+          return v === "New" ? "N" : v === "Certified" ? "CPO" : "U";
+        },
       },
-      { accessorKey: "salesperson", header: "Sales" },
-      { accessorKey: "lender", header: "Lender" },
+      { accessorKey: "vehicle_year", header: "Year", size: 50 },
+      { accessorKey: "vehicle_make", header: "Make", size: 80 },
+      { accessorKey: "vehicle_model", header: "Model", size: 100 },
       {
-        accessorKey: "front_gross",
+        ...currencyCell("vehicle_cost"),
+        header: "Cost",
+        size: 85,
+      },
+      // Trade-in section
+      { accessorKey: "trade_year", header: "Tr Year", size: 55 },
+      { accessorKey: "trade_make", header: "Tr Make", size: 75 },
+      { accessorKey: "trade_model", header: "Tr Model", size: 90 },
+      {
+        accessorKey: "trade_mileage",
+        header: "Miles",
+        size: 70,
+        cell: ({ row }) => {
+          const v = row.getValue("trade_mileage") as number | null;
+          return v != null ? v.toLocaleString() : "—";
+        },
+      },
+      {
+        ...currencyCell("trade_acv"),
+        header: "ACV",
+        size: 80,
+      },
+      {
+        ...currencyCell("trade_payoff"),
+        header: "Payoff",
+        size: 80,
+      },
+      // Sales staff
+      { accessorKey: "salesperson", header: "Salesperson", size: 120 },
+      { accessorKey: "second_salesperson", header: "2nd SP", size: 110 },
+      // Gross & Finance
+      {
+        ...currencyCell("front_gross"),
         header: ({ column }) => (
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 px-2"
+            className="h-8 px-1 text-xs"
             onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           >
-            Front <ArrowUpDown className="ml-1 h-3 w-3" />
+            Front Gross <ArrowUpDown className="ml-1 h-3 w-3" />
           </Button>
         ),
+        size: 100,
         cell: ({ row }) => {
           const v = row.getValue("front_gross") as number | null;
           if (v == null) return "—";
@@ -225,30 +307,54 @@ export default function DealsPage() {
           );
         },
       },
+      { accessorKey: "lender", header: "Lender", size: 90 },
       {
-        accessorKey: "back_gross",
-        header: "Back",
+        accessorKey: "rate",
+        header: "Rate",
+        size: 55,
         cell: ({ row }) => {
-          const v = row.getValue("back_gross") as number | null;
-          return v != null ? (
-            <span className="text-blue-700 dark:text-blue-400">{formatCurrency(v)}</span>
-          ) : (
-            "—"
-          );
+          const v = row.getValue("rate") as number | null;
+          return v != null ? `${v}%` : "—";
         },
       },
       {
-        accessorKey: "total_gross",
+        ...currencyCell("reserve"),
+        header: "Reserve",
+        size: 80,
+      },
+      {
+        ...currencyCell("warranty"),
+        header: "Warranty",
+        size: 80,
+      },
+      {
+        ...currencyCell("aftermarket_1"),
+        header: "Aft 1",
+        size: 70,
+      },
+      {
+        ...currencyCell("gap"),
+        header: "GAP",
+        size: 70,
+      },
+      {
+        ...currencyCell("fi_total", "text-blue-700 dark:text-blue-400 font-medium"),
+        header: "FI Total",
+        size: 85,
+      },
+      {
+        ...currencyCell("total_gross", "font-bold text-green-700 dark:text-green-400"),
         header: ({ column }) => (
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 px-2"
+            className="h-8 px-1 text-xs"
             onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           >
-            Total <ArrowUpDown className="ml-1 h-3 w-3" />
+            Total Gross <ArrowUpDown className="ml-1 h-3 w-3" />
           </Button>
         ),
+        size: 100,
         cell: ({ row }) => {
           const v = row.getValue("total_gross") as number | null;
           if (v == null) return "—";
@@ -262,20 +368,9 @@ export default function DealsPage() {
         },
       },
       {
-        accessorKey: "is_washout",
-        header: "Wash",
-        size: 50,
-        cell: ({ row }) =>
-          row.original.is_washout ? (
-            <Badge variant="destructive" className="text-[10px]">
-              W
-            </Badge>
-          ) : null,
-      },
-      {
         id: "actions",
         header: "",
-        size: 50,
+        size: 40,
         cell: ({ row }) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -347,16 +442,25 @@ export default function DealsPage() {
 
   const exportCSV = () => {
     const csvHeaders = [
-      "Deal #", "Status", "Day", "Stock #", "Customer", "Vehicle", "Sales",
-      "Lender", "Front", "Back", "Total", "Washout",
+      "Stock #", "Customer", "Zip", "New/Used", "Year", "Make", "Model", "Cost",
+      "Trade Year", "Trade Make", "Trade Model", "Miles", "ACV", "Payoff",
+      "Salesperson", "2nd Salesperson", "Front Gross", "Lender", "Rate",
+      "Reserve", "Warranty", "Aft 1", "GAP", "FI Total", "Total Gross", "Status",
     ];
+    const esc = (v: unknown) => {
+      const s = v == null ? "" : String(v);
+      return s.includes(",") ? `"${s}"` : s;
+    };
     const csvRows = filteredDeals.map((d) =>
       [
-        d.deal_number, d.status, d.sale_day, d.stock_number, d.customer_name,
-        `${d.vehicle_year ?? ""} ${d.vehicle_make ?? ""} ${d.vehicle_model ?? ""}`.trim(),
-        d.salesperson, d.lender, d.front_gross, d.back_gross, d.total_gross,
-        d.is_washout ? "Y" : "N",
-      ].join(","),
+        d.stock_number, d.customer_name, d.customer_zip, d.new_used,
+        d.vehicle_year, d.vehicle_make, d.vehicle_model, d.vehicle_cost,
+        d.trade_year, d.trade_make, d.trade_model, d.trade_mileage,
+        d.trade_acv, d.trade_payoff,
+        d.salesperson, d.second_salesperson, d.front_gross, d.lender, d.rate,
+        d.reserve, d.warranty, d.aftermarket_1, d.gap, d.fi_total,
+        d.total_gross, d.status,
+      ].map(esc).join(","),
     );
     const csv = [csvHeaders.join(","), ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -520,6 +624,7 @@ export default function DealsPage() {
             className="rounded-md border overflow-auto"
             style={{ maxHeight: "calc(100vh - 380px)", minHeight: 300 }}
           >
+            <div style={{ minWidth: 2800 }}>
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
                 {table.getHeaderGroups().map((hg) => (
@@ -576,6 +681,7 @@ export default function DealsPage() {
                 )}
               </TableBody>
             </Table>
+            </div>
           </div>
 
           {/* Totals footer */}
