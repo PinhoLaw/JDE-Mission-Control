@@ -9,9 +9,12 @@ import {
   KpiCardsSkeleton,
   RecentDealsSkeleton,
   AnalyticsOverviewSkeleton,
+  EventScoreCardsSkeleton,
 } from "@/components/dashboard/loading-skeletons";
 import { AnalyticsOverview } from "@/components/dashboard/analytics-overview";
+import { EventScoreCards } from "@/components/dashboard/event-scorecards";
 import { CsvExportButtons } from "@/components/dashboard/csv-export-buttons";
+import { Separator } from "@/components/ui/separator";
 
 interface DashboardPageProps {
   searchParams: Promise<{ event?: string }>;
@@ -156,14 +159,13 @@ export default async function DashboardPage({
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-            {event?.dealer_name ?? event?.name ?? "Mission Control"}
+            Mission Control
           </h1>
-          {subtitle && (
-            <p className="text-sm text-muted-foreground">{subtitle}</p>
-          )}
+          <p className="text-sm text-muted-foreground">
+            All your sales at a glance
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <CsvExportButtons eventId={eventId} />
           <Button asChild size="sm">
             <Link href="/dashboard/events/new">
               <Plus className="h-4 w-4" />
@@ -173,19 +175,37 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {/* KPI Cards with Suspense */}
-      <Suspense fallback={<KpiCardsSkeleton />}>
-        <KpiCards eventId={eventId} />
+      {/* Event Scorecards — all events at a glance */}
+      <Suspense fallback={<EventScoreCardsSkeleton />}>
+        <EventScoreCards />
       </Suspense>
 
-      {/* Analytics Overview */}
+      {/* Analytics Overview — cross-event aggregates */}
       {userId && (
         <Suspense fallback={<AnalyticsOverviewSkeleton />}>
           <AnalyticsOverview userId={userId} />
         </Suspense>
       )}
 
-      {/* Recent Deals with Suspense */}
+      <Separator />
+
+      {/* Active Event Detail Section */}
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight mb-1">
+          {event?.dealer_name ?? event?.name ?? "Active Event"}
+        </h2>
+        {subtitle && (
+          <p className="text-sm text-muted-foreground mb-4">{subtitle}</p>
+        )}
+        <CsvExportButtons eventId={eventId} />
+      </div>
+
+      {/* KPI Cards — detailed for active event */}
+      <Suspense fallback={<KpiCardsSkeleton />}>
+        <KpiCards eventId={eventId} />
+      </Suspense>
+
+      {/* Recent Deals — for active event */}
       <Suspense fallback={<RecentDealsSkeleton />}>
         <RecentDealsTable deals={deals} eventId={eventId} />
       </Suspense>
