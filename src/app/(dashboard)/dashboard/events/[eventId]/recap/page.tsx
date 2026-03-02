@@ -172,11 +172,12 @@ export default function RecapPage() {
     };
   }, [currentEvent]);
 
-  // ── Roster rate map ──
+  // ── Roster rate map (keyed by ID + name fallback) ──
   const rosterRateMap = useMemo(() => {
     const map = new Map<string, number>();
     for (const m of roster) {
       if (m.commission_pct != null) {
+        map.set(m.id, m.commission_pct);
         map.set(m.name.toLowerCase().trim(), m.commission_pct);
       }
     }
@@ -209,19 +210,22 @@ export default function RecapPage() {
     const totalSaleGross =
       totalCommissionableGross - jdeCommission - marketingCost + nonCommGross;
 
-    // Reps commissions (same logic as commissions page)
+    // Reps commissions (same logic as commissions page, uses ID-based lookup)
     let repsCommissions = 0;
     for (const deal of deals) {
       const sp = deal.salesperson;
       if (!sp) continue;
       const front = deal.front_gross ?? 0;
-      const spRate = rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
+      const spRate =
+        (deal.salesperson_id ? rosterRateMap.get(deal.salesperson_id) : undefined) ??
+        rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
 
       if (deal.second_salesperson) {
         const pct1 = deal.salesperson_pct ?? 0.5;
         const pct2 = deal.second_sp_pct ?? 0.5;
         const sp2 = deal.second_salesperson;
         const sp2Rate =
+          (deal.second_sp_id ? rosterRateMap.get(deal.second_sp_id) : undefined) ??
           rosterRateMap.get(sp2.toLowerCase().trim()) ?? defaultRate;
         repsCommissions += front * spRate * pct1;
         repsCommissions += front * sp2Rate * pct2;
@@ -250,41 +254,46 @@ export default function RecapPage() {
     };
   }, [deals, config, tiers, marketingCost, defaultRate, rosterRateMap]);
 
-  // ── Salesperson summary ──
+  // ── Salesperson summary (grouped by ID, fallback to name) ──
   const spSummary = useMemo(() => {
     const map: Record<string, SpSummary> = {};
 
     for (const deal of deals) {
       const sp = deal.salesperson;
       if (!sp) continue;
+      const spKey = deal.salesperson_id ?? sp;
       const front = deal.front_gross ?? 0;
       const total = deal.total_gross ?? 0;
-      const spRate = rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
+      const spRate =
+        (deal.salesperson_id ? rosterRateMap.get(deal.salesperson_id) : undefined) ??
+        rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
 
-      if (!map[sp]) {
-        map[sp] = { name: sp, units: 0, gross: 0, commission: 0 };
+      if (!map[spKey]) {
+        map[spKey] = { name: sp, units: 0, gross: 0, commission: 0 };
       }
 
       if (deal.second_salesperson) {
         const pct1 = deal.salesperson_pct ?? 0.5;
         const pct2 = deal.second_sp_pct ?? 0.5;
-        map[sp].units += pct1;
-        map[sp].gross += total * pct1;
-        map[sp].commission += front * spRate * pct1;
+        map[spKey].units += pct1;
+        map[spKey].gross += total * pct1;
+        map[spKey].commission += front * spRate * pct1;
 
         const sp2 = deal.second_salesperson;
+        const sp2Key = deal.second_sp_id ?? sp2;
         const sp2Rate =
+          (deal.second_sp_id ? rosterRateMap.get(deal.second_sp_id) : undefined) ??
           rosterRateMap.get(sp2.toLowerCase().trim()) ?? defaultRate;
-        if (!map[sp2]) {
-          map[sp2] = { name: sp2, units: 0, gross: 0, commission: 0 };
+        if (!map[sp2Key]) {
+          map[sp2Key] = { name: sp2, units: 0, gross: 0, commission: 0 };
         }
-        map[sp2].units += pct2;
-        map[sp2].gross += total * pct2;
-        map[sp2].commission += front * sp2Rate * pct2;
+        map[sp2Key].units += pct2;
+        map[sp2Key].gross += total * pct2;
+        map[sp2Key].commission += front * sp2Rate * pct2;
       } else {
-        map[sp].units += 1;
-        map[sp].gross += total;
-        map[sp].commission += front * spRate;
+        map[spKey].units += 1;
+        map[spKey].gross += total;
+        map[spKey].commission += front * spRate;
       }
     }
 

@@ -194,6 +194,7 @@ export default function PerformancePage() {
     const stats: Record<
       string,
       {
+        name: string;
         deals: number;
         frontGross: number;
         backGross: number;
@@ -202,9 +203,10 @@ export default function PerformancePage() {
       }
     > = {};
 
-    // Seed from roster so everyone shows up even with zero deals
+    // Seed from roster so everyone shows up even with zero deals (keyed by ID)
     for (const r of roster) {
-      stats[r.name] = {
+      stats[r.id] = {
+        name: r.name,
         deals: 0,
         frontGross: 0,
         backGross: 0,
@@ -216,10 +218,12 @@ export default function PerformancePage() {
     for (const deal of deals) {
       const sp = deal.salesperson;
       if (!sp) continue;
-      if (!stats[sp]) {
-        // Salesperson not found on roster -- infer role from roster map
+      // Use salesperson_id as key when available, fallback to name
+      const key = deal.salesperson_id ?? sp;
+      if (!stats[key]) {
         const rosterEntry = rosterMap.get(sp);
-        stats[sp] = {
+        stats[key] = {
+          name: sp,
           deals: 0,
           frontGross: 0,
           backGross: 0,
@@ -227,15 +231,15 @@ export default function PerformancePage() {
           role: rosterEntry?.role ?? "sales",
         };
       }
-      stats[sp].deals += 1;
-      stats[sp].frontGross += deal.front_gross ?? 0;
-      stats[sp].backGross += deal.back_gross ?? 0;
-      stats[sp].totalGross += deal.total_gross ?? 0;
+      stats[key].deals += 1;
+      stats[key].frontGross += deal.front_gross ?? 0;
+      stats[key].backGross += deal.back_gross ?? 0;
+      stats[key].totalGross += deal.total_gross ?? 0;
     }
 
     return Object.entries(stats)
-      .map(([name, data]) => ({
-        name,
+      .map(([, data]) => ({
+        name: data.name,
         role: data.role,
         deals: data.deals,
         frontGross: data.frontGross,

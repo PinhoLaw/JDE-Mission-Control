@@ -187,6 +187,40 @@ export default function DealsPage() {
     return { totalGross, totalFront, totalBack, avgPVR, count: filteredDeals.length };
   }, [filteredDeals]);
 
+  // Footer averages / totals for the summary row
+  const footerStats = useMemo(() => {
+    const n = filteredDeals.length;
+    if (n === 0) return null;
+
+    const avg = (key: keyof Deal) => {
+      const vals = filteredDeals.filter((d) => d[key] != null).map((d) => d[key] as number);
+      return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+    };
+
+    // Most frequent lender
+    const lenderCounts = new Map<string, number>();
+    filteredDeals.forEach((d) => {
+      if (d.lender) lenderCounts.set(d.lender, (lenderCounts.get(d.lender) ?? 0) + 1);
+    });
+    let topLender = "—";
+    let topCount = 0;
+    lenderCounts.forEach((count, lender) => {
+      if (count > topCount) { topCount = count; topLender = lender; }
+    });
+
+    return {
+      avgFrontGross: avg("front_gross"),
+      topLender,
+      avgRate: avg("rate"),
+      avgReserve: avg("reserve"),
+      avgWarranty: avg("warranty"),
+      avgAft1: avg("aftermarket_1"),
+      avgGap: avg("gap"),
+      avgFiTotal: avg("fi_total"),
+      totalGross: filteredDeals.reduce((s, d) => s + (d.total_gross ?? 0), 0),
+    };
+  }, [filteredDeals]);
+
   // Currency cell helper — compact format for the spreadsheet-style table
   const currencyCell = (key: keyof Deal, color?: string) => ({
     accessorKey: key,
@@ -267,7 +301,27 @@ export default function DealsPage() {
           );
         },
       },
-      { accessorKey: "stock_number", header: ({ column }) => <SortableHeader column={column}>Stock #</SortableHeader>, size: 80 },
+      {
+        accessorKey: "stock_number",
+        header: ({ column }) => <SortableHeader column={column}>Stock #</SortableHeader>,
+        size: 100,
+        cell: ({ row }) => {
+          const sn = row.getValue("stock_number") as string | null;
+          if (!sn) return "—";
+          const deal = row.original;
+          const hasTrade = !!(deal.trade_year || deal.trade_make || deal.trade_model || deal.trade_acv);
+          return (
+            <span className="flex items-center gap-1">
+              {sn}
+              {hasTrade && (
+                <span className="inline-flex items-center rounded-sm bg-orange-100 px-1 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
+                  TI
+                </span>
+              )}
+            </span>
+          );
+        },
+      },
       { accessorKey: "customer_name", header: ({ column }) => <SortableHeader column={column}>Customer</SortableHeader>, size: 120 },
       { accessorKey: "customer_zip", header: ({ column }) => <SortableHeader column={column}>Zip</SortableHeader>, size: 60 },
       {
@@ -729,30 +783,60 @@ export default function DealsPage() {
             </table>
           </div>
 
-          {/* Totals footer */}
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex gap-6 font-medium">
-              <span>
-                Front:{" "}
-                <span className="text-green-700">
-                  {formatCurrency(stats.totalFront)}
+          {/* Averages / Totals footer bar */}
+          {footerStats && (
+            <div className="rounded-md border bg-muted/80 px-4 py-2">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">
+                  Averages
                 </span>
-              </span>
-              <span>
-                Back:{" "}
-                <span className="text-blue-700">
-                  {formatCurrency(stats.totalBack)}
+                <span>
+                  Front Gross:{" "}
+                  <span className="font-semibold">{formatCurrency(footerStats.avgFrontGross)}</span>
                 </span>
-              </span>
-              <span>
-                Total:{" "}
-                <span className="text-green-700 font-bold">
-                  {formatCurrency(stats.totalGross)}
+                <span>
+                  Lender:{" "}
+                  <span className="font-semibold">{footerStats.topLender}</span>
                 </span>
-              </span>
+                <span>
+                  Rate:{" "}
+                  <span className="font-semibold">{footerStats.avgRate.toFixed(1)}%</span>
+                </span>
+                <span>
+                  Reserve:{" "}
+                  <span className="font-semibold">{formatCurrency(footerStats.avgReserve)}</span>
+                </span>
+                <span>
+                  Warranty:{" "}
+                  <span className="font-semibold">{formatCurrency(footerStats.avgWarranty)}</span>
+                </span>
+                <span>
+                  Aft 1:{" "}
+                  <span className="font-semibold">{formatCurrency(footerStats.avgAft1)}</span>
+                </span>
+                <span>
+                  GAP:{" "}
+                  <span className="font-semibold">{formatCurrency(footerStats.avgGap)}</span>
+                </span>
+                <span>
+                  FI Total:{" "}
+                  <span className="font-semibold text-blue-700 dark:text-blue-400">
+                    {formatCurrency(footerStats.avgFiTotal)}
+                  </span>
+                </span>
+                <span className="border-l pl-5 border-border">
+                  Total Gross:{" "}
+                  <span className="font-bold text-green-700 dark:text-green-400">
+                    {formatCurrency(footerStats.totalGross)}
+                  </span>
+                </span>
+              </div>
             </div>
+          )}
+
+          <div className="flex items-center justify-end">
             <span className="text-xs text-muted-foreground">
-              {rows.length} deals (virtualized)
+              {rows.length} deals
             </span>
           </div>
         </>

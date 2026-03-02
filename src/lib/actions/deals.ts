@@ -84,6 +84,24 @@ export async function createDeal(input: NewDealInput) {
 
   const d = parsed.data;
 
+  // Resolve salesperson name from roster ID (ensures text cache is always correct)
+  if (d.salesperson_id) {
+    const { data: member } = await supabase
+      .from("roster")
+      .select("name")
+      .eq("id", d.salesperson_id)
+      .single();
+    if (member) d.salesperson = member.name;
+  }
+  if (d.second_sp_id) {
+    const { data: member } = await supabase
+      .from("roster")
+      .select("name")
+      .eq("id", d.second_sp_id)
+      .single();
+    if (member) d.second_salesperson = member.name;
+  }
+
   // Auto-calculations
   const frontGross =
     d.front_gross ?? (d.selling_price ?? 0) - (d.vehicle_cost ?? 0);
@@ -225,6 +243,24 @@ export async function updateDeal(input: UpdateDealInput) {
   }
 
   const d = parsed.data;
+
+  // Resolve salesperson name from roster ID (ensures text cache is always correct)
+  if (d.salesperson_id) {
+    const { data: member } = await supabase
+      .from("roster")
+      .select("name")
+      .eq("id", d.salesperson_id)
+      .single();
+    if (member) d.salesperson = member.name;
+  }
+  if (d.second_sp_id) {
+    const { data: member } = await supabase
+      .from("roster")
+      .select("name")
+      .eq("id", d.second_sp_id)
+      .single();
+    if (member) d.second_salesperson = member.name;
+  }
 
   // Auto-calculations (same as createDeal)
   const frontGross =

@@ -236,6 +236,7 @@ export async function bulkImportDeals(
   // Sync inventory — mark matching vehicles as sold
   if (imported > 0) {
     await syncInventoryFromDeals(eventId);
+    await matchSalespersonIds(eventId, supabase);
   }
 
   revalidatePath("/dashboard/deals");
@@ -251,6 +252,65 @@ export async function bulkImportDeals(
     errorDetails,
     mode: "append",
   };
+}
+
+// ────────────────────────────────────────────────────────
+// Match salesperson names → roster IDs after import
+// ────────────────────────────────────────────────────────
+
+/**
+ * After bulk importing deals, match salesperson text names to roster member IDs.
+ * Uses case-insensitive matching within the same event.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function matchSalespersonIds(eventId: string, supabase: any) {
+  // 1. Fetch roster for event → build name→id map
+  const { data: roster } = await supabase
+    .from("roster")
+    .select("id, name")
+    .eq("event_id", eventId);
+
+  if (!roster || roster.length === 0) return;
+
+  const rosterMap = new Map<string, string>();
+  for (const r of roster as Array<{ id: string; name: string }>) {
+    rosterMap.set(r.name.trim().toLowerCase(), r.id);
+  }
+
+  // 2. Fetch deals missing salesperson_id
+  const { data: deals } = await supabase
+    .from("sales_deals")
+    .select("id, salesperson, second_salesperson, salesperson_id, second_sp_id")
+    .eq("event_id", eventId);
+
+  if (!deals) return;
+
+  for (const deal of deals as Array<{
+    id: string;
+    salesperson: string | null;
+    second_salesperson: string | null;
+    salesperson_id: string | null;
+    second_sp_id: string | null;
+  }>) {
+    const updates: Record<string, string> = {};
+
+    if (deal.salesperson && !deal.salesperson_id) {
+      const id = rosterMap.get(deal.salesperson.trim().toLowerCase());
+      if (id) updates.salesperson_id = id;
+    }
+
+    if (deal.second_salesperson && !deal.second_sp_id) {
+      const id = rosterMap.get(deal.second_salesperson.trim().toLowerCase());
+      if (id) updates.second_sp_id = id;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await supabase
+        .from("sales_deals")
+        .update(updates)
+        .eq("id", deal.id);
+    }
+  }
 }
 
 // ────────────────────────────────────────────────────────

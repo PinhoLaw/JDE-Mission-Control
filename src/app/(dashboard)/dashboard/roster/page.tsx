@@ -1616,6 +1616,7 @@ export default function RosterPage() {
                       />
                     </TableHead>
                     <TableHead>Name</TableHead>
+                    <TableHead className="hidden xl:table-cell w-20">ID</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead className="hidden sm:table-cell">Team</TableHead>
                     <TableHead className="hidden md:table-cell">Phone</TableHead>
@@ -1646,6 +1647,16 @@ export default function RosterPage() {
                       </TableCell>
                       <TableCell className="font-medium whitespace-nowrap">
                         {member.name}
+                      </TableCell>
+                      <TableCell
+                        className="hidden xl:table-cell font-mono text-xs text-muted-foreground cursor-pointer"
+                        title={`Click to copy: ${member.id}`}
+                        onClick={() => {
+                          navigator.clipboard.writeText(member.id);
+                          toast.success("ID copied");
+                        }}
+                      >
+                        {member.id.slice(0, 8)}
                       </TableCell>
                       <TableCell>
                         <Badge

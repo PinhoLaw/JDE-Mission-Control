@@ -27,6 +27,8 @@ import { Separator } from "@/components/ui/separator";
 import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useSheetPush } from "@/hooks/useSheetPush";
+import { useRosterMembers } from "@/hooks/useRosterMembers";
+import { SalespersonSelect } from "@/components/deals/salesperson-select";
 import { updateDeal, lookupVehicle } from "@/lib/actions/deals";
 import { formatCurrency } from "@/lib/utils";
 import type { Deal } from "@/types/database";
@@ -58,7 +60,9 @@ const dealFormSchema = z.object({
   trade_acv: optNum,
   trade_payoff: optNum,
   salesperson: z.string().optional(),
+  salesperson_id: z.string().uuid().optional().nullable(),
   second_salesperson: z.string().optional(),
+  second_sp_id: z.string().uuid().optional().nullable(),
   selling_price: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? 0 : Number(v)),
     z.number().min(0, "Selling price is required"),
@@ -86,6 +90,7 @@ interface EditDealFormProps {
 
 export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormProps) {
   const { currentEvent } = useEvent();
+  const { roster } = useRosterMembers();
   const [vehicleId, setVehicleId] = useState<string | null>(
     deal.vehicle_id ?? null,
   );
@@ -126,7 +131,9 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
       trade_acv: deal.trade_acv ?? undefined,
       trade_payoff: deal.trade_payoff ?? undefined,
       salesperson: deal.salesperson ?? "",
+      salesperson_id: deal.salesperson_id ?? undefined,
       second_salesperson: deal.second_salesperson ?? "",
+      second_sp_id: deal.second_sp_id ?? undefined,
       selling_price: deal.selling_price ?? 0,
       lender: deal.lender ?? "",
       rate: deal.rate ?? undefined,
@@ -283,7 +290,9 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
         trade_acv: data.trade_acv ? Number(data.trade_acv) : null,
         trade_payoff: data.trade_payoff ? Number(data.trade_payoff) : null,
         salesperson: data.salesperson || null,
+        salesperson_id: data.salesperson_id || null,
         second_salesperson: data.second_salesperson || null,
+        second_sp_id: data.second_sp_id || null,
         selling_price: Number(data.selling_price),
         front_gross: frontGross,
         lender: data.lender || null,
@@ -486,13 +495,29 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
             </div>
             <div>
               <Label htmlFor="edit_salesperson">Salesperson</Label>
-              <Input id="edit_salesperson" {...register("salesperson")} />
+              <SalespersonSelect
+                id="edit_salesperson"
+                value={watch("salesperson_id") ?? null}
+                roster={roster}
+                placeholder="Select salesperson"
+                onChange={(id, name) => {
+                  setValue("salesperson_id", id);
+                  setValue("salesperson", name ?? undefined);
+                }}
+              />
             </div>
             <div>
               <Label htmlFor="edit_second_salesperson">2nd Salesperson</Label>
-              <Input
+              <SalespersonSelect
                 id="edit_second_salesperson"
-                {...register("second_salesperson")}
+                value={watch("second_sp_id") ?? null}
+                roster={roster}
+                placeholder="None"
+                clearable
+                onChange={(id, name) => {
+                  setValue("second_sp_id", id);
+                  setValue("second_salesperson", name ?? undefined);
+                }}
               />
             </div>
           </div>

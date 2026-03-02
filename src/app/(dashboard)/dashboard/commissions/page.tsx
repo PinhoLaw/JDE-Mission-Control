@@ -163,12 +163,14 @@ export default function CommissionsPage() {
     };
   }, [currentEvent]);
 
-  // ── Derived: roster rate map ──
+  // ── Derived: roster rate map (keyed by ID, with name fallback) ──
 
   const rosterRateMap = useMemo(() => {
     const map = new Map<string, number>();
     for (const member of roster) {
       if (member.commission_pct != null) {
+        map.set(member.id, member.commission_pct);
+        // Fallback: also key by lowercase name for deals without salesperson_id
         map.set(member.name.toLowerCase().trim(), member.commission_pct);
       }
     }
@@ -208,7 +210,7 @@ export default function CommissionsPage() {
 
   const hasFilters = salespersonFilter || dateFrom || dateTo;
 
-  // ── Commission calculations ──
+  // ── Commission calculations (grouped by salesperson_id, fallback to name) ──
 
   const commissions = useMemo(() => {
     const byPerson: Record<string, CommissionEntry> = {};
@@ -217,12 +219,16 @@ export default function CommissionsPage() {
       const sp = deal.salesperson;
       if (!sp) continue;
 
-      // Per-person rate from roster, fallback to config default
+      // Use salesperson_id as grouping key when available, fallback to name
+      const spKey = deal.salesperson_id ?? sp;
+
+      // Per-person rate from roster: try ID first, then name fallback
       const spRate =
+        (deal.salesperson_id ? rosterRateMap.get(deal.salesperson_id) : undefined) ??
         rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
 
-      if (!byPerson[sp]) {
-        byPerson[sp] = {
+      if (!byPerson[spKey]) {
+        byPerson[spKey] = {
           name: sp,
           commissionRate: spRate,
           fullDeals: 0,
@@ -243,19 +249,21 @@ export default function CommissionsPage() {
 
       if (deal.second_salesperson) {
         // Split deal — primary salesperson
-        byPerson[sp].splitDeals += 1;
-        byPerson[sp].weightedFrontGross += front * pct1;
-        byPerson[sp].totalBackGross += back * pct1;
-        byPerson[sp].totalGross += total * pct1;
-        byPerson[sp].commission += front * spRate * pct1;
+        byPerson[spKey].splitDeals += 1;
+        byPerson[spKey].weightedFrontGross += front * pct1;
+        byPerson[spKey].totalBackGross += back * pct1;
+        byPerson[spKey].totalGross += total * pct1;
+        byPerson[spKey].commission += front * spRate * pct1;
 
         // Second salesperson
         const sp2 = deal.second_salesperson;
+        const sp2Key = deal.second_sp_id ?? sp2;
         const sp2Rate =
+          (deal.second_sp_id ? rosterRateMap.get(deal.second_sp_id) : undefined) ??
           rosterRateMap.get(sp2.toLowerCase().trim()) ?? defaultRate;
 
-        if (!byPerson[sp2]) {
-          byPerson[sp2] = {
+        if (!byPerson[sp2Key]) {
+          byPerson[sp2Key] = {
             name: sp2,
             commissionRate: sp2Rate,
             fullDeals: 0,
@@ -269,22 +277,22 @@ export default function CommissionsPage() {
           };
         }
         const pct2 = deal.second_sp_pct ?? 0.5;
-        byPerson[sp2].splitDeals += 1;
-        byPerson[sp2].weightedFrontGross += front * pct2;
-        byPerson[sp2].totalBackGross += back * pct2;
-        byPerson[sp2].totalGross += total * pct2;
-        byPerson[sp2].commission += front * sp2Rate * pct2;
+        byPerson[sp2Key].splitDeals += 1;
+        byPerson[sp2Key].weightedFrontGross += front * pct2;
+        byPerson[sp2Key].totalBackGross += back * pct2;
+        byPerson[sp2Key].totalGross += total * pct2;
+        byPerson[sp2Key].commission += front * sp2Rate * pct2;
       } else {
         // Full deal
-        byPerson[sp].fullDeals += 1;
-        byPerson[sp].weightedFrontGross += front;
-        byPerson[sp].totalBackGross += back;
-        byPerson[sp].totalGross += total;
-        byPerson[sp].commission += front * spRate;
+        byPerson[spKey].fullDeals += 1;
+        byPerson[spKey].weightedFrontGross += front;
+        byPerson[spKey].totalBackGross += back;
+        byPerson[spKey].totalGross += total;
+        byPerson[spKey].commission += front * spRate;
       }
 
       if (deal.is_washout) {
-        byPerson[sp].washouts += 1;
+        byPerson[spKey].washouts += 1;
       }
     }
 
