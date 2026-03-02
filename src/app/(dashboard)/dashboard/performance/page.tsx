@@ -38,7 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { BarChart3, TrendingUp, Loader2, Users } from "lucide-react";
+import { BarChart3, TrendingUp, Loader2, Users, Target } from "lucide-react";
 import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,8 @@ interface SalespersonRow {
   name: string;
   role: string;
   deals: number;
+  ups: number;
+  closePct: number;
   frontGross: number;
   backGross: number;
   totalGross: number;
@@ -196,6 +198,7 @@ export default function PerformancePage() {
       {
         name: string;
         deals: number;
+        ups: number;
         frontGross: number;
         backGross: number;
         totalGross: number;
@@ -208,6 +211,7 @@ export default function PerformancePage() {
       stats[r.id] = {
         name: r.name,
         deals: 0,
+        ups: 0,
         frontGross: 0,
         backGross: 0,
         totalGross: 0,
@@ -225,6 +229,7 @@ export default function PerformancePage() {
         stats[key] = {
           name: sp,
           deals: 0,
+          ups: 0,
           frontGross: 0,
           backGross: 0,
           totalGross: 0,
@@ -232,35 +237,43 @@ export default function PerformancePage() {
         };
       }
       stats[key].deals += 1;
+      stats[key].ups += deal.ups_count ?? 1;
       stats[key].frontGross += deal.front_gross ?? 0;
       stats[key].backGross += deal.back_gross ?? 0;
       stats[key].totalGross += deal.total_gross ?? 0;
     }
 
     return Object.entries(stats)
-      .map(([, data]) => ({
-        name: data.name,
-        role: data.role,
-        deals: data.deals,
-        frontGross: data.frontGross,
-        backGross: data.backGross,
-        totalGross: data.totalGross,
-        avgPvr: data.deals > 0 ? data.totalGross / data.deals : 0,
-      }))
+      .map(([, data]) => {
+        const closePct = data.ups > 0 ? (data.deals / data.ups) * 100 : 0;
+        return {
+          name: data.name,
+          role: data.role,
+          deals: data.deals,
+          ups: data.ups,
+          closePct,
+          frontGross: data.frontGross,
+          backGross: data.backGross,
+          totalGross: data.totalGross,
+          avgPvr: data.deals > 0 ? data.totalGross / data.deals : 0,
+        };
+      })
       .sort((a, b) => b.totalGross - a.totalGross);
   }, [deals, roster, rosterMap]);
 
   // Summary KPIs
   const kpis = useMemo(() => {
     const totalDeals = deals.length;
+    const totalUps = deals.reduce((s, d) => s + (d.ups_count ?? 1), 0);
     const totalGross = deals.reduce((s, d) => s + (d.total_gross ?? 0), 0);
     const totalFront = deals.reduce((s, d) => s + (d.front_gross ?? 0), 0);
     const totalBack = deals.reduce((s, d) => s + (d.back_gross ?? 0), 0);
     const avgPvr = totalDeals > 0 ? totalGross / totalDeals : 0;
+    const closingRatio = totalUps > 0 ? ((totalDeals / totalUps) * 100).toFixed(0) : "N/A";
     const frontBackRatio =
       totalBack > 0 ? (totalFront / totalBack).toFixed(2) : "N/A";
 
-    return { totalDeals, totalGross, totalFront, totalBack, avgPvr, frontBackRatio };
+    return { totalDeals, totalUps, totalGross, totalFront, totalBack, avgPvr, closingRatio, frontBackRatio };
   }, [deals]);
 
   // Chart data: Daily Sales Trend
@@ -357,7 +370,7 @@ export default function PerformancePage() {
       <PageHeader />
 
       {/* KPI Stats Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
           title="Total Deals"
           value={String(kpis.totalDeals)}
@@ -372,6 +385,12 @@ export default function PerformancePage() {
           title="Avg PVR"
           value={formatCurrency(kpis.avgPvr)}
           icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
+        />
+        <StatCard
+          title="Closing Ratio"
+          value={`${kpis.closingRatio}%`}
+          description={`${kpis.totalDeals} deals / ${kpis.totalUps} ups`}
+          icon={<Target className="h-4 w-4 text-muted-foreground" />}
         />
         <StatCard
           title="Front : Back Ratio"
@@ -610,6 +629,8 @@ export default function PerformancePage() {
                 <TableHead>Salesperson</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead className="text-center">Deals</TableHead>
+                <TableHead className="text-center">Ups</TableHead>
+                <TableHead className="text-center">Close %</TableHead>
                 <TableHead className="text-right">Front Gross</TableHead>
                 <TableHead className="text-right">Back Gross</TableHead>
                 <TableHead className="text-right">Total Gross</TableHead>
@@ -634,6 +655,24 @@ export default function PerformancePage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-center">{row.deals}</TableCell>
+                  <TableCell className="text-center">{row.ups || "—"}</TableCell>
+                  <TableCell className="text-center">
+                    {row.ups > 0 ? (
+                      <span
+                        className={`font-medium ${
+                          row.closePct >= 30
+                            ? "text-green-600 dark:text-green-400"
+                            : row.closePct >= 15
+                              ? "text-yellow-600 dark:text-yellow-400"
+                              : "text-red-600 dark:text-red-400"
+                        }`}
+                      >
+                        {row.closePct.toFixed(0)}%
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
                     {formatCurrency(row.frontGross)}
                   </TableCell>
@@ -651,7 +690,7 @@ export default function PerformancePage() {
               {leaderboard.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={8}
+                    colSpan={10}
                     className="h-24 text-center text-muted-foreground"
                   >
                     No salesperson data available.

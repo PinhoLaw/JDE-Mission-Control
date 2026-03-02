@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
-import type { RosterMember, Lender } from "@/types/database";
+import type { RosterMember, Lender, Deal } from "@/types/database";
 import {
   addRosterMember,
   updateRosterMember,
@@ -187,6 +187,7 @@ export default function RosterPage() {
   // Data
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [lenders, setLenders] = useState<Lender[]>([]);
+  const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Dialogs
@@ -248,9 +249,15 @@ export default function RosterPage() {
         .select("*")
         .eq("event_id", currentEvent.id)
         .order("name"),
-    ]).then(([rosterRes, lendersRes]) => {
+      supabase
+        .from("sales_deals")
+        .select("salesperson_id, salesperson, ups_count, status")
+        .eq("event_id", currentEvent.id)
+        .not("status", "eq", "cancelled"),
+    ]).then(([rosterRes, lendersRes, dealsRes]) => {
       setRoster(rosterRes.data ?? []);
       setLenders(lendersRes.data ?? []);
+      setDeals((dealsRes.data as Deal[]) ?? []);
       setLoading(false);
     });
 
@@ -366,6 +373,20 @@ export default function RosterPage() {
     );
     return { total, confirmed, active, byRole };
   }, [roster]);
+
+  // Closing ratio per roster member: deals / ups
+  const closingRatioMap = useMemo(() => {
+    const map = new Map<string, { deals: number; ups: number }>();
+    for (const deal of deals) {
+      const key = deal.salesperson_id ?? deal.salesperson;
+      if (!key) continue;
+      const cur = map.get(key) ?? { deals: 0, ups: 0 };
+      cur.deals += 1;
+      cur.ups += deal.ups_count ?? 1;
+      map.set(key, cur);
+    }
+    return map;
+  }, [deals]);
 
   // Unique teams for bulk assign dropdown
   const uniqueTeams = useMemo(
@@ -1622,6 +1643,7 @@ export default function RosterPage() {
                     <TableHead className="hidden md:table-cell">Phone</TableHead>
                     <TableHead className="hidden lg:table-cell">Email</TableHead>
                     <TableHead className="text-right">Comm %</TableHead>
+                    <TableHead className="text-right hidden sm:table-cell">Close %</TableHead>
                     <TableHead className="text-center">Confirmed</TableHead>
                     <TableHead className="text-center">Active</TableHead>
                     <TableHead className="w-20" />
@@ -1679,6 +1701,27 @@ export default function RosterPage() {
                         {member.commission_pct != null
                           ? `${(member.commission_pct * 100).toFixed(0)}%`
                           : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums hidden sm:table-cell">
+                        {(() => {
+                          const cr = closingRatioMap.get(member.id);
+                          if (!cr || cr.ups === 0) return "—";
+                          const pct = (cr.deals / cr.ups) * 100;
+                          const color =
+                            pct >= 30
+                              ? "text-green-600 dark:text-green-400"
+                              : pct >= 15
+                                ? "text-yellow-600 dark:text-yellow-400"
+                                : "text-red-600 dark:text-red-400";
+                          return (
+                            <span className={`font-medium ${color}`}>
+                              {pct.toFixed(0)}%
+                              <span className="text-[10px] text-muted-foreground ml-1">
+                                ({cr.deals}/{cr.ups})
+                              </span>
+                            </span>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="text-center">
                         <Button

@@ -445,6 +445,7 @@ export type Database = {
           dealer_gross: number | null;
           source: string | null;
           funded: boolean;
+          ups_count: number;
           status: "pending" | "funded" | "unwound" | "cancelled";
           notes: string | null;
           created_at: string;
@@ -501,6 +502,7 @@ export type Database = {
           dealer_gross?: number | null;
           source?: string | null;
           funded?: boolean;
+          ups_count?: number;
           status?: "pending" | "funded" | "unwound" | "cancelled";
           notes?: string | null;
           created_at?: string;
@@ -557,6 +559,7 @@ export type Database = {
           dealer_gross?: number | null;
           source?: string | null;
           funded?: boolean;
+          ups_count?: number;
           status?: "pending" | "funded" | "unwound" | "cancelled";
           notes?: string | null;
           created_at?: string;

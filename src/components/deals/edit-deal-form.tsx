@@ -76,6 +76,10 @@ const dealFormSchema = z.object({
   aftermarket_1: optNum,
   aftermarket_2: optNum,
   doc_fee: optNum,
+  ups_count: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? 1 : Number(v)),
+    z.number().int().min(1).default(1),
+  ),
   source: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -144,6 +148,7 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
       aftermarket_1: deal.aftermarket_1 ?? undefined,
       aftermarket_2: deal.aftermarket_2 ?? undefined,
       doc_fee: deal.doc_fee ?? undefined,
+      ups_count: deal.ups_count ?? 1,
       source: deal.source ?? "",
       notes: deal.notes ?? "",
     },
@@ -304,6 +309,7 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
         aftermarket_1: data.aftermarket_1 ? Number(data.aftermarket_1) : null,
         aftermarket_2: data.aftermarket_2 ? Number(data.aftermarket_2) : null,
         doc_fee: data.doc_fee ? Number(data.doc_fee) : null,
+        ups_count: data.ups_count ? Number(data.ups_count) : 1,
         source: data.source || null,
         notes: data.notes || null,
       });
@@ -340,7 +346,7 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
           <CardTitle>Deal Information</CardTitle>
           <CardDescription>Basic deal details</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3">
+        <CardContent className="grid gap-4 sm:grid-cols-4">
           <div>
             <Label htmlFor="edit_deal_number">Deal #</Label>
             <Input
@@ -356,6 +362,15 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
           <div>
             <Label htmlFor="edit_sale_date">Sale Date</Label>
             <Input id="edit_sale_date" type="date" {...register("sale_date")} />
+          </div>
+          <div>
+            <Label htmlFor="edit_ups_count"># of Ups</Label>
+            <Input
+              id="edit_ups_count"
+              type="number"
+              min={1}
+              {...register("ups_count")}
+            />
           </div>
         </CardContent>
       </Card>

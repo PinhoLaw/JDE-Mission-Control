@@ -52,6 +52,8 @@ const DEFAULT_TIERS: CommTier[] = [
 interface SpSummary {
   name: string;
   units: number;
+  ups: number;
+  closePct: number;
   gross: number;
   commission: number;
 }
@@ -192,6 +194,8 @@ export default function RecapPage() {
     const pack = config?.pack ?? 0;
 
     const totalUnits = deals.length;
+    const totalUps = deals.reduce((s, d) => s + (d.ups_count ?? 1), 0);
+    const closingRatio = totalUps > 0 ? (totalUnits / totalUps) * 100 : 0;
     const newUnits = deals.filter((d) => d.new_used === "New").length;
     const usedUnits = totalUnits - newUnits;
 
@@ -239,6 +243,8 @@ export default function RecapPage() {
 
     return {
       totalUnits,
+      totalUps,
+      closingRatio,
       newUnits,
       usedUnits,
       totalFrontGross,
@@ -269,13 +275,16 @@ export default function RecapPage() {
         rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
 
       if (!map[spKey]) {
-        map[spKey] = { name: sp, units: 0, gross: 0, commission: 0 };
+        map[spKey] = { name: sp, units: 0, ups: 0, closePct: 0, gross: 0, commission: 0 };
       }
+
+      const dealUps = deal.ups_count ?? 1;
 
       if (deal.second_salesperson) {
         const pct1 = deal.salesperson_pct ?? 0.5;
         const pct2 = deal.second_sp_pct ?? 0.5;
         map[spKey].units += pct1;
+        map[spKey].ups += dealUps;
         map[spKey].gross += total * pct1;
         map[spKey].commission += front * spRate * pct1;
 
@@ -285,29 +294,38 @@ export default function RecapPage() {
           (deal.second_sp_id ? rosterRateMap.get(deal.second_sp_id) : undefined) ??
           rosterRateMap.get(sp2.toLowerCase().trim()) ?? defaultRate;
         if (!map[sp2Key]) {
-          map[sp2Key] = { name: sp2, units: 0, gross: 0, commission: 0 };
+          map[sp2Key] = { name: sp2, units: 0, ups: 0, closePct: 0, gross: 0, commission: 0 };
         }
         map[sp2Key].units += pct2;
+        // Don't double-count ups for split deals
         map[sp2Key].gross += total * pct2;
         map[sp2Key].commission += front * sp2Rate * pct2;
       } else {
         map[spKey].units += 1;
+        map[spKey].ups += dealUps;
         map[spKey].gross += total;
         map[spKey].commission += front * spRate;
       }
     }
 
-    return Object.values(map).sort((a, b) => b.gross - a.gross);
+    // Compute closing percentages
+    const results = Object.values(map);
+    for (const s of results) {
+      s.closePct = s.ups > 0 ? (s.units / s.ups) * 100 : 0;
+    }
+
+    return results.sort((a, b) => b.gross - a.gross);
   }, [deals, defaultRate, rosterRateMap]);
 
   const spTotals = useMemo(() => {
     return spSummary.reduce(
       (acc, s) => ({
         units: acc.units + s.units,
+        ups: acc.ups + s.ups,
         gross: acc.gross + s.gross,
         commission: acc.commission + s.commission,
       }),
-      { units: 0, gross: 0, commission: 0 },
+      { units: 0, ups: 0, gross: 0, commission: 0 },
     );
   }, [spSummary]);
 
@@ -743,7 +761,7 @@ export default function RecapPage() {
                 </Table>
               </div>
 
-              {/* NEW / USED box */}
+              {/* NEW / USED / CLOSING RATIO box */}
               <div className="mt-4 flex gap-4">
                 <div className="flex-1 rounded-lg border-2 border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 p-4 text-center">
                   <p className="text-3xl font-bold text-blue-700 dark:text-blue-300">
@@ -759,6 +777,17 @@ export default function RecapPage() {
                   </p>
                   <p className="text-sm font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wide">
                     USED
+                  </p>
+                </div>
+                <div className="flex-1 rounded-lg border-2 border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950 p-4 text-center">
+                  <p className="text-3xl font-bold text-indigo-700 dark:text-indigo-300">
+                    {pnl.closingRatio.toFixed(0)}%
+                  </p>
+                  <p className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide">
+                    CLOSE RATE
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {pnl.totalUnits} / {pnl.totalUps} ups
                   </p>
                 </div>
               </div>
@@ -779,6 +808,8 @@ export default function RecapPage() {
                     <TableRow>
                       <TableHead>Salesperson</TableHead>
                       <TableHead className="text-center">Units</TableHead>
+                      <TableHead className="text-center">Ups</TableHead>
+                      <TableHead className="text-center">Close %</TableHead>
                       <TableHead className="text-right">Gross</TableHead>
                       <TableHead className="text-right">Commission</TableHead>
                     </TableRow>
@@ -791,6 +822,26 @@ export default function RecapPage() {
                         </TableCell>
                         <TableCell className="text-center font-mono">
                           {sp.units % 1 === 0 ? sp.units : sp.units.toFixed(1)}
+                        </TableCell>
+                        <TableCell className="text-center font-mono">
+                          {sp.ups || "—"}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {sp.ups > 0 ? (
+                            <span
+                              className={`font-medium ${
+                                sp.closePct >= 30
+                                  ? "text-green-600 dark:text-green-400"
+                                  : sp.closePct >= 15
+                                    ? "text-yellow-600 dark:text-yellow-400"
+                                    : "text-red-600 dark:text-red-400"
+                              }`}
+                            >
+                              {sp.closePct.toFixed(0)}%
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           {fmtCurrency(sp.gross)}
@@ -808,6 +859,14 @@ export default function RecapPage() {
                         {spTotals.units % 1 === 0
                           ? spTotals.units
                           : spTotals.units.toFixed(1)}
+                      </TableCell>
+                      <TableCell className="text-center font-mono font-bold">
+                        {spTotals.ups}
+                      </TableCell>
+                      <TableCell className="text-center font-mono font-bold">
+                        {spTotals.ups > 0
+                          ? `${((spTotals.units / spTotals.ups) * 100).toFixed(0)}%`
+                          : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono font-bold">
                         {fmtCurrency(spTotals.gross)}

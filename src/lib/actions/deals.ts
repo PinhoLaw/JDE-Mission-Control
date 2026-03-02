@@ -48,6 +48,7 @@ const newDealSchema = z.object({
   aftermarket_1: z.coerce.number().optional().nullable(),
   aftermarket_2: z.coerce.number().optional().nullable(),
   doc_fee: z.coerce.number().optional().nullable(),
+  ups_count: z.coerce.number().int().min(1).default(1),
   source: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
 });
@@ -167,6 +168,7 @@ export async function createDeal(input: NewDealInput) {
       pvr: pvr,
       is_washout: isWashout,
       washout_amount: isWashout ? washoutAmount : null,
+      ups_count: d.ups_count ?? 1,
       source: d.source ?? null,
       notes: d.notes ?? null,
       status: "pending" as const,
@@ -325,6 +327,7 @@ export async function updateDeal(input: UpdateDealInput) {
       pvr: pvr,
       is_washout: isWashout,
       washout_amount: isWashout ? washoutAmount : null,
+      ups_count: d.ups_count ?? 1,
       source: d.source ?? null,
       notes: d.notes ?? null,
     })
