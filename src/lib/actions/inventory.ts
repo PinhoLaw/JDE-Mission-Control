@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 
 // ────────────────────────────────────────────────────────
@@ -128,4 +129,86 @@ export async function updateVehicleField(
 
   revalidatePath("/dashboard/inventory");
   return { success: true };
+}
+
+// ────────────────────────────────────────────────────────
+// Sync inventory status from deals (batch cross-reference)
+// ────────────────────────────────────────────────────────
+
+/**
+ * Cross-references deal stock numbers against vehicle_inventory
+ * and marks matching vehicles as "sold". Uses the service role
+ * client to bypass RLS (same pattern as getDealsPerZip).
+ *
+ * Call this after bulk importing deals or to run a one-time sync.
+ */
+export async function syncInventoryFromDeals(eventId: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    console.error("[syncInventoryFromDeals] Missing Supabase env vars");
+    return { markedSold: 0 };
+  }
+
+  const admin = createServiceClient(url, serviceKey);
+
+  // 1. Get all deal stock numbers for this event (exclude cancelled/unwound)
+  const { data: deals } = await admin
+    .from("sales_deals")
+    .select("stock_number, customer_name, selling_price, sale_date, status")
+    .eq("event_id", eventId)
+    .not("stock_number", "is", null)
+    .not("status", "in", '("cancelled","unwound")');
+
+  if (!deals || deals.length === 0) return { markedSold: 0 };
+
+  // 2. Get all inventory vehicles for this event
+  const { data: vehicles } = await admin
+    .from("vehicle_inventory")
+    .select("id, stock_number, status")
+    .eq("event_id", eventId);
+
+  if (!vehicles || vehicles.length === 0) return { markedSold: 0 };
+
+  // 3. Build lookup: stock_number (uppercase) → deal info
+  const dealByStock = new Map<string, (typeof deals)[number]>();
+  for (const d of deals) {
+    const key = d.stock_number?.trim().toUpperCase();
+    if (key) dealByStock.set(key, d);
+  }
+
+  // 4. For each vehicle, check if it has a matching active deal
+  type DealInfo = (typeof deals)[number];
+  const toMarkSold: { id: string; deal: DealInfo }[] = [];
+  for (const v of vehicles) {
+    const key = v.stock_number?.trim().toUpperCase();
+    if (!key) continue;
+    const deal = dealByStock.get(key);
+    if (deal && v.status !== "sold") {
+      toMarkSold.push({ id: v.id, deal });
+    }
+  }
+
+  // 5. Batch update — mark matched vehicles as sold
+  let markedSold = 0;
+  for (const item of toMarkSold) {
+    const { error } = await admin
+      .from("vehicle_inventory")
+      .update({
+        status: "sold" as const,
+        sold_to: item.deal.customer_name,
+        sold_price: item.deal.selling_price,
+        sold_date:
+          item.deal.sale_date ?? new Date().toISOString().split("T")[0],
+      })
+      .eq("id", item.id);
+
+    if (!error) markedSold++;
+  }
+
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard");
+
+  return { markedSold };
 }

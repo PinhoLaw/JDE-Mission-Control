@@ -171,6 +171,19 @@ export async function createDeal(input: NewDealInput) {
       .eq("id", d.vehicle_id)
       .eq("event_id", d.event_id);
   }
+  // Fallback: match by stock_number if no vehicle_id
+  else if (d.stock_number) {
+    await supabase
+      .from("vehicle_inventory")
+      .update({
+        status: "sold" as const,
+        sold_price: d.selling_price,
+        sold_date: d.sale_date ?? new Date().toISOString().split("T")[0],
+        sold_to: d.customer_name,
+      })
+      .eq("event_id", d.event_id)
+      .ilike("stock_number", d.stock_number);
+  }
 
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard/inventory");
@@ -286,6 +299,31 @@ export async function updateDeal(input: UpdateDealInput) {
 
   if (error) throw new Error(error.message);
 
+  // Sync inventory — mark matched vehicle as sold
+  if (d.vehicle_id) {
+    await supabase
+      .from("vehicle_inventory")
+      .update({
+        status: "sold" as const,
+        sold_price: d.selling_price,
+        sold_date: d.sale_date ?? new Date().toISOString().split("T")[0],
+        sold_to: d.customer_name,
+      })
+      .eq("id", d.vehicle_id)
+      .eq("event_id", d.event_id);
+  } else if (d.stock_number) {
+    await supabase
+      .from("vehicle_inventory")
+      .update({
+        status: "sold" as const,
+        sold_price: d.selling_price,
+        sold_date: d.sale_date ?? new Date().toISOString().split("T")[0],
+        sold_to: d.customer_name,
+      })
+      .eq("event_id", d.event_id)
+      .ilike("stock_number", d.stock_number);
+  }
+
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
@@ -331,7 +369,73 @@ export async function updateDealStatus(
 
   if (error) throw new Error(error.message);
 
+  // Sync inventory based on deal status change
+  if (status === "cancelled" || status === "unwound") {
+    // Restore vehicle to "available"
+    const { data: deal } = await supabase
+      .from("sales_deals")
+      .select("vehicle_id, stock_number")
+      .eq("id", dealId)
+      .single();
+
+    if (deal?.vehicle_id) {
+      await supabase
+        .from("vehicle_inventory")
+        .update({
+          status: "available" as const,
+          sold_to: null,
+          sold_price: null,
+          sold_date: null,
+        })
+        .eq("id", deal.vehicle_id)
+        .eq("event_id", eventId);
+    } else if (deal?.stock_number) {
+      await supabase
+        .from("vehicle_inventory")
+        .update({
+          status: "available" as const,
+          sold_to: null,
+          sold_price: null,
+          sold_date: null,
+        })
+        .eq("event_id", eventId)
+        .ilike("stock_number", deal.stock_number);
+    }
+  } else if (status === "funded" || status === "pending") {
+    // Re-mark vehicle as sold (e.g. after un-unwinding)
+    const { data: deal } = await supabase
+      .from("sales_deals")
+      .select("vehicle_id, stock_number, selling_price, sale_date, customer_name")
+      .eq("id", dealId)
+      .single();
+
+    if (deal?.vehicle_id) {
+      await supabase
+        .from("vehicle_inventory")
+        .update({
+          status: "sold" as const,
+          sold_to: deal.customer_name,
+          sold_price: deal.selling_price,
+          sold_date: deal.sale_date,
+        })
+        .eq("id", deal.vehicle_id)
+        .eq("event_id", eventId);
+    } else if (deal?.stock_number) {
+      await supabase
+        .from("vehicle_inventory")
+        .update({
+          status: "sold" as const,
+          sold_to: deal.customer_name,
+          sold_price: deal.selling_price,
+          sold_date: deal.sale_date,
+        })
+        .eq("event_id", eventId)
+        .ilike("stock_number", deal.stock_number);
+    }
+  }
+
   revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
 
   return { success: true };

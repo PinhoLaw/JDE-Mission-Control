@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { ImportResult } from "./import-vehicles";
 import type { Database } from "@/types/database";
+import { syncInventoryFromDeals } from "./inventory";
 
 type DealInsert = Database["public"]["Tables"]["sales_deals"]["Insert"];
 type LenderInsert = Database["public"]["Tables"]["lenders"]["Insert"];
@@ -232,7 +233,13 @@ export async function bulkImportDeals(
     }
   }
 
+  // Sync inventory — mark matching vehicles as sold
+  if (imported > 0) {
+    await syncInventoryFromDeals(eventId);
+  }
+
   revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
 
   return {

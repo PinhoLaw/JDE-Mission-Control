@@ -20,7 +20,6 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -643,8 +642,7 @@ export default function DealsPage() {
             className="rounded-md border overflow-auto"
             style={{ maxHeight: "calc(100vh - 380px)", minHeight: 300 }}
           >
-            <div style={{ minWidth: table.getTotalSize() }}>
-            <Table className="table-fixed">
+            <table className="w-full caption-bottom text-sm">
               <TableHeader className="sticky top-0 z-10 bg-background">
                 {table.getHeaderGroups().map((hg) => (
                   <TableRow key={hg.id}>
@@ -652,7 +650,11 @@ export default function DealsPage() {
                       <TableHead
                         key={header.id}
                         className="whitespace-nowrap relative group/th"
-                        style={{ width: header.getSize(), minWidth: header.getSize() }}
+                        style={
+                          columnSizing[header.column.id] != null
+                            ? { width: header.getSize(), minWidth: header.getSize() }
+                            : {}
+                        }
                       >
                         {header.isPlaceholder
                           ? null
@@ -695,7 +697,11 @@ export default function DealsPage() {
                         <TableCell
                           key={cell.id}
                           className="whitespace-nowrap py-1"
-                          style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
+                          style={
+                            columnSizing[cell.column.id] != null
+                              ? { width: cell.column.getSize(), minWidth: cell.column.getSize() }
+                              : {}
+                          }
                         >
                           {flexRender(
                             cell.column.columnDef.cell,
@@ -720,8 +726,7 @@ export default function DealsPage() {
                   </tr>
                 )}
               </TableBody>
-            </Table>
-            </div>
+            </table>
           </div>
 
           {/* Totals footer */}
