@@ -327,25 +327,43 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Parse request
-  const { messages, context } = await req.json();
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const { messages, context } = body;
+
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return new Response(JSON.stringify({ error: "No messages provided" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   // 3. Build context block
   const contextBlock = context
     ? `\n\n[CONTEXT]\nPage: ${context.page || "unknown"}\nEvent: ${context.eventName || "none selected"} (id: ${context.eventId || "n/a"})\nUser: ${user.user_metadata?.full_name || user.email || "Mike"}\nTime: ${new Date().toISOString()}\n[/CONTEXT]`
     : "";
 
-  // 4. Classify the message tier using Haiku (fast, ~$0.001/call)
+  // 4. Extract user text from last message (supports both v6 parts and legacy content)
   const lastMessage = messages[messages.length - 1];
-  const userText =
-    typeof lastMessage?.content === "string"
-      ? lastMessage.content
-      : Array.isArray(lastMessage?.parts)
-        ? lastMessage.parts
-            .filter((p: { type: string }) => p.type === "text")
-            .map((p: { text: string }) => p.text)
-            .join(" ")
-        : "";
+  let userText = "";
+  if (typeof lastMessage?.content === "string") {
+    userText = lastMessage.content;
+  } else if (Array.isArray(lastMessage?.parts)) {
+    userText = lastMessage.parts
+      .filter((p: { type: string }) => p.type === "text")
+      .map((p: { text: string }) => p.text)
+      .join(" ");
+  }
 
+  // 5. Classify the message tier using Haiku (fast, ~$0.001/call)
   let tier: Tier = "TIER_2"; // default to Sonnet if classification fails
 
   try {
@@ -365,12 +383,28 @@ export async function POST(req: NextRequest) {
     // Classification failed — fall through to TIER_2 default
   }
 
-  // 5. Stream response from the appropriate model
+  // 6. Convert messages to format streamText expects (role + content string)
+  const formattedMessages = messages.map(
+    (m: { role: string; content?: string; parts?: Array<{ type: string; text?: string }> }) => {
+      let content = "";
+      if (Array.isArray(m.parts)) {
+        content = m.parts
+          .filter((p) => p.type === "text" && p.text)
+          .map((p) => p.text)
+          .join("");
+      } else {
+        content = m.content || "";
+      }
+      return { role: m.role as "user" | "assistant" | "system", content };
+    },
+  );
+
+  // 7. Stream response from the appropriate model
   const config = TIER_CONFIG[tier];
   const result = streamText({
     model: anthropic(config.model),
     system: config.prompt + SHARED_CONFIG + contextBlock,
-    messages,
+    messages: formattedMessages,
     maxOutputTokens: config.maxOutputTokens,
     temperature: config.temperature,
   });

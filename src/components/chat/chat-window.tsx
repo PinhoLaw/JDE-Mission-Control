@@ -31,6 +31,7 @@ export function ChatWindow() {
       new DefaultChatTransport({
         api: "/api/chat",
         body: { context },
+        credentials: "same-origin",
       }),
     [context],
   );
