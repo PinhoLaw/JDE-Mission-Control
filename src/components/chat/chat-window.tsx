@@ -26,14 +26,29 @@ export function ChatWindow() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [input, setInput] = useState("");
 
+  // Keep a ref so the fetch wrapper always reads the latest context
+  const contextRef = useRef(context);
+  useEffect(() => {
+    contextRef.current = context;
+  }, [context]);
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: { context },
         credentials: "same-origin",
+        fetch: async (url, init) => {
+          // Inject fresh context into every request body
+          if (init?.body && typeof init.body === "string") {
+            const body = JSON.parse(init.body);
+            body.context = contextRef.current;
+            init = { ...init, body: JSON.stringify(body) };
+          }
+          return globalThis.fetch(url, init);
+        },
       }),
-    [context],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   );
 
   const { messages, sendMessage, status, setMessages, error } = useVercelChat({
