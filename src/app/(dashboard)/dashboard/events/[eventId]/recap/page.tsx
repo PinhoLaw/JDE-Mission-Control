@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
 import { saveRecapConfig } from "@/lib/actions/deals";
-import type { Deal, EventConfig, RosterMember } from "@/types/database";
+import type { Deal, EventConfig, RosterMember, DailyMetric } from "@/types/database";
 import {
   Card,
   CardContent,
@@ -96,6 +96,7 @@ export default function RecapPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [config, setConfig] = useState<EventConfig | null>(null);
   const [roster, setRoster] = useState<RosterMember[]>([]);
+  const [dailyMetrics, setDailyMetrics] = useState<DailyMetric[]>([]);
   const [loading, setLoading] = useState(true);
 
   // ── Configurable fields (editable) ──
@@ -128,11 +129,17 @@ export default function RecapPage() {
         .from("roster")
         .select("*")
         .eq("event_id", currentEvent.id),
-    ]).then(([dealsRes, configRes, rosterRes]) => {
+      supabase
+        .from("daily_metrics")
+        .select("*")
+        .eq("event_id", currentEvent.id)
+        .order("sale_day", { ascending: true }),
+    ]).then(([dealsRes, configRes, rosterRes, metricsRes]) => {
       setDeals(dealsRes.data ?? []);
       const cfg = configRes.data;
       setConfig(cfg);
       setRoster(rosterRes.data ?? []);
+      setDailyMetrics(metricsRes.data ?? []);
 
       // Hydrate configurable fields from DB
       if (cfg) {
@@ -194,7 +201,10 @@ export default function RecapPage() {
     const pack = config?.pack ?? 0;
 
     const totalUnits = deals.length;
-    const totalUps = deals.reduce((s, d) => s + (d.ups_count ?? 1), 0);
+    const totalUps =
+      dailyMetrics.length > 0
+        ? dailyMetrics.reduce((s, m) => s + (m.total_ups ?? 0), 0)
+        : deals.reduce((s, d) => s + (d.ups_count ?? 1), 0);
     const closingRatio = totalUps > 0 ? (totalUnits / totalUps) * 100 : 0;
     const newUnits = deals.filter((d) => d.new_used === "New").length;
     const usedUnits = totalUnits - newUnits;
@@ -258,7 +268,7 @@ export default function RecapPage() {
       variableNet,
       totalNet,
     };
-  }, [deals, config, tiers, marketingCost, defaultRate, rosterRateMap]);
+  }, [deals, dailyMetrics, config, tiers, marketingCost, defaultRate, rosterRateMap]);
 
   // ── Salesperson summary (grouped by ID, fallback to name) ──
   const spSummary = useMemo(() => {

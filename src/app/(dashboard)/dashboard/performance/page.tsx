@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
-import type { Deal, RosterMember, DailySale } from "@/types/database";
+import type { Deal, RosterMember, DailySale, DailyMetric, UserAchievement, BadgeDef } from "@/types/database";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -20,6 +20,7 @@ import {
   Pie,
   Cell,
   Legend,
+  LabelList,
 } from "recharts";
 import {
   Card,
@@ -40,6 +41,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { BarChart3, TrendingUp, Loader2, Users, Target } from "lucide-react";
 import { LoadingTableSkeleton } from "@/components/ui/loading-table-skeleton";
+import { BadgeIcon } from "@/components/gamification/badge-icon";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -104,6 +106,7 @@ function ChartTooltipContent({
 // ---------------------------------------------------------------------------
 
 interface SalespersonRow {
+  rosterId: string;
   name: string;
   role: string;
   deals: number;
@@ -125,6 +128,8 @@ export default function PerformancePage() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [dailySales, setDailySales] = useState<DailySale[]>([]);
+  const [dailyMetrics, setDailyMetrics] = useState<DailyMetric[]>([]);
+  const [achievements, setAchievements] = useState<(UserAchievement & { badges: BadgeDef | null })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // -----------------------------------------------------------------------
@@ -138,7 +143,7 @@ export default function PerformancePage() {
     const supabase = createClient();
 
     try {
-      const [dealsRes, rosterRes, dailyRes] = await Promise.all([
+      const [dealsRes, rosterRes, dailyRes, metricsRes, achievementsRes] = await Promise.all([
         supabase
           .from("sales_deals")
           .select("*")
@@ -153,15 +158,28 @@ export default function PerformancePage() {
           .select("*")
           .eq("event_id", currentEvent.id)
           .order("sale_day", { ascending: true }),
+        supabase
+          .from("daily_metrics")
+          .select("*")
+          .eq("event_id", currentEvent.id)
+          .order("sale_day", { ascending: true }),
+        supabase
+          .from("user_achievements")
+          .select("*, badges(*)")
+          .eq("event_id", currentEvent.id),
       ]);
 
       if (dealsRes.error) throw dealsRes.error;
       if (rosterRes.error) throw rosterRes.error;
       if (dailyRes.error) throw dailyRes.error;
+      if (metricsRes.error) console.warn("daily_metrics fetch failed:", metricsRes.error);
+      if (achievementsRes.error) console.warn("achievements fetch failed:", achievementsRes.error);
 
       setDeals(dealsRes.data ?? []);
       setRoster(rosterRes.data ?? []);
       setDailySales(dailyRes.data ?? []);
+      setDailyMetrics(metricsRes.data ?? []);
+      setAchievements((achievementsRes.data as any) ?? []);
     } catch (err) {
       console.error("Failed to load performance data:", err);
       toast.error("Failed to load performance data");
@@ -244,9 +262,10 @@ export default function PerformancePage() {
     }
 
     return Object.entries(stats)
-      .map(([, data]) => {
+      .map(([key, data]) => {
         const closePct = data.ups > 0 ? (data.deals / data.ups) * 100 : 0;
         return {
+          rosterId: key,
           name: data.name,
           role: data.role,
           deals: data.deals,
@@ -261,10 +280,13 @@ export default function PerformancePage() {
       .sort((a, b) => b.totalGross - a.totalGross);
   }, [deals, roster, rosterMap]);
 
-  // Summary KPIs
+  // Summary KPIs — ups from daily_metrics (campaigns) when available
   const kpis = useMemo(() => {
     const totalDeals = deals.length;
-    const totalUps = deals.reduce((s, d) => s + (d.ups_count ?? 1), 0);
+    const totalUps =
+      dailyMetrics.length > 0
+        ? dailyMetrics.reduce((s, m) => s + (m.total_ups ?? 0), 0)
+        : deals.reduce((s, d) => s + (d.ups_count ?? 1), 0);
     const totalGross = deals.reduce((s, d) => s + (d.total_gross ?? 0), 0);
     const totalFront = deals.reduce((s, d) => s + (d.front_gross ?? 0), 0);
     const totalBack = deals.reduce((s, d) => s + (d.back_gross ?? 0), 0);
@@ -274,18 +296,63 @@ export default function PerformancePage() {
       totalBack > 0 ? (totalFront / totalBack).toFixed(2) : "N/A";
 
     return { totalDeals, totalUps, totalGross, totalFront, totalBack, avgPvr, closingRatio, frontBackRatio };
-  }, [deals]);
+  }, [deals, dailyMetrics]);
 
-  // Chart data: Daily Sales Trend
-  const dailyTrendData = useMemo(
-    () =>
-      dailySales.map((d) => ({
-        name: `Day ${d.sale_day}`,
-        deals_count: d.deals_count,
-        day_total_gross: d.day_total_gross,
-      })),
-    [dailySales],
-  );
+  // Achievements grouped by roster member for leaderboard badges column
+  const achievementsByRoster = useMemo(() => {
+    const map = new Map<string, { name: string; icon: string }[]>();
+    for (const a of achievements) {
+      if (!a.badges) continue;
+      const list = map.get(a.roster_id) ?? [];
+      list.push({ name: a.badges.name, icon: a.badges.icon });
+      map.set(a.roster_id, list);
+    }
+    return map;
+  }, [achievements]);
+
+  // Chart data: Gross per Day
+  // Primary source: daily_metrics (has ups, gross, sold per day)
+  // Fallback: compute from individual deals when metrics aren't available
+  const grossPerDay = useMemo(() => {
+    if (dailyMetrics.length > 0) {
+      // Use daily_metrics directly — authoritative source with ups
+      return dailyMetrics.map((m) => {
+        const d = m.sale_date ? new Date(m.sale_date) : null;
+        const date = d
+          ? d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+          : `Day ${m.sale_day}`;
+        const sortKey = m.sale_date ?? `day-${String(m.sale_day).padStart(2, "0")}`;
+        return {
+          date,
+          gross: m.total_gross ?? 0,
+          deals: m.total_sold ?? 0,
+          ups: m.total_ups ?? 0,
+          sortKey,
+        };
+      }).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+    }
+
+    // Fallback: compute from deals grouped by sale_date
+    const byDate: Record<string, { gross: number; deals: number; sortKey: string }> = {};
+    for (const deal of deals) {
+      const raw = deal.sale_date ?? deal.created_at;
+      if (!raw) continue;
+      const d = new Date(raw);
+      const sortKey = d.toISOString().slice(0, 10);
+      const dateKey = d.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      if (!byDate[dateKey]) byDate[dateKey] = { gross: 0, deals: 0, sortKey };
+      byDate[dateKey].gross += deal.total_gross ?? 0;
+      byDate[dateKey].deals += 1;
+    }
+
+    return Object.entries(byDate)
+      .map(([date, data]) => ({ date, gross: data.gross, deals: data.deals, ups: 0, sortKey: data.sortKey }))
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [deals, dailyMetrics]);
 
   // Chart data: Gross by salesperson (top 10 for readability)
   const grossBySalesperson = useMemo(
@@ -296,6 +363,8 @@ export default function PerformancePage() {
         .map((s) => ({
           name: s.name,
           totalGross: s.totalGross,
+          deals: s.deals,
+          avgPvr: s.avgPvr,
         })),
     [leaderboard],
   );
@@ -389,7 +458,7 @@ export default function PerformancePage() {
         <StatCard
           title="Closing Ratio"
           value={`${kpis.closingRatio}%`}
-          description={`${kpis.totalDeals} deals / ${kpis.totalUps} ups`}
+          description={`${kpis.totalUps} ups / ${kpis.totalDeals} deals`}
           icon={<Target className="h-4 w-4 text-muted-foreground" />}
         />
         <StatCard
@@ -402,104 +471,32 @@ export default function PerformancePage() {
 
       {/* Charts Grid */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* 1. Daily Sales Trend */}
+        {/* 1. Gross per Day */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Daily Sales Trend</CardTitle>
+            <CardTitle className="text-base">Gross per Day</CardTitle>
             <CardDescription>
-              Deals sold and total gross by sale day
+              Total gross profit broken down by sale date
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dailyTrendData}>
+                <BarChart data={grossPerDay} margin={{ top: 28, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid
                     strokeDasharray="3 3"
                     className="stroke-muted"
                   />
                   <XAxis
-                    dataKey="name"
+                    dataKey="date"
                     tick={{ fontSize: 12 }}
                     className="fill-muted-foreground"
                   />
                   <YAxis
-                    yAxisId="left"
-                    tick={{ fontSize: 12 }}
-                    className="fill-muted-foreground"
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
                     tick={{ fontSize: 12 }}
                     tickFormatter={(v: number) =>
                       `$${(v / 1000).toFixed(0)}k`
                     }
-                    className="fill-muted-foreground"
-                  />
-                  <Tooltip
-                    content={
-                      <ChartTooltipContent
-                        formatter={(v: number) =>
-                          v >= 1000 ? formatCurrency(v) : String(v)
-                        }
-                      />
-                    }
-                  />
-                  <Legend />
-                  <Bar
-                    yAxisId="left"
-                    dataKey="deals_count"
-                    name="Deals"
-                    fill={CHART_COLORS.primary}
-                    radius={[4, 4, 0, 0]}
-                  />
-                  <Bar
-                    yAxisId="right"
-                    dataKey="day_total_gross"
-                    name="Total Gross"
-                    fill={CHART_COLORS.secondary}
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 2. Gross by Salesperson (Horizontal) */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Gross by Salesperson</CardTitle>
-            <CardDescription>
-              Top performers ranked by total gross
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={grossBySalesperson}
-                  layout="vertical"
-                  margin={{ left: 20 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    className="stroke-muted"
-                  />
-                  <XAxis
-                    type="number"
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(v: number) =>
-                      `$${(v / 1000).toFixed(0)}k`
-                    }
-                    className="fill-muted-foreground"
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    tick={{ fontSize: 12 }}
-                    width={100}
                     className="fill-muted-foreground"
                   />
                   <Tooltip
@@ -510,13 +507,100 @@ export default function PerformancePage() {
                     }
                   />
                   <Bar
-                    dataKey="totalGross"
+                    dataKey="gross"
                     name="Total Gross"
                     fill={CHART_COLORS.primary}
-                    radius={[0, 4, 4, 0]}
-                  />
+                    radius={[4, 4, 0, 0]}
+                  >
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                    <LabelList
+                      content={(props: any) => {
+                        const { x, y, width, index } = props;
+                        if (x == null || y == null || width == null || index == null) return null;
+                        const entry = grossPerDay[index as number];
+                        if (!entry || (entry.deals + entry.ups === 0)) return null;
+                        const cx = Number(x) + Number(width) / 2;
+                        const cy = Number(y) - 10;
+                        const label = entry.ups > 0
+                          ? `${entry.deals} sold \u2022 ${entry.ups} ups`
+                          : `${entry.deals} sold`;
+                        return (
+                          <text
+                            key={`label-${index}`}
+                            x={cx}
+                            y={cy}
+                            textAnchor="middle"
+                            fontSize={10.5}
+                            fontWeight={500}
+                            letterSpacing={0.2}
+                            className="fill-muted-foreground"
+                          >
+                            {label}
+                          </text>
+                        );
+                      }}
+                    />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 2. Gross by Salesperson */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Gross by Salesperson</CardTitle>
+            <CardDescription>
+              Top performers ranked by total gross
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="max-h-[320px] overflow-y-auto pr-1 scrollbar-thin">
+              <div className="space-y-4">
+                {grossBySalesperson.length > 0 ? (
+                  grossBySalesperson.map((s, idx) => {
+                    const maxGross = grossBySalesperson[0].totalGross;
+                    const pct =
+                      maxGross > 0 ? (s.totalGross / maxGross) * 100 : 0;
+                    return (
+                      <div key={s.name} className="group flex items-center gap-3">
+                        <span className="w-5 text-xs font-bold text-muted-foreground text-right shrink-0">
+                          {idx + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-2 mb-1.5">
+                            <span
+                              className="text-sm font-medium truncate"
+                              title={s.name}
+                            >
+                              {s.name}
+                            </span>
+                            <div className="flex items-baseline gap-2 shrink-0">
+                              <span className="text-[11px] text-muted-foreground">
+                                {s.deals} deal{s.deals !== 1 ? "s" : ""}
+                              </span>
+                              <span className="text-sm font-bold tabular-nums">
+                                {formatCurrency(s.totalGross)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="h-6 bg-muted/60 rounded-sm overflow-hidden">
+                            <div
+                              className="h-full rounded-sm transition-all duration-500 bg-blue-600 dark:bg-blue-500 group-hover:bg-blue-700 dark:group-hover:bg-blue-400"
+                              style={{ width: `${Math.max(pct, 2)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No salesperson data available.
+                  </p>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -635,6 +719,7 @@ export default function PerformancePage() {
                 <TableHead className="text-right">Back Gross</TableHead>
                 <TableHead className="text-right">Total Gross</TableHead>
                 <TableHead className="text-right">Avg PVR</TableHead>
+                <TableHead className="text-center">Badges</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -685,12 +770,34 @@ export default function PerformancePage() {
                   <TableCell className="text-right">
                     {row.deals > 0 ? formatCurrency(row.avgPvr) : "\u2014"}
                   </TableCell>
+                  <TableCell className="text-center">
+                    {(() => {
+                      const badges = achievementsByRoster.get(row.rosterId) ?? [];
+                      if (badges.length === 0) return <span className="text-muted-foreground">—</span>;
+                      const shown = badges.slice(0, 4);
+                      const overflow = badges.length - shown.length;
+                      return (
+                        <div className="flex items-center justify-center gap-1">
+                          {shown.map((b, i) => (
+                            <span key={i} title={b.name}>
+                              <BadgeIcon name={b.icon} className="h-4 w-4 text-yellow-500" />
+                            </span>
+                          ))}
+                          {overflow > 0 && (
+                            <span className="text-xs text-muted-foreground font-medium">
+                              +{overflow}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </TableCell>
                 </TableRow>
               ))}
               {leaderboard.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={10}
+                    colSpan={11}
                     className="h-24 text-center text-muted-foreground"
                   >
                     No salesperson data available.

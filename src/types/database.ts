@@ -822,6 +822,93 @@ export type Database = {
         };
         Relationships: [];
       };
+      badges: {
+        Row: {
+          id: string;
+          name: string;
+          description: string | null;
+          icon: string;
+          category: "sales" | "gross" | "closing" | "streak" | "team";
+          points: number;
+          condition_type: string;
+          condition_value: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          icon?: string;
+          category: "sales" | "gross" | "closing" | "streak" | "team";
+          points?: number;
+          condition_type: string;
+          condition_value?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          description?: string | null;
+          icon?: string;
+          category?: "sales" | "gross" | "closing" | "streak" | "team";
+          points?: number;
+          condition_type?: string;
+          condition_value?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      user_achievements: {
+        Row: {
+          id: string;
+          roster_id: string;
+          badge_id: string;
+          event_id: string;
+          earned_at: string;
+        };
+        Insert: {
+          id?: string;
+          roster_id: string;
+          badge_id: string;
+          event_id: string;
+          earned_at?: string;
+        };
+        Update: {
+          id?: string;
+          roster_id?: string;
+          badge_id?: string;
+          event_id?: string;
+          earned_at?: string;
+        };
+        Relationships: [];
+      };
+      streaks: {
+        Row: {
+          id: string;
+          roster_id: string;
+          event_id: string;
+          current_streak: number;
+          longest_streak: number;
+          last_activity_date: string | null;
+        };
+        Insert: {
+          id?: string;
+          roster_id: string;
+          event_id: string;
+          current_streak?: number;
+          longest_streak?: number;
+          last_activity_date?: string | null;
+        };
+        Update: {
+          id?: string;
+          roster_id?: string;
+          event_id?: string;
+          current_streak?: number;
+          longest_streak?: number;
+          last_activity_date?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       v_event_kpis: {
@@ -937,6 +1024,9 @@ export type DailyMetric = Tables<"daily_metrics">;
 export type Commission = Tables<"commissions">;
 export type Chargeback = Tables<"chargebacks">;
 export type AuditLog = Tables<"audit_logs">;
+export type BadgeDef = Tables<"badges">;
+export type UserAchievement = Tables<"user_achievements">;
+export type Streak = Tables<"streaks">;
 export type EventKPI = Views<"v_event_kpis">;
 export type SalespersonStat = Views<"v_salesperson_stats">;
 export type MailResponseStat = Views<"v_mail_response_stats">;

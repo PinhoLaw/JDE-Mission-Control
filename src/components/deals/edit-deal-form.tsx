@@ -271,7 +271,7 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
     if (!currentEvent) return;
     setSubmitting(true);
     try {
-      await updateDeal({
+      const result = await updateDeal({
         id: deal.id,
         event_id: currentEvent.id,
         vehicle_id: vehicleId,
@@ -314,6 +314,18 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
         notes: data.notes || null,
       });
       toast.success("Deal updated successfully!");
+
+      // Show badge earned toasts
+      if (result.newBadges && result.newBadges.length > 0) {
+        for (const earned of result.newBadges) {
+          setTimeout(() => {
+            toast.success(`Badge Earned: ${earned.badge.name}!`, {
+              description: earned.badge.description ?? undefined,
+              duration: 5000,
+            });
+          }, 600);
+        }
+      }
 
       // Fire-and-forget push to Google Sheet
       sheetPush(

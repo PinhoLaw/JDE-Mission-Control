@@ -245,7 +245,7 @@ export function NewDealForm({
     if (!currentEvent) return;
     setSubmitting(true);
     try {
-      await createDeal({
+      const result = await createDeal({
         event_id: currentEvent.id,
         vehicle_id: vehicleId,
         deal_number: data.deal_number ? Number(data.deal_number) : null,
@@ -287,6 +287,18 @@ export function NewDealForm({
         notes: data.notes || null,
       });
       toast.success("Deal created successfully!");
+
+      // Show badge earned toasts
+      if (result.newBadges && result.newBadges.length > 0) {
+        for (const earned of result.newBadges) {
+          setTimeout(() => {
+            toast.success(`Badge Earned: ${earned.badge.name}!`, {
+              description: earned.badge.description ?? undefined,
+              duration: 5000,
+            });
+          }, 600);
+        }
+      }
 
       // Fire-and-forget push to Google Sheet
       sheetPush(

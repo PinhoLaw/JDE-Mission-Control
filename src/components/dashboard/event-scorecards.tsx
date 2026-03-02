@@ -42,7 +42,7 @@ export async function EventScoreCards() {
   if (eventIds.length === 0) return null;
 
   // 2. Fetch events + KPIs + ups data in parallel
-  const [eventsRes, kpisRes, upsRes] = await Promise.all([
+  const [eventsRes, kpisRes, metricsRes] = await Promise.all([
     supabase
       .from("events")
       .select("*")
@@ -53,15 +53,14 @@ export async function EventScoreCards() {
       .select("*")
       .in("event_id", eventIds),
     supabase
-      .from("sales_deals")
-      .select("event_id, ups_count")
-      .in("event_id", eventIds)
-      .not("status", "eq", "cancelled"),
+      .from("daily_metrics")
+      .select("event_id, total_ups")
+      .in("event_id", eventIds),
   ]);
 
   const events = eventsRes.data ?? [];
   const kpis = kpisRes.data ?? [];
-  const upsData = upsRes.data ?? [];
+  const metricsData = metricsRes.data ?? [];
 
   // 3. Build a KPI lookup by event_id
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,11 +69,11 @@ export async function EventScoreCards() {
     kpiMap.set(k.event_id as string, k);
   }
 
-  // 4. Build ups-per-event lookup
+  // 4. Build ups-per-event lookup from daily_metrics (campaigns source)
   const upsMap = new Map<string, number>();
-  for (const d of upsData) {
-    const eid = d.event_id as string;
-    upsMap.set(eid, (upsMap.get(eid) ?? 0) + ((d.ups_count as number) ?? 1));
+  for (const m of metricsData) {
+    const eid = m.event_id as string;
+    upsMap.set(eid, (upsMap.get(eid) ?? 0) + ((m.total_ups as number) ?? 0));
   }
 
   if (events.length === 0) return null;

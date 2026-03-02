@@ -15,6 +15,8 @@ import {
   DollarSign,
   ScrollText,
   Activity,
+  ClipboardList,
+  Trophy,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
@@ -27,9 +29,11 @@ const moduleNav = [
   { name: "Inventory", href: "/dashboard/inventory", icon: Package },
   { name: "Deal Log", href: "/dashboard/deals", icon: Handshake },
   { name: "Roster", href: "/dashboard/roster", icon: Users },
+  { name: "Daily Metrics", href: "/dashboard/daily-metrics", icon: ClipboardList },
   { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
   { name: "Commissions", href: "/dashboard/commissions", icon: DollarSign },
   { name: "Performance", href: "/dashboard/performance", icon: BarChart3 },
+  { name: "Achievements", href: "/dashboard/achievements", icon: Trophy },
   { name: "Audit Log", href: "/dashboard/audit", icon: ScrollText },
   { name: "Monitoring", href: "/dashboard/monitoring", icon: Activity },
 ];

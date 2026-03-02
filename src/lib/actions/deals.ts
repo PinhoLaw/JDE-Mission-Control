@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { evaluateBadges, updateStreak } from "@/lib/actions/gamification";
+import type { EarnedBadge } from "@/lib/actions/gamification";
 
 // ────────────────────────────────────────────────────────
 // Zod schema for new deal form
@@ -205,11 +207,40 @@ export async function createDeal(input: NewDealInput) {
       .ilike("stock_number", d.stock_number);
   }
 
+  // ── Gamification: evaluate badges & update streak ──
+  let newBadges: EarnedBadge[] = [];
+  if (d.salesperson_id) {
+    try {
+      const saleDate = d.sale_date ?? new Date().toISOString().split("T")[0];
+      const [evalResult] = await Promise.all([
+        evaluateBadges(d.event_id, d.salesperson_id),
+        updateStreak(d.event_id, d.salesperson_id, saleDate),
+      ]);
+      newBadges = evalResult.newBadges;
+    } catch (err) {
+      // Gamification failure NEVER blocks deal creation
+      console.error("[gamification] createDeal:", err);
+    }
+  }
+  // Also evaluate for second salesperson on split deals
+  if (d.second_sp_id) {
+    try {
+      const saleDate = d.sale_date ?? new Date().toISOString().split("T")[0];
+      await Promise.all([
+        evaluateBadges(d.event_id, d.second_sp_id),
+        updateStreak(d.event_id, d.second_sp_id, saleDate),
+      ]);
+    } catch (err) {
+      console.error("[gamification] createDeal second_sp:", err);
+    }
+  }
+
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
+  revalidatePath("/dashboard/achievements");
 
-  return { success: true, dealId: deal.id };
+  return { success: true, dealId: deal.id, newBadges };
 }
 
 // ────────────────────────────────────────────────────────
@@ -363,11 +394,38 @@ export async function updateDeal(input: UpdateDealInput) {
       .ilike("stock_number", d.stock_number);
   }
 
+  // ── Gamification: re-evaluate badges after update ──
+  let newBadges: EarnedBadge[] = [];
+  if (d.salesperson_id) {
+    try {
+      const saleDate = d.sale_date ?? new Date().toISOString().split("T")[0];
+      const [evalResult] = await Promise.all([
+        evaluateBadges(d.event_id, d.salesperson_id),
+        updateStreak(d.event_id, d.salesperson_id, saleDate),
+      ]);
+      newBadges = evalResult.newBadges;
+    } catch (err) {
+      console.error("[gamification] updateDeal:", err);
+    }
+  }
+  if (d.second_sp_id) {
+    try {
+      const saleDate = d.sale_date ?? new Date().toISOString().split("T")[0];
+      await Promise.all([
+        evaluateBadges(d.event_id, d.second_sp_id),
+        updateStreak(d.event_id, d.second_sp_id, saleDate),
+      ]);
+    } catch (err) {
+      console.error("[gamification] updateDeal second_sp:", err);
+    }
+  }
+
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
+  revalidatePath("/dashboard/achievements");
 
-  return { success: true, dealId: deal.id };
+  return { success: true, dealId: deal.id, newBadges };
 }
 
 // ────────────────────────────────────────────────────────
