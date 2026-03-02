@@ -346,10 +346,155 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 3. Build context block
-  const contextBlock = context
-    ? `\n\n[CONTEXT]\nPage: ${context.page || "unknown"}\nEvent: ${context.eventName || "none selected"} (id: ${context.eventId || "n/a"})\nUser: ${user.user_metadata?.full_name || user.email || "Mike"}\nTime: ${new Date().toISOString()}\n[/CONTEXT]`
-    : "";
+  // 3. Build enriched context block with real data from Supabase
+  let contextBlock = "";
+  if (context) {
+    const page = context.page || "unknown";
+    const eventId = context.eventId || null;
+    const userName = user.user_metadata?.full_name || user.email || "Mike";
+
+    let dataBlock = "";
+
+    try {
+      // Fetch event info if we have an eventId
+      if (eventId) {
+        const { data: event } = await supabase
+          .from("events")
+          .select("name, dealer_name, city, state, franchise, sale_days, status, start_date, end_date")
+          .eq("id", eventId)
+          .single();
+
+        if (event) {
+          dataBlock += `\nActive Event: ${event.name}\nDealership: ${event.dealer_name} (${event.franchise})\nLocation: ${event.city}, ${event.state}\nSale Days: ${event.sale_days}\nStatus: ${event.status}\nDates: ${event.start_date} to ${event.end_date}`;
+        }
+
+        // Page-specific data enrichment
+        if (page.includes("/deals") || page === "/dashboard") {
+          const { data: deals } = await supabase
+            .from("sales_deals")
+            .select("id, stock_number, customer_name, vehicle_year, vehicle_make, vehicle_model, salesperson, front_gross, back_gross, total_gross, status")
+            .eq("event_id", eventId)
+            .order("created_at", { ascending: false })
+            .limit(20);
+
+          if (deals && deals.length > 0) {
+            const totalDeals = deals.length;
+            const totalGross = deals.reduce((sum, d) => sum + (d.total_gross || 0), 0);
+            const avgPvr = totalDeals > 0 ? Math.round(totalGross / totalDeals) : 0;
+            const frontGross = deals.reduce((sum, d) => sum + (d.front_gross || 0), 0);
+            const backGross = deals.reduce((sum, d) => sum + (d.back_gross || 0), 0);
+
+            dataBlock += `\n\nDeal Log Summary (${totalDeals} deals):`;
+            dataBlock += `\nTotal Gross: $${totalGross.toLocaleString()}`;
+            dataBlock += `\nFront Gross: $${frontGross.toLocaleString()} | Back Gross: $${backGross.toLocaleString()}`;
+            dataBlock += `\nAvg PVR: $${avgPvr.toLocaleString()}`;
+            dataBlock += `\nRecent deals:`;
+            deals.slice(0, 5).forEach((d) => {
+              dataBlock += `\n  - ${d.customer_name || "N/A"}: ${d.vehicle_year} ${d.vehicle_make} ${d.vehicle_model} | ${d.salesperson || "N/A"} | $${(d.total_gross || 0).toLocaleString()} gross (${d.status})`;
+            });
+          }
+        }
+
+        if (page.includes("/inventory")) {
+          const { data: vehicles } = await supabase
+            .from("vehicle_inventory")
+            .select("stock_number, year, make, model, status, acquisition_cost")
+            .eq("event_id", eventId)
+            .limit(50);
+
+          if (vehicles && vehicles.length > 0) {
+            const total = vehicles.length;
+            const available = vehicles.filter((v) => v.status === "available").length;
+            const sold = vehicles.filter((v) => v.status === "sold").length;
+            const avgCost = Math.round(vehicles.reduce((s, v) => s + (v.acquisition_cost || 0), 0) / total);
+
+            dataBlock += `\n\nInventory Summary (${total} vehicles):`;
+            dataBlock += `\nAvailable: ${available} | Sold: ${sold}`;
+            dataBlock += `\nAvg Acquisition Cost: $${avgCost.toLocaleString()}`;
+          }
+        }
+
+        if (page.includes("/roster")) {
+          const { data: roster } = await supabase
+            .from("roster")
+            .select("name, role, active, team")
+            .eq("event_id", eventId);
+
+          if (roster && roster.length > 0) {
+            const active = roster.filter((r) => r.active).length;
+            const roles = roster.reduce(
+              (acc, r) => {
+                acc[r.role] = (acc[r.role] || 0) + 1;
+                return acc;
+              },
+              {} as Record<string, number>,
+            );
+
+            dataBlock += `\n\nRoster Summary (${roster.length} members, ${active} active):`;
+            Object.entries(roles).forEach(([role, count]) => {
+              dataBlock += `\n  ${role}: ${count}`;
+            });
+            dataBlock += `\nTeam members: ${roster.map((r) => r.name).join(", ")}`;
+          }
+        }
+
+        if (page.includes("/campaigns")) {
+          const { data: mail } = await supabase
+            .from("mail_tracking")
+            .select("zip_code, town, pieces_sent, total_responses, response_rate")
+            .eq("event_id", eventId);
+
+          if (mail && mail.length > 0) {
+            const totalPieces = mail.reduce((s, m) => s + (m.pieces_sent || 0), 0);
+            const totalResponses = mail.reduce((s, m) => s + (m.total_responses || 0), 0);
+            const avgRate = totalPieces > 0 ? ((totalResponses / totalPieces) * 100).toFixed(2) : "0";
+
+            dataBlock += `\n\nMail Campaign Summary (${mail.length} zip codes):`;
+            dataBlock += `\nTotal Pieces: ${totalPieces.toLocaleString()} | Responses: ${totalResponses.toLocaleString()}`;
+            dataBlock += `\nOverall Response Rate: ${avgRate}%`;
+          }
+        }
+
+        if (page.includes("/performance")) {
+          const { data: deals } = await supabase
+            .from("sales_deals")
+            .select("salesperson, front_gross, back_gross, total_gross, status")
+            .eq("event_id", eventId)
+            .neq("status", "cancelled");
+
+          if (deals && deals.length > 0) {
+            const byPerson = deals.reduce(
+              (acc, d) => {
+                const name = d.salesperson || "Unknown";
+                if (!acc[name]) acc[name] = { deals: 0, gross: 0 };
+                acc[name].deals++;
+                acc[name].gross += d.total_gross || 0;
+                return acc;
+              },
+              {} as Record<string, { deals: number; gross: number }>,
+            );
+
+            const totalGross = deals.reduce((s, d) => s + (d.total_gross || 0), 0);
+            const avgPvr = deals.length > 0 ? Math.round(totalGross / deals.length) : 0;
+
+            dataBlock += `\n\nPerformance Summary (${deals.length} deals):`;
+            dataBlock += `\nTotal Gross: $${totalGross.toLocaleString()} | Avg PVR: $${avgPvr.toLocaleString()}`;
+            dataBlock += `\nBy Salesperson:`;
+            Object.entries(byPerson)
+              .sort((a, b) => b[1].gross - a[1].gross)
+              .forEach(([name, stats]) => {
+                dataBlock += `\n  ${name}: ${stats.deals} deals, $${stats.gross.toLocaleString()} gross`;
+              });
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[ChatBot] Context enrichment error:", err);
+      // Continue without enriched data — basic context is still available
+    }
+
+    contextBlock = `\n\n[CONTEXT]\nPage: ${page}\nEvent: ${context.eventName || "none selected"} (id: ${eventId || "n/a"})\nUser: ${userName}\nTime: ${new Date().toISOString()}${dataBlock}\n[/CONTEXT]`;
+  }
 
   // 4. Extract user text from last message (supports both v6 parts and legacy content)
   const lastMessage = messages[messages.length - 1];
