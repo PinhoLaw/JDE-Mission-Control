@@ -55,8 +55,8 @@ function normalizeFinanceType(val: unknown): "retail" | "lease" | "cash" {
 /**
  * Bulk import deal rows into the sales_deals table.
  *
- * Follows the same pattern as executeImport in import-vehicles.ts:
- * auth → membership check → map rows → sanitize → batch insert.
+ * Uses REPLACE mode: deletes all existing deals for this event first,
+ * then imports fresh. Also filters out note/fluff rows from spreadsheets.
  */
 export async function bulkImportDeals(
   rows: Record<string, string>[],
@@ -83,8 +83,17 @@ export async function bulkImportDeals(
     throw new Error("Only owners and managers can import deals");
   }
 
+  // ── REPLACE MODE: Delete all existing deals for this event first ──
+  const { data: deletedRows } = await supabase
+    .from("sales_deals")
+    .delete()
+    .eq("event_id", eventId)
+    .select("id");
+  const deleted = deletedRows?.length ?? 0;
+
   const errorDetails: { row: number; message: string }[] = [];
   const validRows: DealInsert[] = [];
+  let fluffSkipped = 0;
 
   // Build reverse column map: spreadsheet col index → DB field
   const reverseMap: Record<string, string> = {};
@@ -93,6 +102,9 @@ export async function bulkImportDeals(
       reverseMap[spreadsheetCol] = dbField;
     }
   }
+
+  // Track stock numbers seen in THIS import to skip intra-batch duplicates
+  const seenStocks = new Set<string>();
 
   for (let i = 0; i < rows.length; i++) {
     const raw = rows[i];
@@ -110,6 +122,30 @@ export async function bulkImportDeals(
     if (!customerName) {
       continue; // silently skip — not an error, just an empty row
     }
+
+    // ── FLUFF FILTER: Skip note/comment rows ──
+    // Notes are long text without a stock number (e.g. "BILLED $1100 TO JDE...")
+    const stockNumber = mapped.stock_number
+      ? String(mapped.stock_number).trim()
+      : "";
+    if (!stockNumber) {
+      // No stock number — likely a note row, not a real deal
+      fluffSkipped++;
+      continue;
+    }
+    if (customerName.length > 50) {
+      // Customer name too long — likely a note/comment row
+      fluffSkipped++;
+      continue;
+    }
+
+    // ── INTRA-BATCH DEDUP: Skip if we've already seen this stock number ──
+    const stockKey = stockNumber.toUpperCase();
+    if (seenStocks.has(stockKey)) {
+      fluffSkipped++;
+      continue;
+    }
+    seenStocks.add(stockKey);
 
     // Parse numeric fields
     const dealNumber = parseNum(mapped.deal_number);
@@ -246,11 +282,11 @@ export async function bulkImportDeals(
   return {
     success: errorDetails.length === 0,
     imported,
-    deleted: 0,
+    deleted,
     errors: errorDetails.length,
-    duplicatesSkipped: 0,
+    duplicatesSkipped: fluffSkipped,
     errorDetails,
-    mode: "append",
+    mode: "replace",
   };
 }
 
