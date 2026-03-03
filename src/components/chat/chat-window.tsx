@@ -5,6 +5,7 @@ import {
   useEffect,
   useState,
   useMemo,
+  useCallback,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
@@ -13,7 +14,6 @@ import { DefaultChatTransport } from "ai";
 import { useChat } from "@/providers/chat-provider";
 import { useChatContext } from "./chat-context";
 import { ChatMessage, TypingIndicator } from "./chat-message";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Rocket, Trash2 } from "lucide-react";
@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 export function ChatWindow() {
   const { isOpen, clearUnread } = useChat();
   const context = useChatContext();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollAnchorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [input, setInput] = useState("");
 
@@ -57,20 +57,25 @@ export function ChatWindow() {
 
   const isLoading = status === "submitted" || status === "streaming";
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll: use a scroll anchor at the bottom of messages
+  const scrollToBottom = useCallback(() => {
+    scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, isLoading]);
+    scrollToBottom();
+  }, [messages, isLoading, scrollToBottom]);
 
   // Focus textarea when chat opens
   useEffect(() => {
     if (isOpen) {
       clearUnread();
-      setTimeout(() => textareaRef.current?.focus(), 100);
+      setTimeout(() => {
+        textareaRef.current?.focus();
+        scrollToBottom();
+      }, 120);
     }
-  }, [isOpen, clearUnread]);
+  }, [isOpen, clearUnread, scrollToBottom]);
 
   // Send message
   async function send(text: string) {
@@ -111,21 +116,20 @@ export function ChatWindow() {
   return (
     <div
       className={cn(
-        "fixed bottom-24 right-6 z-50 flex w-[400px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl",
+        "fixed bottom-24 right-6 z-50 flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl",
         "animate-in slide-in-from-bottom-4 fade-in duration-200",
-        "max-h-[520px] h-[520px]",
+        // Larger window — fills more of the screen
+        "w-[520px] h-[calc(100vh-8rem)] max-h-[780px]",
         // Mobile responsive
         "max-sm:bottom-0 max-sm:right-0 max-sm:left-0 max-sm:w-full max-sm:h-full max-sm:max-h-full max-sm:rounded-none",
       )}
     >
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 px-4 py-3">
         <div className="flex items-center gap-2">
           <Rocket className="h-5 w-5 text-primary" />
           <div>
-            <h3 className="text-sm font-semibold leading-tight">
-              Cruze
-            </h3>
+            <h3 className="text-sm font-semibold leading-tight">Cruze</h3>
             <p className="text-[11px] text-muted-foreground">
               {isLoading ? "Thinking..." : "Online • ⌘/ to toggle"}
             </p>
@@ -144,8 +148,8 @@ export function ChatWindow() {
         )}
       </div>
 
-      {/* ── Messages ────────────────────────────────────────── */}
-      <ScrollArea className="flex-1 px-4 py-3" ref={scrollRef}>
+      {/* ── Messages (scrollable) ─────────────────────────── */}
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
@@ -153,16 +157,16 @@ export function ChatWindow() {
             </div>
             <div>
               <p className="text-sm font-medium">Good to see you, Mike.</p>
-              <p className="mt-1 text-xs text-muted-foreground max-w-[260px]">
-                I&apos;m Cruze, your Mission Control Concierge. Ask me anything,
-                request changes, or paste a screenshot.
+              <p className="mt-1 text-xs text-muted-foreground max-w-[320px]">
+                I&apos;m Cruze — your Mission Control copilot. Ask me about your
+                data, get suggestions, or tell me what to improve.
               </p>
             </div>
             <div className="mt-2 flex flex-wrap justify-center gap-1.5">
               {[
                 "What's on this page?",
-                "Show me today's numbers",
-                "Help me improve this",
+                "Break down today's numbers",
+                "What should I improve?",
               ].map((q) => (
                 <button
                   key={q}
@@ -189,12 +193,14 @@ export function ChatWindow() {
               )}
           </div>
         )}
-      </ScrollArea>
+        {/* Scroll anchor — always at the bottom of message list */}
+        <div ref={scrollAnchorRef} className="h-px" />
+      </div>
 
       {/* ── Input ───────────────────────────────────────────── */}
       <form
         onSubmit={handleSubmit}
-        className="flex items-end gap-2 border-t bg-muted/20 px-3 py-2.5"
+        className="flex shrink-0 items-end gap-2 border-t bg-muted/20 px-3 py-2.5"
       >
         <Textarea
           ref={textareaRef}
