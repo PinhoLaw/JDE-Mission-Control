@@ -1,8 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
-import { streamText, generateText } from "ai";
+import { streamText, generateText, jsonSchema } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { NextRequest } from "next/server";
-import { z } from "zod";
 
 // ─── Classifier Prompt (runs on Haiku — fast & cheap) ─────────────────────
 
@@ -678,17 +677,17 @@ export async function POST(req: NextRequest) {
   const activeEventId = context?.eventId || null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function buildCruzeTools(eid: string): Record<string, any> {
+  function buildCruzeTools(eid: string) {
     return {
       lookupDeal: {
         description:
           "Search for deals by customer name, stock number, or salesperson. Use this when the user asks about a specific deal or person.",
-        parameters: z.object({
-          query: z
-            .string()
-            .describe(
-              "Customer name, stock number, or salesperson to search",
-            ),
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            query: { type: "string", description: "Customer name, stock number, or salesperson to search" },
+          },
+          required: ["query"],
         }),
         execute: async ({ query }: { query: string }) => {
           const q = `%${query}%`;
@@ -709,8 +708,12 @@ export async function POST(req: NextRequest) {
       searchInventory: {
         description:
           "Search vehicle inventory by stock number, make, model, or year.",
-        parameters: z.object({
-          query: z.string().describe("Stock number, make, model, or year"),
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            query: { type: "string", description: "Stock number, make, model, or year" },
+          },
+          required: ["query"],
         }),
         execute: async ({ query }: { query: string }) => {
           const q = `%${query}%`;
@@ -731,7 +734,10 @@ export async function POST(req: NextRequest) {
       getEventStats: {
         description:
           "Get comprehensive statistics for the current event: deal totals, gross profit, salesperson rankings, FI penetration, lender breakdown, inventory counts.",
-        parameters: z.object({}),
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {},
+        }),
         execute: async () => {
           const [dealsRes, inventoryRes, rosterRes] = await Promise.all([
             supabase
@@ -823,8 +829,12 @@ export async function POST(req: NextRequest) {
       getSalespersonStats: {
         description:
           "Get detailed performance stats for a specific salesperson: deals, gross, averages, FI products sold.",
-        parameters: z.object({
-          name: z.string().describe("Salesperson name (or partial match)"),
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            name: { type: "string", description: "Salesperson name (or partial match)" },
+          },
+          required: ["name"],
         }),
         execute: async ({ name }: { name: string }) => {
           const { data } = await supabase
