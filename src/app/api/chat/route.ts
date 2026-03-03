@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { streamText, generateText, jsonSchema } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { NextRequest } from "next/server";
+import { revalidatePath } from "next/cache";
 
 // ─── Classifier Prompt (runs on Haiku — fast & cheap) ─────────────────────
 
@@ -23,8 +24,8 @@ Triggers:
 - Yes/no questions, confirmations
 - Quick factual questions about the dashboard
 
-### TIER_2 — Analysis & Suggestions (Route to Sonnet)
-Data analysis, insights, recommendations, troubleshooting, "how do I" questions, and requests for improvements or fixes.
+### TIER_2 — Analysis, Suggestions & Mutations (Route to Sonnet)
+Data analysis, insights, recommendations, troubleshooting, "how do I" questions, requests for improvements or fixes, AND any request to change/update/edit data.
 
 Triggers:
 - "Why is X low?" or "What's driving our numbers?"
@@ -36,6 +37,7 @@ Triggers:
 - Debugging or troubleshooting requests
 - Anything requiring reasoning about data or the dashboard
 - Ambiguous requests that need interpretation
+- **ANY request to change, update, edit, set, mark, or modify data** — "mark this deal funded", "change doc fee to 500", "update the lender", "set target units to 80", "add a note to stock #1234"
 
 ### TIER_3 — Complex Planning (Route to Opus)
 Architecture, integrations, multi-system work, new feature design, detailed task scoping.
@@ -55,6 +57,7 @@ Triggers:
 - If the user says "log this" or "create a ticket" → classify as TIER_3
 - Conversational messages (greetings, "what can you do?") → classify as TIER_1
 - Any request for a fix, change, or improvement → classify as TIER_2
+- **ANY data mutation request** (mark, change, update, set, edit, add, delete) → **ALWAYS TIER_2** (never TIER_1)
 
 ## Output Format
 
@@ -75,7 +78,7 @@ You answer questions about the dashboard, explain data, define terms, and give q
 - Use the [CONTEXT] data to answer with real numbers — never make up data.
 - If you don't have the data to answer, say so honestly.
 - Never say "As an AI" or apologize unnecessarily.
-- Never pretend to make UI changes — you're a copilot, not a remote control.
+- You can look up data but cannot make changes at this tier. If the user wants to change, update, or edit data, tell them: "I can do that — just ask again and I'll make the change for you." (The system will route their next message to a tier that has write tools.)
 
 ## Conversational Messages
 - Greetings → "Hey Mike. What are we looking at?"
@@ -96,32 +99,27 @@ JDE (Just Drive Events) — traveling automotive sales event company. ~36 events
 - Suggest improvements with specific, actionable recommendations
 - Help troubleshoot dashboard issues
 - Answer "how do I" questions about the dashboard
-- When Mike asks for a change or fix, explain exactly what needs to happen and provide a ready-to-use Claude Code prompt
+- **Make changes when asked** — update deal statuses, edit event config, modify inventory, enter daily metrics, and edit deal fields
 
 ## Context Awareness
 Every message includes a [CONTEXT] block with real data from Supabase. Use it to give answers grounded in actual numbers — never make up data.
+
+## Making Changes (Write Tools)
+You have write tools that can directly modify data. When Mike asks you to change something:
+
+1. **Look up first** — Use lookupDeal or searchInventory to find the record before modifying it. Never guess at IDs.
+2. **Confirm destructive changes** — If the change could lose data (unwinding a deal, cancelling, bulk status changes), confirm with Mike before executing.
+3. **Just do it for simple changes** — For clear, safe requests like "mark this deal funded", "set doc fee to 500", or "add a note to stock #1234", proceed directly. Don't ask for confirmation on obvious requests.
+4. **Report what you did** — After making a change, tell Mike exactly what changed. The dashboard will refresh automatically.
 
 ## Response Format
 
 ### For data questions / analysis:
 Give a clear, concise answer using real numbers from [CONTEXT]. Use bullet points for multiple data points. Keep it to 2-5 sentences unless the question requires more detail.
 
-### For "fix this" or "change this" requests:
-You cannot make changes directly — but you can tell Mike exactly what to do:
-
-1. **Diagnose**: Explain what's happening and why
-2. **Solution**: Describe specifically what needs to change
-3. **Claude Code prompt**: Provide a copy-paste prompt for Claude Code to implement it
-
-Format:
-Here's what's going on: [diagnosis]
-
-**To fix this:** [specific solution in plain language]
-
-**Claude Code prompt** (copy and paste this):
-\`\`\`
-[Detailed implementation prompt including: what to change, which files, expected behavior, edge cases]
-\`\`\`
+### For change requests:
+Use your write tools to make the change directly. Then confirm:
+"Done — [what changed]. The dashboard will update automatically."
 
 ### For suggestions / improvements:
 Be opinionated. Don't ask Mike what he wants — tell him what you'd recommend based on the data:
@@ -130,21 +128,15 @@ Be opinionated. Don't ask Mike what he wants — tell him what you'd recommend b
 
 [Supporting reasoning with specific numbers]
 
-**To implement:** [brief description]
-
-**Claude Code prompt:**
-\`\`\`
-[Implementation prompt]
-\`\`\`
+Want me to make this change?
 
 ## Rules
 - Use real data from [CONTEXT]. Never fabricate numbers.
 - Be direct and opinionated. Don't hedge. If the data says something, say it.
-- Never pretend to make UI changes — you're a copilot, not a remote control.
+- **You CAN make changes.** Use your write tools when asked. Don't tell Mike to do it himself.
 - If you need clarification, ask ONE question max.
 - Never say "As an AI" or apologize unnecessarily.
-- Keep responses focused. 3-8 sentences for most answers. Longer only when providing Claude Code prompts.
-- Always include a Claude Code prompt when Mike asks for changes, fixes, or improvements.`;
+- Keep responses focused. 3-8 sentences for most answers.`;
 
 // ─── Tier 3 System Prompt — Opus (Cruze) ──────────────────────────────────
 
@@ -195,9 +187,9 @@ Want me to break this down further or adjust the approach?
 - Be specific about files, tables, and APIs involved.
 - If part of the request can be solved quickly, call that out separately.
 - Never say "that's outside my scope." Everything is in scope.
-- Never pretend to make changes — scope them clearly for implementation.
+- **You CAN make data changes.** Use your write tools when asked. Don't tell Mike to do it himself or generate a Claude Code prompt for simple data changes.
 - Never say "As an AI" or apologize unnecessarily.
-- Always include a Claude Code prompt.`;
+- For complex feature requests, include a Claude Code prompt. For simple data changes, just use your write tools.`;
 
 // ─── Shared Configuration (appended to all tier prompts) ───────────────────
 
@@ -254,11 +246,26 @@ The left sidebar has these sections:
 - **Pack** = Dealer pack — fixed cost added to vehicle cost, deducted from front gross. Split into New and Used amounts.
 
 ## Your Skills (Tools)
-You have access to live database tools. Use them when the [CONTEXT] data isn't enough to answer a question:
+
+### Read Tools (all tiers)
 - **lookupDeal** — Search deals by customer name, stock #, or salesperson
 - **searchInventory** — Search vehicles by stock #, make, model, or year
 - **getEventStats** — Get full event statistics (deals, gross, FI, lenders, inventory, roster)
 - **getSalespersonStats** — Get detailed performance for a specific salesperson
+
+### Write Tools (Tier 2 & 3 only)
+- **updateDealStatus** — Change a deal's status (pending/funded/unwound/cancelled). Automatically syncs inventory (funded→vehicle marked sold, unwound→vehicle restored to available).
+- **updateEventConfig** — Edit event settings: doc fee, pack (new/used), commission %, targets, etc.
+- **updateVehicleField** — Edit a single field on a vehicle (notes, status, asking price, color, etc.)
+- **updateVehicleStatus** — Batch-change vehicle status (available/sold/hold/removed)
+- **upsertDailyMetric** — Enter or update daily metrics (sale day, ups, sold, gross)
+- **updateDealField** — Edit a single field on a deal (lender, rate, salesperson, front gross, etc.)
+
+### Write Tool Rules
+1. **Look up first** — Always use lookupDeal or searchInventory to find the record ID before calling a write tool. Never guess IDs.
+2. **Confirm destructive changes** — Unwinding deals, cancelling deals, or removing vehicles: confirm with Mike before executing.
+3. **Just do it for safe changes** — Marking funded, updating doc fee, adding notes, changing lender: proceed directly.
+4. **Report results** — After a write, tell Mike what changed. The UI refreshes automatically via revalidatePath.
 
 Always use tools when asked about specific people, vehicles, or deals. Don't guess — look it up.
 
@@ -281,9 +288,10 @@ Maintain full conversation context within a session. Reference previous messages
 - Proactive — if you see something interesting in the data, mention it.
 - Honest — if you can't do something, say so and suggest an alternative.
 - Use JDE terminology naturally: event, dealership, mail drop, gross profit, show rate, units sold, cost per piece, close rate, territory, zip code analysis.
-- Never say "I'm just an AI", "As an AI", or "I don't have the ability to." Instead, be specific: "I can't make that change directly, but here's exactly what to do..."
-- When Mike asks for a change, ALWAYS give him a Claude Code prompt he can copy-paste.
-- Your mission: Be genuinely useful. Answer with real data. Give actionable advice. Make Claude Code prompts that actually work.
+- Never say "I'm just an AI", "As an AI", or "I don't have the ability to."
+- When Mike asks for a data change, **use your write tools to make it happen**. Don't generate Claude Code prompts for simple data edits.
+- For complex feature requests (new pages, integrations, UI changes), provide a Claude Code prompt.
+- Your mission: Be genuinely useful. Answer with real data. Make changes when asked. Give actionable advice.
 
 ## Data Safety
 - Never expose API keys, credentials, or internal URLs in chat responses.
@@ -673,15 +681,16 @@ export async function POST(req: NextRequest) {
     },
   );
 
-  // 6. Build tools — Cruze can query Supabase for data on demand
+  // 6. Build tools — Cruze can query and write to Supabase
   const activeEventId = context?.eventId || null;
+  const userId = user.id;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function buildCruzeTools(eid: string) {
+  // ── Read Tools (all tiers) ────────────────────────────────────────────────
+  function buildCruzeReadTools(eid: string) {
     return {
       lookupDeal: {
         description:
-          "Search for deals by customer name, stock number, or salesperson. Use this when the user asks about a specific deal or person.",
+          "Search for deals by customer name, stock number, or salesperson. Returns deal IDs needed for write tools. Use this when the user asks about a specific deal or person.",
         inputSchema: jsonSchema({
           type: "object" as const,
           properties: {
@@ -694,7 +703,7 @@ export async function POST(req: NextRequest) {
           const { data } = await supabase
             .from("sales_deals")
             .select(
-              "stock_number, customer_name, vehicle_year, vehicle_make, vehicle_model, salesperson, front_gross, back_gross, total_gross, status, new_used, is_trade_turn, lender, rate, reserve, warranty, aftermarket_1, gap, fi_total, trade_year, trade_make, trade_model, trade_acv, trade_payoff",
+              "id, stock_number, customer_name, vehicle_year, vehicle_make, vehicle_model, salesperson, front_gross, back_gross, total_gross, status, new_used, is_trade_turn, lender, rate, reserve, warranty, aftermarket_1, gap, fi_total, trade_year, trade_make, trade_model, trade_acv, trade_payoff",
             )
             .eq("event_id", eid)
             .or(
@@ -707,7 +716,7 @@ export async function POST(req: NextRequest) {
 
       searchInventory: {
         description:
-          "Search vehicle inventory by stock number, make, model, or year.",
+          "Search vehicle inventory by stock number, make, model, or year. Returns vehicle IDs needed for write tools.",
         inputSchema: jsonSchema({
           type: "object" as const,
           properties: {
@@ -720,7 +729,7 @@ export async function POST(req: NextRequest) {
           const { data } = await supabase
             .from("vehicle_inventory")
             .select(
-              "stock_number, year, make, model, trim, color, mileage, status, acquisition_cost, asking_price",
+              "id, stock_number, year, make, model, trim, color, mileage, status, acquisition_cost, asking_price",
             )
             .eq("event_id", eid)
             .or(
@@ -886,9 +895,374 @@ export async function POST(req: NextRequest) {
     };
   }
 
+  // ── Write Tools (Tier 2 & 3 only) ────────────────────────────────────────
+  const VALID_DEAL_STATUSES = ["pending", "funded", "unwound", "cancelled"];
+  const EDITABLE_VEHICLE_FIELDS = [
+    "hat_number", "stock_number", "vin", "year", "make", "model", "trim",
+    "body_style", "color", "mileage", "age_days", "drivetrain",
+    "acquisition_cost", "jd_trade_clean", "jd_retail_clean",
+    "asking_price_115", "asking_price_120", "asking_price_125", "asking_price_130",
+    "profit_115", "profit_120", "profit_125", "profit_130",
+    "retail_spread", "sold_price", "sold_date", "sold_to",
+    "status", "label", "notes", "photo_url",
+  ];
+  const VALID_VEHICLE_STATUSES = ["available", "sold", "hold", "removed"];
+  const EDITABLE_DEAL_FIELDS = [
+    "customer_name", "customer_zip", "customer_phone", "salesperson",
+    "second_salesperson", "lender", "rate", "reserve", "warranty",
+    "aftermarket_1", "gap", "fi_total", "front_gross", "selling_price",
+    "new_used", "is_trade_turn", "notes",
+  ];
+
+  function buildCruzeWriteTools(eid: string) {
+    return {
+      updateDealStatus: {
+        description:
+          "Change a deal's status. Valid statuses: pending, funded, unwound, cancelled. Automatically syncs inventory (funded/pending → vehicle marked sold; unwound/cancelled → vehicle restored to available). Use lookupDeal first to get the dealId.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            dealId: { type: "string", description: "The deal UUID (get this from lookupDeal)" },
+            status: { type: "string", enum: VALID_DEAL_STATUSES, description: "New status: pending, funded, unwound, or cancelled" },
+          },
+          required: ["dealId", "status"],
+        }),
+        execute: async ({ dealId, status }: { dealId: string; status: string }) => {
+          if (!VALID_DEAL_STATUSES.includes(status)) {
+            return { success: false, error: `Invalid status "${status}". Must be: ${VALID_DEAL_STATUSES.join(", ")}` };
+          }
+
+          const typedStatus = status as "pending" | "funded" | "unwound" | "cancelled";
+
+          // Update deal status
+          const { error } = await supabase
+            .from("sales_deals")
+            .update({ status: typedStatus })
+            .eq("id", dealId)
+            .eq("event_id", eid);
+
+          if (error) return { success: false, error: error.message };
+
+          // Sync inventory based on status change
+          const { data: deal } = await supabase
+            .from("sales_deals")
+            .select("vehicle_id, stock_number, customer_name, selling_price, sale_date")
+            .eq("id", dealId)
+            .single();
+
+          if (deal) {
+            if (status === "cancelled" || status === "unwound") {
+              // Restore vehicle to available
+              const inventoryUpdate = { status: "available" as const, sold_to: null, sold_price: null, sold_date: null };
+              if (deal.vehicle_id) {
+                await supabase.from("vehicle_inventory").update(inventoryUpdate).eq("id", deal.vehicle_id).eq("event_id", eid);
+              } else if (deal.stock_number) {
+                await supabase.from("vehicle_inventory").update(inventoryUpdate).eq("event_id", eid).ilike("stock_number", deal.stock_number);
+              }
+            } else if (status === "funded" || status === "pending") {
+              // Mark vehicle as sold
+              const inventoryUpdate = { status: "sold" as const, sold_to: deal.customer_name, sold_price: deal.selling_price, sold_date: deal.sale_date };
+              if (deal.vehicle_id) {
+                await supabase.from("vehicle_inventory").update(inventoryUpdate).eq("id", deal.vehicle_id).eq("event_id", eid);
+              } else if (deal.stock_number) {
+                await supabase.from("vehicle_inventory").update(inventoryUpdate).eq("event_id", eid).ilike("stock_number", deal.stock_number);
+              }
+            }
+          }
+
+          // Audit log
+          await supabase.from("audit_logs").insert({
+            event_id: eid,
+            user_id: userId,
+            action: "update_deal_status",
+            entity_type: "deal",
+            entity_id: dealId,
+            new_values: { status, via: "cruze" },
+          }).then(() => {}, () => {});
+
+          revalidatePath("/dashboard/deals");
+          revalidatePath("/dashboard/inventory");
+          revalidatePath("/dashboard");
+
+          return { success: true, message: `Deal status changed to "${status}". Inventory synced.` };
+        },
+      },
+
+      updateEventConfig: {
+        description:
+          "Edit event configuration settings. Can update: doc_fee, pack_new, pack_used, include_doc_fee_in_commission, jde_commission_pct, rep_commission_pct, target_units, target_gross, target_pvr, washout_threshold, tax_rate, mail_campaign_name, mail_pieces_sent. Only pass the fields you want to change.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            doc_fee: { type: "number", description: "Doc fee amount in dollars" },
+            tax_rate: { type: "number", description: "Tax rate as decimal (e.g., 0.07 for 7%)" },
+            pack_new: { type: "number", description: "Pack amount for new vehicles in dollars" },
+            pack_used: { type: "number", description: "Pack amount for used vehicles in dollars" },
+            include_doc_fee_in_commission: { type: "boolean", description: "Whether to include doc fee when calculating salesperson commission" },
+            jde_commission_pct: { type: "number", description: "JDE commission percentage as decimal (e.g., 0.25 for 25%)" },
+            rep_commission_pct: { type: "number", description: "Rep commission percentage as decimal (e.g., 0.25 for 25%)" },
+            target_units: { type: "number", description: "Target number of units to sell" },
+            target_gross: { type: "number", description: "Target total gross profit in dollars" },
+            target_pvr: { type: "number", description: "Target PVR (per vehicle retailed) in dollars" },
+            washout_threshold: { type: "number", description: "Washout threshold in dollars" },
+            mail_campaign_name: { type: "string", description: "Mail campaign name" },
+            mail_pieces_sent: { type: "number", description: "Number of mail pieces sent" },
+          },
+        }),
+        execute: async (updates: Record<string, unknown>) => {
+          // Filter to only allowed config fields
+          const ALLOWED = new Set([
+            "doc_fee", "tax_rate", "pack_new", "pack_used", "include_doc_fee_in_commission",
+            "jde_commission_pct", "rep_commission_pct", "target_units", "target_gross",
+            "target_pvr", "washout_threshold", "mail_campaign_name", "mail_pieces_sent",
+          ]);
+          const filtered: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(updates)) {
+            if (ALLOWED.has(k) && v !== undefined) filtered[k] = v;
+          }
+
+          if (Object.keys(filtered).length === 0) {
+            return { success: false, error: "No valid fields to update" };
+          }
+
+          // Upsert pattern: create config if it doesn't exist
+          const { data: existing } = await supabase
+            .from("event_config")
+            .select("id")
+            .eq("event_id", eid)
+            .single();
+
+          if (existing) {
+            const { error } = await supabase.from("event_config").update(filtered).eq("event_id", eid);
+            if (error) return { success: false, error: error.message };
+          } else {
+            const { error } = await supabase.from("event_config").insert({ event_id: eid, ...filtered });
+            if (error) return { success: false, error: error.message };
+          }
+
+          // Audit log
+          await supabase.from("audit_logs").insert({
+            event_id: eid,
+            user_id: userId,
+            action: "update_event_config",
+            entity_type: "event_config",
+            entity_id: eid,
+            new_values: { ...filtered, via: "cruze" },
+          }).then(() => {}, () => {});
+
+          revalidatePath("/dashboard/settings");
+          revalidatePath("/dashboard");
+
+          const summary = Object.entries(filtered).map(([k, v]) => `${k}: ${v}`).join(", ");
+          return { success: true, message: `Event config updated: ${summary}` };
+        },
+      },
+
+      updateVehicleField: {
+        description:
+          `Edit a single field on a vehicle. Allowed fields: ${EDITABLE_VEHICLE_FIELDS.join(", ")}. Use searchInventory first to get the vehicleId.`,
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            vehicleId: { type: "string", description: "The vehicle UUID (get from searchInventory)" },
+            field: { type: "string", enum: EDITABLE_VEHICLE_FIELDS, description: "Field name to update" },
+            value: { description: "New value for the field (string, number, or boolean depending on field)" },
+          },
+          required: ["vehicleId", "field", "value"],
+        }),
+        execute: async ({ vehicleId, field, value }: { vehicleId: string; field: string; value: unknown }) => {
+          if (!EDITABLE_VEHICLE_FIELDS.includes(field)) {
+            return { success: false, error: `Field "${field}" is not editable. Allowed: ${EDITABLE_VEHICLE_FIELDS.join(", ")}` };
+          }
+
+          const { error } = await supabase
+            .from("vehicle_inventory")
+            .update({ [field]: value })
+            .eq("id", vehicleId)
+            .eq("event_id", eid);
+
+          if (error) return { success: false, error: error.message };
+
+          await supabase.from("audit_logs").insert({
+            event_id: eid,
+            user_id: userId,
+            action: "update_vehicle_field",
+            entity_type: "vehicle",
+            entity_id: vehicleId,
+            new_values: { field, value, via: "cruze" },
+          }).then(() => {}, () => {});
+
+          revalidatePath("/dashboard/inventory");
+          return { success: true, message: `Vehicle ${field} updated to "${value}".` };
+        },
+      },
+
+      updateVehicleStatus: {
+        description:
+          "Change vehicle status (available, sold, hold, removed). Can update multiple vehicles at once. Use searchInventory first to get vehicleIds.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            vehicleIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Array of vehicle UUIDs to update",
+            },
+            status: { type: "string", enum: VALID_VEHICLE_STATUSES, description: "New status: available, sold, hold, or removed" },
+          },
+          required: ["vehicleIds", "status"],
+        }),
+        execute: async ({ vehicleIds, status }: { vehicleIds: string[]; status: string }) => {
+          if (!VALID_VEHICLE_STATUSES.includes(status)) {
+            return { success: false, error: `Invalid status "${status}". Must be: ${VALID_VEHICLE_STATUSES.join(", ")}` };
+          }
+
+          const typedVehicleStatus = status as "available" | "sold" | "hold" | "pending";
+
+          let updated = 0;
+          for (const vid of vehicleIds) {
+            const { error } = await supabase
+              .from("vehicle_inventory")
+              .update({ status: typedVehicleStatus })
+              .eq("id", vid)
+              .eq("event_id", eid);
+            if (!error) updated++;
+          }
+
+          await supabase.from("audit_logs").insert({
+            event_id: eid,
+            user_id: userId,
+            action: "update_vehicle_status",
+            entity_type: "vehicle",
+            entity_id: vehicleIds[0] || null,
+            new_values: { status, count: vehicleIds.length, via: "cruze" },
+          }).then(() => {}, () => {});
+
+          revalidatePath("/dashboard/inventory");
+          return { success: true, message: `${updated} of ${vehicleIds.length} vehicle(s) set to "${status}".` };
+        },
+      },
+
+      upsertDailyMetric: {
+        description:
+          "Enter or update a daily metric row. Provide the sale day number and the metrics. If a row already exists for that sale day, it will be updated; otherwise a new row is created.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            sale_day: { type: "number", description: "Sale day number (1, 2, 3, ...)" },
+            sale_date: { type: "string", description: "Date in YYYY-MM-DD format (optional)" },
+            total_ups: { type: "number", description: "Total ups (customer visits) for the day" },
+            total_sold: { type: "number", description: "Total units sold for the day" },
+            total_gross: { type: "number", description: "Total gross profit for the day in dollars" },
+            total_front: { type: "number", description: "Total front gross for the day in dollars (optional)" },
+            total_back: { type: "number", description: "Total back gross for the day in dollars (optional)" },
+            notes: { type: "string", description: "Notes for the day (optional)" },
+          },
+          required: ["sale_day", "total_ups", "total_sold"],
+        }),
+        execute: async (input: {
+          sale_day: number; sale_date?: string; total_ups: number; total_sold: number;
+          total_gross?: number; total_front?: number; total_back?: number; notes?: string;
+        }) => {
+          // Check if row exists for this sale day
+          const { data: existing } = await supabase
+            .from("daily_metrics")
+            .select("id")
+            .eq("event_id", eid)
+            .eq("sale_day", input.sale_day)
+            .maybeSingle();
+
+          const row = {
+            sale_day: input.sale_day,
+            sale_date: input.sale_date ?? null,
+            total_ups: input.total_ups,
+            total_sold: input.total_sold,
+            total_gross: input.total_gross ?? null,
+            total_front: input.total_front ?? null,
+            total_back: input.total_back ?? null,
+            notes: input.notes ?? null,
+            updated_at: new Date().toISOString(),
+          };
+
+          if (existing) {
+            const { error } = await supabase.from("daily_metrics").update(row).eq("id", existing.id).eq("event_id", eid);
+            if (error) return { success: false, error: error.message };
+          } else {
+            const { error } = await supabase.from("daily_metrics").insert({ event_id: eid, ...row });
+            if (error) return { success: false, error: error.message };
+          }
+
+          await supabase.from("audit_logs").insert({
+            event_id: eid,
+            user_id: userId,
+            action: "upsert_daily_metric",
+            entity_type: "daily_metric",
+            entity_id: eid,
+            new_values: { sale_day: input.sale_day, via: "cruze" },
+          }).then(() => {}, () => {});
+
+          revalidatePath("/dashboard/daily-metrics");
+          revalidatePath("/dashboard/performance");
+          revalidatePath("/dashboard");
+
+          return { success: true, message: `Day ${input.sale_day} metrics ${existing ? "updated" : "created"}: ${input.total_ups} ups, ${input.total_sold} sold${input.total_gross ? `, $${input.total_gross.toLocaleString()} gross` : ""}.` };
+        },
+      },
+
+      updateDealField: {
+        description:
+          `Edit a single field on a deal. Allowed fields: ${EDITABLE_DEAL_FIELDS.join(", ")}. Use lookupDeal first to get the dealId.`,
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            dealId: { type: "string", description: "The deal UUID (get from lookupDeal)" },
+            field: { type: "string", enum: EDITABLE_DEAL_FIELDS, description: "Field name to update" },
+            value: { description: "New value for the field (string, number, or boolean depending on field)" },
+          },
+          required: ["dealId", "field", "value"],
+        }),
+        execute: async ({ dealId, field, value }: { dealId: string; field: string; value: unknown }) => {
+          if (!EDITABLE_DEAL_FIELDS.includes(field)) {
+            return { success: false, error: `Field "${field}" is not editable. Allowed: ${EDITABLE_DEAL_FIELDS.join(", ")}` };
+          }
+
+          const { error } = await supabase
+            .from("sales_deals")
+            .update({ [field]: value })
+            .eq("id", dealId)
+            .eq("event_id", eid);
+
+          if (error) return { success: false, error: error.message };
+
+          await supabase.from("audit_logs").insert({
+            event_id: eid,
+            user_id: userId,
+            action: "update_deal_field",
+            entity_type: "deal",
+            entity_id: dealId,
+            new_values: { field, value, via: "cruze" },
+          }).then(() => {}, () => {});
+
+          revalidatePath("/dashboard/deals");
+          revalidatePath("/dashboard");
+
+          return { success: true, message: `Deal ${field} updated to "${value}".` };
+        },
+      },
+    };
+  }
+
   // 7. Stream response from the appropriate model
   const config = TIER_CONFIG[tier];
-  const cruzeTools = activeEventId ? buildCruzeTools(activeEventId) : undefined;
+  const readTools = activeEventId ? buildCruzeReadTools(activeEventId) : undefined;
+  const writeTools = activeEventId ? buildCruzeWriteTools(activeEventId) : undefined;
+
+  // TIER_1 gets read tools only; TIER_2 & TIER_3 get read + write tools
+  const cruzeTools = readTools
+    ? tier === "TIER_1"
+      ? readTools
+      : { ...readTools, ...writeTools }
+    : undefined;
 
   try {
     const result = streamText({
@@ -896,7 +1270,7 @@ export async function POST(req: NextRequest) {
       system: config.prompt + SHARED_CONFIG + contextBlock,
       messages: formattedMessages,
       ...(cruzeTools
-        ? { tools: cruzeTools, maxSteps: tier === "TIER_1" ? 2 : 4 }
+        ? { tools: cruzeTools, maxSteps: tier === "TIER_1" ? 2 : 6 }
         : {}),
       maxOutputTokens: config.maxOutputTokens,
       temperature: config.temperature,
