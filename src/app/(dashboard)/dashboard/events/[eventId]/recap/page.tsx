@@ -198,7 +198,9 @@ export default function RecapPage() {
   // ── P&L Calculations ──
   const pnl = useMemo(() => {
     const docFee = config?.doc_fee ?? 0;
-    const pack = config?.pack ?? 0;
+    const packNew = config?.pack_new ?? config?.pack ?? 0;
+    const packUsed = config?.pack_used ?? config?.pack ?? 0;
+    const includeDocFee = config?.include_doc_fee_in_commission ?? false;
 
     const totalUnits = deals.length;
     const totalUps =
@@ -217,8 +219,11 @@ export default function RecapPage() {
     const jdePct = pickTierPct(tiers, totalCommissionableGross);
     const jdeCommission = totalCommissionableGross * jdePct;
 
-    // Non-commissionable gross (doc fees + pack per deal)
-    const nonCommGross = (docFee + pack) * totalUnits;
+    // Non-commissionable gross (doc fees + pack per deal, pack varies by new/used)
+    const nonCommGross = deals.reduce((s, d) => {
+      const pack = d.new_used === "New" ? packNew : packUsed;
+      return s + docFee + pack;
+    }, 0);
 
     // Total Sale Gross
     const totalSaleGross =
@@ -230,6 +235,7 @@ export default function RecapPage() {
       const sp = deal.salesperson;
       if (!sp) continue;
       const front = deal.front_gross ?? 0;
+      const commBase = includeDocFee ? front + (deal.doc_fee ?? 0) : front;
       const spRate =
         (deal.salesperson_id ? rosterRateMap.get(deal.salesperson_id) : undefined) ??
         rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
@@ -241,10 +247,10 @@ export default function RecapPage() {
         const sp2Rate =
           (deal.second_sp_id ? rosterRateMap.get(deal.second_sp_id) : undefined) ??
           rosterRateMap.get(sp2.toLowerCase().trim()) ?? defaultRate;
-        repsCommissions += front * spRate * pct1;
-        repsCommissions += front * sp2Rate * pct2;
+        repsCommissions += commBase * spRate * pct1;
+        repsCommissions += commBase * sp2Rate * pct2;
       } else {
-        repsCommissions += front * spRate;
+        repsCommissions += commBase * spRate;
       }
     }
 
@@ -271,6 +277,8 @@ export default function RecapPage() {
   }, [deals, dailyMetrics, config, tiers, marketingCost, defaultRate, rosterRateMap]);
 
   // ── Salesperson summary (grouped by ID, fallback to name) ──
+  const includeDocFee = config?.include_doc_fee_in_commission ?? false;
+
   const spSummary = useMemo(() => {
     const map: Record<string, SpSummary> = {};
 
@@ -280,6 +288,7 @@ export default function RecapPage() {
       const spKey = deal.salesperson_id ?? sp;
       const front = deal.front_gross ?? 0;
       const total = deal.total_gross ?? 0;
+      const commBase = includeDocFee ? front + (deal.doc_fee ?? 0) : front;
       const spRate =
         (deal.salesperson_id ? rosterRateMap.get(deal.salesperson_id) : undefined) ??
         rosterRateMap.get(sp.toLowerCase().trim()) ?? defaultRate;
@@ -296,7 +305,7 @@ export default function RecapPage() {
         map[spKey].units += pct1;
         map[spKey].ups += dealUps;
         map[spKey].gross += total * pct1;
-        map[spKey].commission += front * spRate * pct1;
+        map[spKey].commission += commBase * spRate * pct1;
 
         const sp2 = deal.second_salesperson;
         const sp2Key = deal.second_sp_id ?? sp2;
@@ -309,12 +318,12 @@ export default function RecapPage() {
         map[sp2Key].units += pct2;
         // Don't double-count ups for split deals
         map[sp2Key].gross += total * pct2;
-        map[sp2Key].commission += front * sp2Rate * pct2;
+        map[sp2Key].commission += commBase * sp2Rate * pct2;
       } else {
         map[spKey].units += 1;
         map[spKey].ups += dealUps;
         map[spKey].gross += total;
-        map[spKey].commission += front * spRate;
+        map[spKey].commission += commBase * spRate;
       }
     }
 
@@ -325,7 +334,7 @@ export default function RecapPage() {
     }
 
     return results.sort((a, b) => b.gross - a.gross);
-  }, [deals, defaultRate, rosterRateMap]);
+  }, [deals, defaultRate, rosterRateMap, includeDocFee]);
 
   const spTotals = useMemo(() => {
     return spSummary.reduce(
@@ -688,7 +697,7 @@ export default function RecapPage() {
                       <TableCell className="font-medium">
                         NON COMM GROSS{" "}
                         <span className="text-muted-foreground text-xs">
-                          (doc fee + pack) &times; {pnl.totalUnits}
+                          (doc fee + pack per deal)
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono text-green-600 dark:text-green-400">

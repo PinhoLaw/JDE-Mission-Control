@@ -136,6 +136,9 @@ export type Database = {
           doc_fee: number | null;
           tax_rate: number | null;
           pack: number | null;
+          pack_new: number | null;
+          pack_used: number | null;
+          include_doc_fee_in_commission: boolean | null;
           jde_commission_pct: number | null;
           rep_commission_pct: number | null;
           mail_campaign_name: string | null;
@@ -157,6 +160,9 @@ export type Database = {
           doc_fee?: number | null;
           tax_rate?: number | null;
           pack?: number | null;
+          pack_new?: number | null;
+          pack_used?: number | null;
+          include_doc_fee_in_commission?: boolean | null;
           jde_commission_pct?: number | null;
           rep_commission_pct?: number | null;
           mail_campaign_name?: string | null;
@@ -178,6 +184,9 @@ export type Database = {
           doc_fee?: number | null;
           tax_rate?: number | null;
           pack?: number | null;
+          pack_new?: number | null;
+          pack_used?: number | null;
+          include_doc_fee_in_commission?: boolean | null;
           jde_commission_pct?: number | null;
           rep_commission_pct?: number | null;
           mail_campaign_name?: string | null;

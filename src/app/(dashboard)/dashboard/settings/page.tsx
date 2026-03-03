@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,9 @@ function emptyEventDetails(): EventDetailsForm {
 interface EventConfigForm {
   doc_fee: string;
   tax_rate: string;
-  pack: string;
+  pack_new: string;
+  pack_used: string;
+  include_doc_fee_in_commission: boolean;
   jde_commission_pct: string;
   rep_commission_pct: string;
   target_units: string;
@@ -83,7 +86,9 @@ function emptyConfigForm(): EventConfigForm {
   return {
     doc_fee: "",
     tax_rate: "",
-    pack: "",
+    pack_new: "",
+    pack_used: "",
+    include_doc_fee_in_commission: false,
     jde_commission_pct: "",
     rep_commission_pct: "",
     target_units: "",
@@ -202,7 +207,9 @@ export default function SettingsPage() {
         setConfig({
           doc_fee: data.doc_fee != null ? String(data.doc_fee) : "",
           tax_rate: decimalToDisplay(data.tax_rate),
-          pack: data.pack != null ? String(data.pack) : "",
+          pack_new: data.pack_new != null ? String(data.pack_new) : "",
+          pack_used: data.pack_used != null ? String(data.pack_used) : "",
+          include_doc_fee_in_commission: data.include_doc_fee_in_commission ?? false,
           jde_commission_pct: decimalToDisplay(data.jde_commission_pct),
           rep_commission_pct: decimalToDisplay(data.rep_commission_pct),
           target_units: data.target_units != null ? String(data.target_units) : "",
@@ -269,7 +276,9 @@ export default function SettingsPage() {
       await updateEventConfig(currentEvent.id, {
         doc_fee: toNumberOrNull(config.doc_fee),
         tax_rate: displayToDecimal(config.tax_rate),
-        pack: toNumberOrNull(config.pack),
+        pack_new: toNumberOrNull(config.pack_new),
+        pack_used: toNumberOrNull(config.pack_used),
+        include_doc_fee_in_commission: config.include_doc_fee_in_commission,
         jde_commission_pct: displayToDecimal(config.jde_commission_pct),
         rep_commission_pct: displayToDecimal(config.rep_commission_pct),
         target_units: toNumberOrNull(config.target_units),
@@ -530,7 +539,7 @@ export default function SettingsPage() {
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
               Financial Settings
             </h3>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-2">
                 <Label htmlFor="doc_fee">Doc Fee ($)</Label>
                 <Input
@@ -561,19 +570,52 @@ export default function SettingsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="pack">Pack ($)</Label>
+                <Label htmlFor="pack_new">Pack — New ($)</Label>
                 <Input
-                  id="pack"
+                  id="pack_new"
                   type="number"
                   min={0}
                   step="0.01"
-                  value={config.pack}
+                  value={config.pack_new}
                   onChange={(e) =>
-                    setConfig((prev) => ({ ...prev, pack: e.target.value }))
+                    setConfig((prev) => ({ ...prev, pack_new: e.target.value }))
                   }
                   placeholder="1200"
                 />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="pack_used">Pack — Used ($)</Label>
+                <Input
+                  id="pack_used"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={config.pack_used}
+                  onChange={(e) =>
+                    setConfig((prev) => ({ ...prev, pack_used: e.target.value }))
+                  }
+                  placeholder="1200"
+                />
+              </div>
+            </div>
+
+            {/* Doc Fee in Commission toggle */}
+            <div className="mt-4 flex items-center justify-between rounded-lg border px-4 py-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="include_doc_fee_toggle" className="text-sm font-medium">
+                  Include Doc Fee in Salesperson Commission
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  When enabled, commission = (front gross + doc fee) &times; rate instead of front gross &times; rate
+                </p>
+              </div>
+              <Switch
+                id="include_doc_fee_toggle"
+                checked={config.include_doc_fee_in_commission}
+                onCheckedChange={(checked) =>
+                  setConfig((prev) => ({ ...prev, include_doc_fee_in_commission: checked }))
+                }
+              />
             </div>
           </div>
 

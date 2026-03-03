@@ -106,9 +106,22 @@ export async function createDeal(input: NewDealInput) {
     if (member) d.second_salesperson = member.name;
   }
 
+  // Fetch event config for pack values
+  const { data: eventConfig } = await supabase
+    .from("event_config")
+    .select("pack_new, pack_used, pack")
+    .eq("event_id", d.event_id)
+    .maybeSingle();
+
+  // Determine pack based on new/used status
+  const packAmount =
+    d.new_used === "New"
+      ? (eventConfig?.pack_new ?? eventConfig?.pack ?? 0)
+      : (eventConfig?.pack_used ?? eventConfig?.pack ?? 0);
+
   // Auto-calculations
-  const frontGross =
-    d.front_gross ?? (d.selling_price ?? 0) - (d.vehicle_cost ?? 0);
+  const rawFrontGross = (d.selling_price ?? 0) - (d.vehicle_cost ?? 0);
+  const frontGross = d.front_gross ?? rawFrontGross - packAmount;
   const fiTotal =
     (d.reserve ?? 0) +
     (d.warranty ?? 0) +
@@ -297,9 +310,22 @@ export async function updateDeal(input: UpdateDealInput) {
     if (member) d.second_salesperson = member.name;
   }
 
+  // Fetch event config for pack values
+  const { data: eventConfig } = await supabase
+    .from("event_config")
+    .select("pack_new, pack_used, pack")
+    .eq("event_id", d.event_id)
+    .maybeSingle();
+
+  // Determine pack based on new/used status
+  const packAmount =
+    d.new_used === "New"
+      ? (eventConfig?.pack_new ?? eventConfig?.pack ?? 0)
+      : (eventConfig?.pack_used ?? eventConfig?.pack ?? 0);
+
   // Auto-calculations (same as createDeal)
-  const frontGross =
-    d.front_gross ?? (d.selling_price ?? 0) - (d.vehicle_cost ?? 0);
+  const rawFrontGross = (d.selling_price ?? 0) - (d.vehicle_cost ?? 0);
+  const frontGross = d.front_gross ?? rawFrontGross - packAmount;
   const fiTotal =
     (d.reserve ?? 0) +
     (d.warranty ?? 0) +

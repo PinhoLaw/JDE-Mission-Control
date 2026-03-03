@@ -111,6 +111,8 @@ export function NewDealForm({
   const [vehicleAgeDays, setVehicleAgeDays] = useState<number | null>(null);
   const [lenders, setLenders] = useState<Array<{ id: string; name: string }>>([]);
   const [manualLender, setManualLender] = useState(false);
+  const [packNew, setPackNew] = useState(0);
+  const [packUsed, setPackUsed] = useState(0);
 
   const {
     register,
@@ -139,10 +141,15 @@ export function NewDealForm({
   const aftermarket1 = watch("aftermarket_1");
   const aftermarket2 = watch("aftermarket_2");
   const docFee = watch("doc_fee");
+  const newUsed = watch("new_used");
+
+  // Determine pack based on new/used
+  const activePack = newUsed === "New" ? packNew : packUsed;
 
   // Auto-calculations
-  const frontGross =
+  const rawFrontGross =
     (Number(sellingPrice) || 0) - (Number(vehicleCost) || 0);
+  const frontGross = rawFrontGross - activePack;
   const fiTotal =
     (Number(reserve) || 0) +
     (Number(warranty) || 0) +
@@ -190,6 +197,23 @@ export function NewDealForm({
       handleLookup();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEvent]);
+
+  // Fetch event config for pack values
+  useEffect(() => {
+    if (!currentEvent) return;
+    const supabase = createClient();
+    supabase
+      .from("event_config")
+      .select("pack_new, pack_used, pack")
+      .eq("event_id", currentEvent.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setPackNew(data.pack_new ?? data.pack ?? 0);
+          setPackUsed(data.pack_used ?? data.pack ?? 0);
+        }
+      });
   }, [currentEvent]);
 
   // Fetch active lenders for dropdown
@@ -540,6 +564,11 @@ export function NewDealForm({
               >
                 {formatCurrency(frontGross)}
               </p>
+              {activePack > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Pack: −{formatCurrency(activePack)}
+                </p>
+              )}
               {isWashout && (
                 <p className="text-xs text-red-500 font-medium">WASHOUT</p>
               )}

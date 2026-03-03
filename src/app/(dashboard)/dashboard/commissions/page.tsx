@@ -212,6 +212,8 @@ export default function CommissionsPage() {
 
   // ── Commission calculations (grouped by salesperson_id, fallback to name) ──
 
+  const includeDocFee = config?.include_doc_fee_in_commission ?? false;
+
   const commissions = useMemo(() => {
     const byPerson: Record<string, CommissionEntry> = {};
 
@@ -246,6 +248,8 @@ export default function CommissionsPage() {
       const back = deal.back_gross ?? 0;
       const total = deal.total_gross ?? 0;
       const pct1 = deal.salesperson_pct ?? 1;
+      // Commissionable base: front gross + doc fee (if toggle enabled)
+      const commBase = includeDocFee ? front + (deal.doc_fee ?? 0) : front;
 
       if (deal.second_salesperson) {
         // Split deal — primary salesperson
@@ -253,7 +257,7 @@ export default function CommissionsPage() {
         byPerson[spKey].weightedFrontGross += front * pct1;
         byPerson[spKey].totalBackGross += back * pct1;
         byPerson[spKey].totalGross += total * pct1;
-        byPerson[spKey].commission += front * spRate * pct1;
+        byPerson[spKey].commission += commBase * spRate * pct1;
 
         // Second salesperson
         const sp2 = deal.second_salesperson;
@@ -281,14 +285,14 @@ export default function CommissionsPage() {
         byPerson[sp2Key].weightedFrontGross += front * pct2;
         byPerson[sp2Key].totalBackGross += back * pct2;
         byPerson[sp2Key].totalGross += total * pct2;
-        byPerson[sp2Key].commission += front * sp2Rate * pct2;
+        byPerson[sp2Key].commission += commBase * sp2Rate * pct2;
       } else {
         // Full deal
         byPerson[spKey].fullDeals += 1;
         byPerson[spKey].weightedFrontGross += front;
         byPerson[spKey].totalBackGross += back;
         byPerson[spKey].totalGross += total;
-        byPerson[spKey].commission += front * spRate;
+        byPerson[spKey].commission += commBase * spRate;
       }
 
       if (deal.is_washout) {
@@ -303,7 +307,7 @@ export default function CommissionsPage() {
     }
 
     return Object.values(byPerson).sort((a, b) => b.commission - a.commission);
-  }, [filteredDeals, defaultRate, rosterRateMap]);
+  }, [filteredDeals, defaultRate, rosterRateMap, includeDocFee]);
 
   // ── Summary stats ──
 
