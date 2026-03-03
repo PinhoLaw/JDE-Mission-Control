@@ -301,19 +301,19 @@ Maintain full conversation context within a session. Reference previous messages
 
 const TIER_CONFIG = {
   TIER_1: {
-    model: "claude-haiku-4-20250414",
+    model: "claude-haiku-4-5-20251001",
     prompt: TIER_1_PROMPT,
     maxOutputTokens: 1024,
     temperature: 0.4,
   },
   TIER_2: {
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6-20250627",
     prompt: TIER_2_PROMPT,
     maxOutputTokens: 2048,
     temperature: 0.5,
   },
   TIER_3: {
-    model: "claude-opus-4-20250514",
+    model: "claude-opus-4-6-20250627",
     prompt: TIER_3_PROMPT,
     maxOutputTokens: 4096,
     temperature: 0.5,
@@ -642,7 +642,7 @@ export async function POST(req: NextRequest) {
   try {
     // Race classifier against a timeout — never let classification block the response
     const classifyPromise = generateText({
-      model: anthropic("claude-haiku-4-20250414"),
+      model: anthropic("claude-haiku-4-5-20251001"),
       system: CLASSIFIER_PROMPT,
       prompt: `Classify this user message:\n\n"${userText}"`,
       maxOutputTokens: 200,
