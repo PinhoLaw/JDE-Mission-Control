@@ -93,7 +93,11 @@ export async function bulkImportDeals(
 
   const errorDetails: { row: number; message: string }[] = [];
   const validRows: DealInsert[] = [];
-  let fluffSkipped = 0;
+
+  // ── Separate skip counters for detailed breakdown ──
+  let emptyRows = 0;
+  let fluffRows = 0;
+  let duplicates = 0;
 
   // Build reverse column map: spreadsheet col index → DB field
   const reverseMap: Record<string, string> = {};
@@ -120,6 +124,7 @@ export async function bulkImportDeals(
       ? String(mapped.customer_name).trim()
       : "";
     if (!customerName) {
+      emptyRows++;
       continue; // silently skip — not an error, just an empty row
     }
 
@@ -130,19 +135,19 @@ export async function bulkImportDeals(
       : "";
     if (!stockNumber) {
       // No stock number — likely a note row, not a real deal
-      fluffSkipped++;
+      fluffRows++;
       continue;
     }
     if (customerName.length > 50) {
       // Customer name too long — likely a note/comment row
-      fluffSkipped++;
+      fluffRows++;
       continue;
     }
 
     // ── INTRA-BATCH DEDUP: Skip if we've already seen this stock number ──
     const stockKey = stockNumber.toUpperCase();
     if (seenStocks.has(stockKey)) {
-      fluffSkipped++;
+      duplicates++;
       continue;
     }
     seenStocks.add(stockKey);
@@ -279,14 +284,22 @@ export async function bulkImportDeals(
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
 
+  const totalSkipped = emptyRows + fluffRows + duplicates;
+
   return {
     success: errorDetails.length === 0,
     imported,
     deleted,
     errors: errorDetails.length,
-    duplicatesSkipped: fluffSkipped,
+    duplicatesSkipped: totalSkipped,
     errorDetails,
     mode: "replace",
+    skipBreakdown: {
+      emptyRows,
+      fluffRows,
+      duplicates,
+      validationErrors: 0,
+    },
   };
 }
 

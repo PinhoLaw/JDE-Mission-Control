@@ -28,6 +28,8 @@ import {
   Users,
   Package,
   ClipboardList,
+  Upload,
+  FileSpreadsheet,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { LegacyUploadButton } from "@/components/events/legacy-spreadsheet-upload";
@@ -184,6 +186,32 @@ export default async function EventOverviewPage({
       </div>
 
       <Separator />
+
+      {/* ── Upload Prompt (shown when event has no data) ── */}
+      {totalDeals === 0 && totalVehicles === 0 && (
+        <Card className="border-dashed border-2 border-primary/30 bg-primary/5">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="rounded-full bg-primary/10 p-4 mb-4">
+              <FileSpreadsheet className="h-10 w-10 text-primary" />
+            </div>
+            <h2 className="text-xl font-semibold mb-2">
+              Upload Your Spreadsheet
+            </h2>
+            <p className="text-muted-foreground max-w-md mb-6">
+              Import your event data from an Excel spreadsheet. The system
+              auto-detects tabs for Inventory, Deals, Roster, Lenders &amp;
+              Campaigns and maps columns for you.
+            </p>
+            <LegacyUploadButton
+              eventId={eventId}
+              sheetId={event.sheet_id}
+              size="default"
+              variant="default"
+              label="Upload Spreadsheet"
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

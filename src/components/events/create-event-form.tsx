@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { createEvent } from "@/app/(dashboard)/dashboard/events/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,8 @@ async function formAction(
     await createEvent(formData);
     return null;
   } catch (e) {
+    // Re-throw redirect errors so Next.js can handle navigation
+    if (isRedirectError(e)) throw e;
     return e instanceof Error ? e.message : "Something went wrong";
   }
 }

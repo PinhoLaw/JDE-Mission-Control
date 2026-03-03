@@ -938,6 +938,13 @@ export interface ImportResult {
   duplicatesSkipped: number;
   errorDetails: { row: number; message: string }[];
   mode: ImportMode;
+  /** Detailed breakdown of skipped rows by reason (optional, backward-compatible) */
+  skipBreakdown?: {
+    emptyRows: number;
+    fluffRows: number;
+    duplicates: number;
+    validationErrors: number;
+  };
 }
 
 // ────────────────────────────────────────────────────────

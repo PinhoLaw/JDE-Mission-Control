@@ -71,7 +71,7 @@ export async function createEvent(formData: FormData) {
     role: "owner" as const,
   });
 
-  redirect(`/dashboard/events/${event.id}`);
+  redirect(`/dashboard/events/${event.id}/overview`);
 }
 
 // ────────────────────────────────────────────────────────────
@@ -262,7 +262,7 @@ export async function createEventFromTemplate(
     }
   }
 
-  redirect(`/dashboard/events/${newEvent.id}`);
+  redirect(`/dashboard/events/${newEvent.id}/overview`);
 }
 
 // ────────────────────────────────────────────────────────────

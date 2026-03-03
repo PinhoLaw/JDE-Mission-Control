@@ -85,6 +85,176 @@ export function isRosterSheet(name: string): boolean {
 }
 
 // ────────────────────────────────────────────────────────
+// Content-Aware Tab Detection (from headers)
+// ────────────────────────────────────────────────────────
+
+/**
+ * Header fingerprints — characteristic header keywords that strongly
+ * indicate a specific tab type. Each signal group matches if ANY keyword
+ * appears as a substring in ANY header.
+ */
+const TAB_TYPE_HEADER_SIGNALS: Record<Exclude<TabType, "unknown">, string[][]> = {
+  deals: [
+    ["customer", "buyer"],
+    ["front gross", "front", "feg"],
+    ["selling price", "sale price"],
+    ["deal", "store"],
+    ["lender", "bank"],
+    ["reserve"],
+    ["warranty", "vsc"],
+    ["gap"],
+    ["trade"],
+    ["salesperson", "sp", "rep", "sold by"],
+  ],
+  inventory: [
+    ["stock", "stk"],
+    ["vin"],
+    ["mileage", "miles", "odometer"],
+    ["acquisition", "unit cost", "dealer cost"],
+    ["jd", "power", "trade clean", "retail clean"],
+    ["asking", "115%", "120%", "125%", "130%"],
+    ["hat"],
+    ["color", "ext color"],
+    ["body style", "body type"],
+    ["trim", "series"],
+  ],
+  roster: [
+    ["salespeople", "salesperson", "personnel", "staff"],
+    ["phone", "cell", "mobile"],
+    ["confirmed", "confirm"],
+    ["setup"],
+    ["role", "position", "title"],
+  ],
+  lenders: [
+    ["lender", "bank", "finance source"],
+    ["buy rate", "rate", "apr"],
+    ["max advance", "advance", "loan limit"],
+  ],
+  campaigns: [
+    ["zip", "postal", "zip code"],
+    ["pieces", "sent", "mailed"],
+    ["town", "city"],
+    ["day 1", "day 2", "day 3"],
+    ["total responses", "responses"],
+  ],
+};
+
+/**
+ * Detect tab type from column headers when sheet name detection fails.
+ * Scores each tab type by counting how many header signal groups match.
+ */
+export function detectTabTypeFromHeaders(headers: string[]): {
+  tabType: TabType;
+  score: number;
+  maxPossible: number;
+} {
+  const lowerHeaders = headers.map((h) => h.toLowerCase().trim());
+
+  let bestType: TabType = "unknown";
+  let bestScore = 0;
+  let bestMax = 0;
+
+  for (const [type, signals] of Object.entries(TAB_TYPE_HEADER_SIGNALS)) {
+    let score = 0;
+    for (const signalGroup of signals) {
+      const matched = lowerHeaders.some((header) =>
+        signalGroup.some((keyword) => header.includes(keyword)),
+      );
+      if (matched) score++;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestType = type as TabType;
+      bestMax = signals.length;
+    }
+  }
+
+  // Require at least 30% of signals AND at least 2 matches
+  const threshold = bestMax * 0.3;
+  if (bestScore < threshold || bestScore < 2) {
+    return { tabType: "unknown", score: 0, maxPossible: 0 };
+  }
+
+  return { tabType: bestType as TabType, score: bestScore, maxPossible: bestMax };
+}
+
+// ────────────────────────────────────────────────────────
+// Confidence Scoring
+// ────────────────────────────────────────────────────────
+
+/** Required / important fields per tab type for confidence calculation. */
+const REQUIRED_FIELDS_MAP: Record<Exclude<TabType, "unknown">, string[]> = {
+  inventory: ["stock_number", "year", "make", "model"],
+  roster: ["name"],
+  deals: ["customer_name", "stock_number"],
+  lenders: ["name"],
+  campaigns: ["zip_code"],
+};
+
+export interface MappingConfidence {
+  /** 0-100 score: percentage of columns mapped to a real DB field */
+  score: number;
+  /** Number of columns mapped to a real DB field (not __skip__) */
+  mappedCount: number;
+  /** Total number of spreadsheet columns */
+  totalColumns: number;
+  /** Whether all required fields for this tab type are mapped */
+  requiredFieldsMapped: boolean;
+  /** List of required fields that are missing */
+  missingRequired: string[];
+  /** True if confidence >= 80% AND all required fields present */
+  autoReady: boolean;
+}
+
+/**
+ * Compute a confidence score for the current column mapping.
+ */
+export function computeMappingConfidence(
+  columnMap: Record<string, string>,
+  tabType: TabType,
+): MappingConfidence {
+  if (tabType === "unknown") {
+    return {
+      score: 0,
+      mappedCount: 0,
+      totalColumns: Object.keys(columnMap).length,
+      requiredFieldsMapped: false,
+      missingRequired: [],
+      autoReady: false,
+    };
+  }
+
+  const entries = Object.entries(columnMap);
+  const totalColumns = entries.length;
+  const mappedCount = entries.filter(
+    ([, v]) => v && v !== "__skip__",
+  ).length;
+
+  const score =
+    totalColumns > 0 ? Math.round((mappedCount / totalColumns) * 100) : 0;
+
+  // Check required fields
+  const mappedFields = new Set(
+    entries.map(([, v]) => v).filter((v) => v && v !== "__skip__"),
+  );
+  const required = REQUIRED_FIELDS_MAP[tabType] ?? [];
+  const missingRequired = required.filter((f) => !mappedFields.has(f));
+  const requiredFieldsMapped = missingRequired.length === 0;
+
+  const autoReady = score >= 80 && requiredFieldsMapped;
+
+  return {
+    score,
+    mappedCount,
+    totalColumns,
+    requiredFieldsMapped,
+    missingRequired,
+    autoReady,
+  };
+}
+
+// ────────────────────────────────────────────────────────
 // Inventory Fields & Auto-Mapper
 // ────────────────────────────────────────────────────────
 
