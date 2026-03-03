@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 // Event Details form state
 // ---------------------------------------------------------------------------
 interface EventDetailsForm {
+  name: string;
   dealer_name: string;
   address: string;
   city: string;
@@ -46,6 +47,7 @@ interface EventDetailsForm {
 
 function emptyEventDetails(): EventDetailsForm {
   return {
+    name: "",
     dealer_name: "",
     address: "",
     city: "",
@@ -161,6 +163,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!currentEvent) return;
     setDetails({
+      name: currentEvent.name ?? "",
       dealer_name: currentEvent.dealer_name ?? "",
       address: currentEvent.address ?? "",
       city: currentEvent.city ?? "",
@@ -235,6 +238,7 @@ export default function SettingsPage() {
     setSavingDetails(true);
     try {
       await updateEventDetails(currentEvent.id, {
+        name: details.name || undefined,
         dealer_name: details.dealer_name || null,
         address: details.address || null,
         city: details.city || null,
@@ -320,7 +324,7 @@ export default function SettingsPage() {
           <p className="text-muted-foreground">
             Configure{" "}
             <span className="font-medium text-foreground">
-              {currentEvent.name}
+              {details.name || currentEvent.name}
             </span>
           </p>
         </div>
@@ -344,6 +348,19 @@ export default function SettingsPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Event Name */}
+          <div className="space-y-2">
+            <Label htmlFor="event_name">Event Name</Label>
+            <Input
+              id="event_name"
+              value={details.name}
+              onChange={(e) =>
+                setDetails((prev) => ({ ...prev, name: e.target.value }))
+              }
+              placeholder="Spring Blowout 2026"
+            />
+          </div>
+
           {/* Dealer Info */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">

@@ -24,6 +24,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useSheetPush } from "@/hooks/useSheetPush";
@@ -98,6 +99,7 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
   const [vehicleId, setVehicleId] = useState<string | null>(
     deal.vehicle_id ?? null,
   );
+  const [isTradeTurn, setIsTradeTurn] = useState(deal.is_trade_turn ?? false);
   const { push: sheetPush } = useSheetPush();
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -288,6 +290,7 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
         vehicle_type: data.vehicle_type || null,
         vehicle_cost: data.vehicle_cost ? Number(data.vehicle_cost) : null,
         new_used: data.new_used,
+        is_trade_turn: isTradeTurn,
         trade_year: data.trade_year ? Number(data.trade_year) : null,
         trade_make: data.trade_make || null,
         trade_model: data.trade_model || null,
@@ -462,6 +465,21 @@ export function EditDealForm({ deal, onSuccess, onSheetSynced }: EditDealFormPro
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          {/* Trade-In Turn toggle */}
+          <div className="flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950/30 px-4 py-3">
+            <Checkbox
+              id="edit_is_trade_turn"
+              checked={isTradeTurn}
+              onCheckedChange={(v) => setIsTradeTurn(v === true)}
+            />
+            <Label htmlFor="edit_is_trade_turn" className="flex items-center gap-2 cursor-pointer text-sm">
+              <span className="inline-flex items-center rounded-sm bg-orange-100 px-1.5 py-0.5 text-[11px] font-semibold text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
+                TI
+              </span>
+              Trade-In Turn — this vehicle was traded in and resold during this event
+            </Label>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-4">

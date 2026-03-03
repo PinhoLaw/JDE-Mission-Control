@@ -439,6 +439,7 @@ export type Database = {
           back_gross: number | null;
           total_gross: number | null;
           pvr: number | null;
+          is_trade_turn: boolean;
           is_washout: boolean;
           washout_amount: number | null;
           jde_gross: number | null;
@@ -496,6 +497,7 @@ export type Database = {
           back_gross?: number | null;
           total_gross?: number | null;
           pvr?: number | null;
+          is_trade_turn?: boolean;
           is_washout?: boolean;
           washout_amount?: number | null;
           jde_gross?: number | null;
@@ -553,6 +555,7 @@ export type Database = {
           back_gross?: number | null;
           total_gross?: number | null;
           pvr?: number | null;
+          is_trade_turn?: boolean;
           is_washout?: boolean;
           washout_amount?: number | null;
           jde_gross?: number | null;

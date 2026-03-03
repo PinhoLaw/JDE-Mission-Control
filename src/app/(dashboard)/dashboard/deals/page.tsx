@@ -184,7 +184,58 @@ export default function DealsPage() {
     const totalFront = filteredDeals.reduce((s, d) => s + (d.front_gross ?? 0), 0);
     const totalBack = filteredDeals.reduce((s, d) => s + (d.back_gross ?? 0), 0);
     const avgPVR = filteredDeals.length > 0 ? totalGross / filteredDeals.length : 0;
-    return { totalGross, totalFront, totalBack, avgPVR, count: filteredDeals.length };
+
+    // ── New aggregations (single pass) ──
+    const spMap = new Map<string, { deals: number; gross: number }>();
+    const lenderMap = new Map<string, number>();
+    let warrantyCount = 0;
+    let gapCount = 0;
+    let newCount = 0, newFrontSum = 0;
+    let usedCount = 0, usedFrontSum = 0;
+    let highestDeal: { customer: string; gross: number; vehicle: string } | null = null;
+
+    for (const d of filteredDeals) {
+      // Salesperson ranking
+      const sp = d.salesperson || "Unknown";
+      const spEntry = spMap.get(sp) || { deals: 0, gross: 0 };
+      spEntry.deals++;
+      spEntry.gross += d.total_gross ?? 0;
+      spMap.set(sp, spEntry);
+
+      // Lender breakdown
+      if (d.lender) lenderMap.set(d.lender, (lenderMap.get(d.lender) ?? 0) + 1);
+
+      // Warranty & GAP counts
+      if ((d.warranty ?? 0) > 0) warrantyCount++;
+      if ((d.gap ?? 0) > 0) gapCount++;
+
+      // New vs Used
+      if (d.new_used === "New") { newCount++; newFrontSum += d.front_gross ?? 0; }
+      else if (d.new_used === "Used" || d.new_used === "Certified") { usedCount++; usedFrontSum += d.front_gross ?? 0; }
+
+      // Highest single deal
+      const g = d.total_gross ?? 0;
+      if (!highestDeal || g > highestDeal.gross) {
+        highestDeal = { customer: d.customer_name || "N/A", gross: g, vehicle: `${d.vehicle_year ?? ""} ${d.vehicle_make ?? ""} ${d.vehicle_model ?? ""}`.trim() };
+      }
+    }
+
+    const topSalespeople = [...spMap.entries()]
+      .map(([name, s]) => ({ name, deals: s.deals, gross: s.gross }))
+      .sort((a, b) => b.deals - a.deals)
+      .slice(0, 5);
+
+    const topLenders = [...lenderMap.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+
+    return {
+      totalGross, totalFront, totalBack, avgPVR, count: filteredDeals.length,
+      topSalespeople, highestDeal, warrantyCount, gapCount, topLenders,
+      newCount, newAvgFront: newCount > 0 ? newFrontSum / newCount : 0,
+      usedCount, usedAvgFront: usedCount > 0 ? usedFrontSum / usedCount : 0,
+    };
   }, [filteredDeals]);
 
   // Footer averages / totals for the summary row
@@ -309,12 +360,14 @@ export default function DealsPage() {
           const sn = row.getValue("stock_number") as string | null;
           if (!sn) return "—";
           const deal = row.original;
-          const hasTrade = !!(deal.trade_year || deal.trade_make || deal.trade_model || deal.trade_acv);
           return (
             <span className="flex items-center gap-1">
               {sn}
-              {hasTrade && (
-                <span className="inline-flex items-center rounded-sm bg-orange-100 px-1 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
+              {deal.is_trade_turn && (
+                <span
+                  className="inline-flex items-center rounded-sm bg-orange-100 px-1 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+                  title="Trade-In Turn — this vehicle was traded in and resold"
+                >
                   TI
                 </span>
               )}
@@ -624,6 +677,89 @@ export default function DealsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">{formatCurrency(stats.avgPVR)}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Stats Row 2 — Insights */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Top Salespeople</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1">
+              {stats.topSalespeople.slice(0, 3).map((sp, i) => (
+                <div key={sp.name} className="flex justify-between text-sm">
+                  <span className="truncate">{i + 1}. {sp.name}</span>
+                  <span className="font-semibold">{sp.deals} deals</span>
+                </div>
+              ))}
+              {stats.topSalespeople.length === 0 && (
+                <p className="text-sm text-muted-foreground">No data</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>New vs Used</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span>New: {stats.newCount}</span>
+                <span className="text-muted-foreground">Avg {formatCurrency(stats.newAvgFront)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Used: {stats.usedCount}</span>
+                <span className="text-muted-foreground">Avg {formatCurrency(stats.usedAvgFront)}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Warranty Sold</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold">
+              {stats.warrantyCount}
+              <span className="text-sm font-normal text-muted-foreground ml-1">
+                / {stats.count} ({stats.count > 0 ? Math.round((stats.warrantyCount / stats.count) * 100) : 0}%)
+              </span>
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>GAP Penetration</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold">
+              {stats.gapCount}
+              <span className="text-sm font-normal text-muted-foreground ml-1">
+                / {stats.count} ({stats.count > 0 ? Math.round((stats.gapCount / stats.count) * 100) : 0}%)
+              </span>
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Top Lenders</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1">
+              {stats.topLenders.slice(0, 3).map((l, i) => (
+                <div key={l.name} className="flex justify-between text-sm">
+                  <span className="truncate">{i + 1}. {l.name}</span>
+                  <span className="font-semibold">{l.count}</span>
+                </div>
+              ))}
+              {stats.topLenders.length === 0 && (
+                <p className="text-sm text-muted-foreground">No data</p>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>

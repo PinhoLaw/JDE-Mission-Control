@@ -51,11 +51,8 @@ export function ChatWindow() {
     [],
   );
 
-  const { messages, sendMessage, status, setMessages, error } = useVercelChat({
+  const { messages, sendMessage, status, setMessages } = useVercelChat({
     transport,
-    onError: (err) => {
-      console.error("[ChatBot] Error:", err);
-    },
   });
 
   const isLoading = status === "submitted" || status === "streaming";
@@ -127,7 +124,7 @@ export function ChatWindow() {
           <Rocket className="h-5 w-5 text-primary" />
           <div>
             <h3 className="text-sm font-semibold leading-tight">
-              Mission Control Assistant
+              Cruze
             </h3>
             <p className="text-[11px] text-muted-foreground">
               {isLoading ? "Thinking..." : "Online • ⌘/ to toggle"}
@@ -155,10 +152,10 @@ export function ChatWindow() {
               <Rocket className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <p className="text-sm font-medium">Hey! 👋</p>
+              <p className="text-sm font-medium">Good to see you, Mike.</p>
               <p className="mt-1 text-xs text-muted-foreground max-w-[260px]">
-                I&apos;m your Mission Control co-pilot. Ask me anything about
-                the dashboard, request changes, or paste a screenshot!
+                I&apos;m Cruze, your Mission Control Concierge. Ask me anything,
+                request changes, or paste a screenshot.
               </p>
             </div>
             <div className="mt-2 flex flex-wrap justify-center gap-1.5">
@@ -190,11 +187,6 @@ export function ChatWindow() {
               messages[messages.length - 1]?.role !== "assistant" && (
                 <TypingIndicator />
               )}
-            {error && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-xs text-red-500">
-                Error: {error.message}
-              </div>
-            )}
           </div>
         )}
       </ScrollArea>
