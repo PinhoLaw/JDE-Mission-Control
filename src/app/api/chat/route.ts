@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { streamText, generateText, jsonSchema } from "ai";
+import { streamText, generateText, jsonSchema, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
@@ -38,6 +38,7 @@ Triggers:
 - Anything requiring reasoning about data or the dashboard
 - Ambiguous requests that need interpretation
 - **ANY request to change, update, edit, set, mark, or modify data** — "mark this deal funded", "change doc fee to 500", "update the lender", "set target units to 80", "add a note to stock #1234"
+- **Data entry / logging** — "Day 3: 22 ups, 9 sold, $45k gross", "log today's numbers", entering daily metrics or ups/sold/gross data
 
 ### TIER_3 — Complex Planning (Route to Opus)
 Architecture, integrations, multi-system work, new feature design, detailed task scoping.
@@ -57,7 +58,7 @@ Triggers:
 - If the user says "log this" or "create a ticket" → classify as TIER_3
 - Conversational messages (greetings, "what can you do?") → classify as TIER_1
 - Any request for a fix, change, or improvement → classify as TIER_2
-- **ANY data mutation request** (mark, change, update, set, edit, add, delete) → **ALWAYS TIER_2** (never TIER_1)
+- **ANY data mutation or data entry request** (mark, change, update, set, edit, add, delete, log, enter, record) → **ALWAYS TIER_2** (never TIER_1)
 
 ## Output Format
 
@@ -307,13 +308,13 @@ const TIER_CONFIG = {
     temperature: 0.4,
   },
   TIER_2: {
-    model: "claude-sonnet-4-6-20250627",
+    model: "claude-sonnet-4-6",
     prompt: TIER_2_PROMPT,
     maxOutputTokens: 2048,
     temperature: 0.5,
   },
   TIER_3: {
-    model: "claude-opus-4-6-20250627",
+    model: "claude-opus-4-6",
     prompt: TIER_3_PROMPT,
     maxOutputTokens: 4096,
     temperature: 0.5,
@@ -1265,13 +1266,14 @@ export async function POST(req: NextRequest) {
     : undefined;
 
   try {
+    const maxSteps = cruzeTools ? (tier === "TIER_1" ? 3 : 8) : 1;
+
     const result = streamText({
       model: anthropic(config.model),
       system: config.prompt + SHARED_CONFIG + contextBlock,
       messages: formattedMessages,
-      ...(cruzeTools
-        ? { tools: cruzeTools, maxSteps: tier === "TIER_1" ? 2 : 6 }
-        : {}),
+      tools: cruzeTools,
+      stopWhen: stepCountIs(maxSteps),
       maxOutputTokens: config.maxOutputTokens,
       temperature: config.temperature,
     });
