@@ -235,7 +235,13 @@ The left sidebar has these sections:
 
 ### Settings Page (/dashboard/settings)
 **Event Details card:** Event Name (editable), Dealer Name, Franchise, Address, City, State, ZIP, Start Date, End Date, Sale Days, Status dropdown (Draft/Active/Completed/Cancelled). Save button.
-**Event Configuration card:** Doc Fee, Tax Rate, Pack, JDE Commission %, Rep Commission %, Target Units, Target Gross, Target PVR, Washout Threshold, Campaign Name, Mail Pieces Sent. Separate Save button.
+**Event Configuration card:** Doc Fee, Tax Rate, Pack — New ($), Pack — Used ($), "Include Doc Fee in Salesperson Commission" toggle, JDE Commission %, Rep Commission %, Target Units, Target Gross, Target PVR, Washout Threshold, Campaign Name, Mail Pieces Sent. Separate Save button.
+
+### Pack & Doc Fee Commission (new)
+- **Pack** is a fixed cost added to the vehicle cost, deducted from front gross. It's split by New vs Used — each can have a different dollar amount. Pack is set per-event in Settings.
+- **Doc Fee in Commission toggle** — when OFF (default), salesperson commission = front gross × rate. When ON, commission = (front gross + doc fee) × rate. This is a per-event setting in the Event Configuration card.
+- Front gross on deal forms now shows the pack deduction: "Pack: −$1,200" below the front gross number.
+- The Commissions page and Recap P&L both respect these settings.
 
 ### General Abbreviations (dealership terminology)
 - **PVR** = Per Vehicle Retailed (average gross per deal)
@@ -246,6 +252,7 @@ The left sidebar has these sections:
 - **SP** = Salesperson
 - **CPO** = Certified Pre-Owned
 - **TI** = Trade-In Turn (vehicle was traded in and resold during the event)
+- **Pack** = Dealer pack — fixed cost added to vehicle cost, deducted from front gross. Split into New and Used amounts.
 
 ## Your Skills (Tools)
 You have access to live database tools. Use them when the [CONTEXT] data isn't enough to answer a question:
@@ -370,6 +377,26 @@ export async function POST(req: NextRequest) {
 
         if (event) {
           dataBlock += `\nActive Event: ${event.name}\nDealership: ${event.dealer_name} (${event.franchise})\nLocation: ${event.city}, ${event.state}\nSale Days: ${event.sale_days}\nStatus: ${event.status}\nDates: ${event.start_date} to ${event.end_date}`;
+        }
+
+        // Fetch event config for financial settings context
+        const { data: eventCfg } = await supabase
+          .from("event_config")
+          .select("doc_fee, pack_new, pack_used, pack, include_doc_fee_in_commission, rep_commission_pct, jde_commission_pct, target_units, target_gross")
+          .eq("event_id", eventId)
+          .maybeSingle();
+
+        if (eventCfg) {
+          const packNew = eventCfg.pack_new ?? eventCfg.pack ?? 0;
+          const packUsed = eventCfg.pack_used ?? eventCfg.pack ?? 0;
+          dataBlock += `\n\nEvent Config:`;
+          dataBlock += `\nDoc Fee: $${eventCfg.doc_fee ?? 0}`;
+          dataBlock += `\nPack — New: $${packNew} | Pack — Used: $${packUsed}`;
+          dataBlock += `\nDoc Fee in Commission: ${eventCfg.include_doc_fee_in_commission ? "ON (commission includes doc fee)" : "OFF (front gross only)"}`;
+          if (eventCfg.rep_commission_pct != null) dataBlock += `\nDefault Rep Commission: ${(eventCfg.rep_commission_pct * 100).toFixed(0)}%`;
+          if (eventCfg.jde_commission_pct != null) dataBlock += `\nJDE Commission: ${(eventCfg.jde_commission_pct * 100).toFixed(0)}%`;
+          if (eventCfg.target_units) dataBlock += `\nTarget Units: ${eventCfg.target_units}`;
+          if (eventCfg.target_gross) dataBlock += `\nTarget Gross: $${eventCfg.target_gross.toLocaleString()}`;
         }
 
         // Page-specific data enrichment
