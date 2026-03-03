@@ -318,6 +318,7 @@ type Tier = keyof typeof TIER_CONFIG;
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  try {
   // 1. Auth check
   const supabase = await createClient();
   const {
@@ -351,10 +352,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Normalise empty / whitespace-only user messages
+  // Normalise empty / whitespace-only user messages (handles v6 parts format too)
   const lastMsg = messages[messages.length - 1];
-  if (lastMsg && lastMsg.role === "user" && (!lastMsg.content || !lastMsg.content.trim())) {
-    lastMsg.content = "What can you help me with, Cruze?";
+  const lastMsgText = typeof lastMsg?.content === "string"
+    ? lastMsg.content
+    : Array.isArray(lastMsg?.parts)
+      ? lastMsg.parts.filter((p: { type: string }) => p.type === "text").map((p: { text: string }) => p.text).join("")
+      : "";
+  if (lastMsg && lastMsg.role === "user" && !lastMsgText.trim()) {
+    if (typeof lastMsg.content === "string") lastMsg.content = "What can you help me with, Cruze?";
+    else if (Array.isArray(lastMsg.parts)) lastMsg.parts = [{ type: "text", text: "What can you help me with, Cruze?" }];
   }
 
   // 3. Build enriched context block with real data from Supabase
@@ -380,23 +387,41 @@ export async function POST(req: NextRequest) {
         }
 
         // Fetch event config for financial settings context
-        const { data: eventCfg } = await supabase
-          .from("event_config")
-          .select("doc_fee, pack_new, pack_used, pack, include_doc_fee_in_commission, rep_commission_pct, jde_commission_pct, target_units, target_gross")
-          .eq("event_id", eventId)
-          .maybeSingle();
+        // Try full column set first, fall back to safe columns if migration hasn't run
+        let eventCfg: Record<string, unknown> | null = null;
+        try {
+          const { data, error: cfgErr } = await supabase
+            .from("event_config")
+            .select("doc_fee, pack_new, pack_used, pack, include_doc_fee_in_commission, rep_commission_pct, jde_commission_pct, target_units, target_gross")
+            .eq("event_id", eventId)
+            .maybeSingle();
+          if (cfgErr) {
+            // Columns may not exist yet — fall back to safe columns
+            console.warn("[ChatBot] event_config full query failed, trying safe columns:", cfgErr.message);
+            const { data: safeData } = await supabase
+              .from("event_config")
+              .select("doc_fee, pack, rep_commission_pct, jde_commission_pct, target_units, target_gross")
+              .eq("event_id", eventId)
+              .maybeSingle();
+            eventCfg = safeData as Record<string, unknown> | null;
+          } else {
+            eventCfg = data as Record<string, unknown> | null;
+          }
+        } catch (cfgError) {
+          console.warn("[ChatBot] event_config query error:", cfgError);
+        }
 
         if (eventCfg) {
-          const packNew = eventCfg.pack_new ?? eventCfg.pack ?? 0;
-          const packUsed = eventCfg.pack_used ?? eventCfg.pack ?? 0;
+          const packNew = (eventCfg.pack_new as number) ?? (eventCfg.pack as number) ?? 0;
+          const packUsed = (eventCfg.pack_used as number) ?? (eventCfg.pack as number) ?? 0;
           dataBlock += `\n\nEvent Config:`;
-          dataBlock += `\nDoc Fee: $${eventCfg.doc_fee ?? 0}`;
+          dataBlock += `\nDoc Fee: $${(eventCfg.doc_fee as number) ?? 0}`;
           dataBlock += `\nPack — New: $${packNew} | Pack — Used: $${packUsed}`;
           dataBlock += `\nDoc Fee in Commission: ${eventCfg.include_doc_fee_in_commission ? "ON (commission includes doc fee)" : "OFF (front gross only)"}`;
-          if (eventCfg.rep_commission_pct != null) dataBlock += `\nDefault Rep Commission: ${(eventCfg.rep_commission_pct * 100).toFixed(0)}%`;
-          if (eventCfg.jde_commission_pct != null) dataBlock += `\nJDE Commission: ${(eventCfg.jde_commission_pct * 100).toFixed(0)}%`;
+          if (eventCfg.rep_commission_pct != null) dataBlock += `\nDefault Rep Commission: ${(Number(eventCfg.rep_commission_pct) * 100).toFixed(0)}%`;
+          if (eventCfg.jde_commission_pct != null) dataBlock += `\nJDE Commission: ${(Number(eventCfg.jde_commission_pct) * 100).toFixed(0)}%`;
           if (eventCfg.target_units) dataBlock += `\nTarget Units: ${eventCfg.target_units}`;
-          if (eventCfg.target_gross) dataBlock += `\nTarget Gross: $${eventCfg.target_gross.toLocaleString()}`;
+          if (eventCfg.target_gross) dataBlock += `\nTarget Gross: $${Number(eventCfg.target_gross).toLocaleString()}`;
         }
 
         // Page-specific data enrichment
@@ -608,7 +633,8 @@ export async function POST(req: NextRequest) {
   let tier: Tier = "TIER_2"; // default to Sonnet if classification fails
 
   try {
-    const classification = await generateText({
+    // Race classifier against a timeout — never let classification block the response
+    const classifyPromise = generateText({
       model: anthropic("claude-haiku-4-20250414"),
       system: CLASSIFIER_PROMPT,
       prompt: `Classify this user message:\n\n"${userText}"`,
@@ -616,11 +642,19 @@ export async function POST(req: NextRequest) {
       temperature: 0,
     });
 
-    const parsed = JSON.parse(classification.text.trim());
-    if (parsed.tier && parsed.tier in TIER_CONFIG) {
-      tier = parsed.tier as Tier;
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+    const classification = await Promise.race([classifyPromise, timeoutPromise]);
+
+    if (classification && "text" in classification) {
+      const parsed = JSON.parse(classification.text.trim());
+      if (parsed.tier && parsed.tier in TIER_CONFIG) {
+        tier = parsed.tier as Tier;
+      }
+    } else {
+      console.warn("[ChatBot] Classifier timed out after 5s, defaulting to TIER_2");
     }
-  } catch {
+  } catch (classifyErr) {
+    console.warn("[ChatBot] Classification failed, defaulting to TIER_2:", classifyErr);
     // Classification failed — fall through to TIER_2 default
   }
 
@@ -846,16 +880,33 @@ export async function POST(req: NextRequest) {
   const config = TIER_CONFIG[tier];
   const cruzeTools = activeEventId ? buildCruzeTools(activeEventId) : undefined;
 
-  const result = streamText({
-    model: anthropic(config.model),
-    system: config.prompt + SHARED_CONFIG + contextBlock,
-    messages: formattedMessages,
-    ...(cruzeTools
-      ? { tools: cruzeTools, maxSteps: tier === "TIER_1" ? 2 : 4 }
-      : {}),
-    maxOutputTokens: config.maxOutputTokens,
-    temperature: config.temperature,
-  });
+  try {
+    const result = streamText({
+      model: anthropic(config.model),
+      system: config.prompt + SHARED_CONFIG + contextBlock,
+      messages: formattedMessages,
+      ...(cruzeTools
+        ? { tools: cruzeTools, maxSteps: tier === "TIER_1" ? 2 : 4 }
+        : {}),
+      maxOutputTokens: config.maxOutputTokens,
+      temperature: config.temperature,
+    });
 
-  return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse();
+  } catch (streamErr) {
+    console.error("[ChatBot] streamText / response error:", streamErr);
+    return new Response(
+      JSON.stringify({ error: "Cruze failed to generate a response. Please try again." }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  } catch (fatalErr) {
+    // Outermost catch — nothing should reach here, but if it does, return a clean error
+    console.error("[ChatBot] FATAL unhandled error:", fatalErr);
+    return new Response(
+      JSON.stringify({ error: "An unexpected error occurred. Please refresh and try again." }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
 }
