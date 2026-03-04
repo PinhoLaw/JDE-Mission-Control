@@ -797,16 +797,22 @@ export async function copySpreadsheet(
 // ─────────────────────────────────────────────────────────────
 // Google Sheets auto-creation — replaces Excel upload flow (March 2026)
 // CREATE FROM TEMPLATE — Auto-create a Google Sheet for a new event
+//
+// Uses a Google Apps Script web app deployed under the user's Gmail
+// account (mstopperich@gmail.com). This avoids service account storage
+// quota limits — the script runs as the user and creates sheets in
+// their personal Drive.
+//
+// See scripts/google-apps-script.js for the Apps Script source code.
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Create a new Google Sheet for an event by copying the master template.
+ * Create a new Google Sheet for an event by calling the Apps Script web app.
  *
- * Uses GOOGLE_TEMPLATE_SHEET_ID as the source template. If
- * GOOGLE_DRIVE_FOLDER_ID is set, the new sheet is moved into that folder.
+ * The Apps Script copies the master template, renames it, shares it
+ * publicly, and returns the new sheet ID + URL.
  *
- * The new sheet is shared with "anyone with the link" as editor so
- * dealership staff can immediately start entering data.
+ * Requires env var: GOOGLE_APPS_SCRIPT_URL (the deployed web app URL)
  *
  * @param eventName — used to title the new sheet: "${eventName} - JDE Mission Control"
  * @returns { sheetId, sheetUrl }
@@ -814,100 +820,52 @@ export async function copySpreadsheet(
 export async function createEventSheetFromTemplate(
   eventName: string,
 ): Promise<{ sheetId: string; sheetUrl: string }> {
-  const templateId = process.env.GOOGLE_TEMPLATE_SHEET_ID;
-  if (!templateId) {
+  const appsScriptUrl = process.env.GOOGLE_APPS_SCRIPT_URL;
+  if (!appsScriptUrl) {
     throw new Error(
-      "[GoogleSheets] Missing env var: GOOGLE_TEMPLATE_SHEET_ID. " +
-        "Set this to the Google Sheet ID of your master upload template.",
+      "[GoogleSheets] Missing env var: GOOGLE_APPS_SCRIPT_URL. " +
+        "Deploy the Apps Script web app (see scripts/google-apps-script.js) " +
+        "and set the deployment URL here.",
     );
   }
-
-  const newTitle = `${eventName} - JDE Mission Control`;
-  console.log(
-    `[GoogleSheets] createEventSheetFromTemplate: copying template ${templateId} → "${newTitle}"`,
-  );
-
-  // Step 1: Copy the template
-  const auth = createAuthClient();
-  await auth.authorize();
-  const token = (await auth.getAccessToken()).token;
-
-  const copyBody: Record<string, unknown> = { name: newTitle };
-
-  // If a folder ID is configured, place the copy there
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-  if (folderId) {
-    copyBody.parents = [folderId];
-  }
-
-  const copyRes = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${templateId}/copy`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(copyBody),
-    },
-  );
-
-  if (!copyRes.ok) {
-    const errBody = await copyRes.text();
-    throw new Error(
-      `[GoogleSheets] Template copy failed (${copyRes.status}): ${errBody}`,
-    );
-  }
-
-  const newFile = await copyRes.json();
-  const sheetId = newFile.id as string;
-  const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit`;
 
   console.log(
-    `[GoogleSheets] Created sheet: ${sheetId} → ${sheetUrl}`,
+    `[GoogleSheets] createEventSheetFromTemplate: calling Apps Script for "${eventName}"`,
   );
 
-  // Step 2: Share with anyone (editor) so dealership staff can use it immediately
-  try {
-    const shareRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${sheetId}/permissions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ role: "writer", type: "anyone" }),
-      },
+  const res = await fetch(appsScriptUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "createSheet",
+      eventName,
+    }),
+    // Apps Script redirects from the script URL to the execution URL;
+    // Node fetch follows redirects by default but needs to re-POST
+    redirect: "follow",
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(
+      `[GoogleSheets] Apps Script call failed (${res.status}): ${errBody}`,
     );
-
-    if (!shareRes.ok) {
-      console.warn(
-        `[GoogleSheets] Could not share sheet publicly: ${await shareRes.text()}`,
-      );
-    } else {
-      console.log("[GoogleSheets] Sheet shared: anyone with the link can edit");
-    }
-  } catch (shareErr) {
-    // Non-fatal — sheet was created, just not shared publicly
-    console.warn("[GoogleSheets] Share failed (non-fatal):", shareErr);
   }
 
-  // Step 3: If no folder was set during copy, move to folder after the fact
-  // (some Drive API versions require a separate call to move into folders)
-  if (folderId && !copyBody.parents) {
-    try {
-      await fetch(
-        `https://www.googleapis.com/drive/v3/files/${sheetId}?addParents=${folderId}`,
-        {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-    } catch {
-      console.warn("[GoogleSheets] Could not move to folder (non-fatal)");
-    }
+  const data = await res.json();
+
+  if (!data.success) {
+    throw new Error(
+      `[GoogleSheets] Apps Script returned error: ${data.error || "unknown"}`,
+    );
   }
 
-  return { sheetId, sheetUrl };
+  console.log(
+    `[GoogleSheets] Created sheet: ${data.sheetId} → ${data.sheetUrl}`,
+  );
+
+  return {
+    sheetId: data.sheetId,
+    sheetUrl: data.sheetUrl,
+  };
 }
