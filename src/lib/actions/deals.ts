@@ -598,6 +598,36 @@ export async function getDealsPerZip(eventId: string) {
 }
 
 // ────────────────────────────────────────────────────────
+// Fetch total gross per zip code (for Campaigns page)
+// Uses service role to bypass RLS — read-only aggregate.
+// ────────────────────────────────────────────────────────
+export async function getGrossPerZip(eventId: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    console.error("[getGrossPerZip] Missing Supabase env vars");
+    return {};
+  }
+
+  const admin = createServiceClient(url, serviceKey);
+
+  const { data: deals } = await admin
+    .from("sales_deals")
+    .select("customer_zip, total_gross")
+    .eq("event_id", eventId)
+    .not("customer_zip", "is", null);
+
+  const sums: Record<string, number> = {};
+  for (const d of deals ?? []) {
+    const zip = (d.customer_zip ?? "").trim();
+    const gross = d.total_gross ?? 0;
+    if (zip) sums[zip] = (sums[zip] ?? 0) + gross;
+  }
+  return sums;
+}
+
+// ────────────────────────────────────────────────────────
 // Look up vehicle by stock number for deal form
 // ────────────────────────────────────────────────────────
 export async function lookupVehicle(stockNumber: string, eventId: string) {

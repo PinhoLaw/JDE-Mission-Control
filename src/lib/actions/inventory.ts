@@ -84,7 +84,7 @@ export async function deleteVehicles(vehicleIds: string[], eventId: string) {
 // Allowlist of fields that can be inline-edited to prevent arbitrary field injection
 const EDITABLE_VEHICLE_FIELDS = new Set([
   "hat_number", "stock_number", "vin", "year", "make", "model", "trim",
-  "body_style", "color", "mileage", "age_days", "drivetrain",
+  "body_style", "color", "mileage", "age_days", "drivetrain", "location",
   "acquisition_cost", "jd_trade_clean", "jd_retail_clean",
   "asking_price_115", "asking_price_120", "asking_price_125", "asking_price_130",
   "profit_115", "profit_120", "profit_125", "profit_130",
@@ -211,4 +211,56 @@ export async function syncInventoryFromDeals(eventId: string) {
   revalidatePath("/dashboard");
 
   return { markedSold };
+}
+
+// ────────────────────────────────────────────────────────
+// Auto-create trade vehicle in inventory from deal data
+// ────────────────────────────────────────────────────────
+
+/**
+ * Create a vehicle_inventory record for a trade-in from deal data.
+ * Returns the new vehicle ID, or null if insufficient data.
+ */
+export async function createTradeVehicle(
+  eventId: string,
+  trade: {
+    year: number | null;
+    make: string | null;
+    model: string | null;
+    type: string | null;
+    mileage: number | null;
+    acv: number | null;
+  },
+): Promise<string | null> {
+  // Require at least make or model to create a vehicle record
+  if (!trade.make && !trade.model) return null;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return null;
+
+  const admin = createServiceClient(url, serviceKey);
+
+  const { data, error } = await admin
+    .from("vehicle_inventory")
+    .insert({
+      event_id: eventId,
+      year: trade.year,
+      make: trade.make,
+      model: trade.model,
+      body_style: trade.type,
+      mileage: trade.mileage,
+      acquisition_cost: trade.acv,
+      status: "available" as const,
+      label: "TRADE",
+      notes: "Auto-created from trade-in",
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("[createTradeVehicle]", error.message);
+    return null;
+  }
+  return data?.id ?? null;
 }

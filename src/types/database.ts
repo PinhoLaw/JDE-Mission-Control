@@ -319,6 +319,7 @@ export type Database = {
           salesperson_id: string | null;
           status: "available" | "sold" | "hold" | "pending" | "wholesale";
           label: string | null;
+          location: string | null;
           notes: string | null;
           photo_url: string | null;
           created_at: string;
@@ -357,6 +358,7 @@ export type Database = {
           salesperson_id?: string | null;
           status?: "available" | "sold" | "hold" | "pending" | "wholesale";
           label?: string | null;
+          location?: string | null;
           notes?: string | null;
           photo_url?: string | null;
           created_at?: string;
@@ -395,6 +397,7 @@ export type Database = {
           salesperson_id?: string | null;
           status?: "available" | "sold" | "hold" | "pending" | "wholesale";
           label?: string | null;
+          location?: string | null;
           notes?: string | null;
           photo_url?: string | null;
           created_at?: string;
@@ -407,6 +410,8 @@ export type Database = {
           id: string;
           event_id: string;
           vehicle_id: string | null;
+          vehicle_age: number | null;
+          trade_vehicle_id: string | null;
           deal_number: number | null;
           sale_day: number | null;
           sale_date: string | null;
@@ -465,6 +470,8 @@ export type Database = {
           id?: string;
           event_id: string;
           vehicle_id?: string | null;
+          vehicle_age?: number | null;
+          trade_vehicle_id?: string | null;
           deal_number?: number | null;
           sale_day?: number | null;
           sale_date?: string | null;
@@ -523,6 +530,8 @@ export type Database = {
           id?: string;
           event_id?: string;
           vehicle_id?: string | null;
+          vehicle_age?: number | null;
+          trade_vehicle_id?: string | null;
           deal_number?: number | null;
           sale_day?: number | null;
           sale_date?: string | null;
@@ -601,6 +610,7 @@ export type Database = {
           total_responses: number;
           response_rate: number | null;
           sold_from_mail: number;
+          gross_from_mail: number;
           created_at: string;
           updated_at: string;
         };
@@ -625,6 +635,7 @@ export type Database = {
           total_responses?: number;
           response_rate?: number | null;
           sold_from_mail?: number;
+          gross_from_mail?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -649,6 +660,7 @@ export type Database = {
           total_responses?: number;
           response_rate?: number | null;
           sold_from_mail?: number;
+          gross_from_mail?: number;
           created_at?: string;
           updated_at?: string;
         };

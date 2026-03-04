@@ -284,6 +284,7 @@ export const DB_FIELDS: FieldDef[] = [
   { value: "profit_125", label: "Profit 125%" },
   { value: "profit_130", label: "Profit 130%" },
   { value: "retail_spread", label: "Retail Spread" },
+  { value: "location", label: "Location" },
   { value: "label", label: "Label" },
   { value: "notes", label: "Notes" },
 ];
@@ -329,7 +330,10 @@ export function autoMapColumn(header: string): string {
     profit115: "profit_115", profit120: "profit_120",
     profit125: "profit_125", profit130: "profit_130",
     retailspread: "retail_spread", spread: "retail_spread", diff: "retail_spread",
-    label: "label", status: "label", location: "__skip__",
+    difference: "retail_spread",
+    label: "label", status: "label",
+    location: "location", vehlocation: "location", vehiclelocation: "location",
+    keylocation: "__skip__",
     notes: "notes", note: "notes",
   };
 
@@ -417,6 +421,7 @@ export const DEAL_DB_FIELDS: FieldDef[] = [
   { value: "vehicle_model", label: "Vehicle Model" },
   { value: "vehicle_type", label: "Vehicle Type" },
   { value: "vehicle_cost", label: "Vehicle Cost" },
+  { value: "vehicle_age", label: "Vehicle Age" },
   { value: "new_used", label: "New/Used" },
   { value: "trade_year", label: "Trade Year" },
   { value: "trade_make", label: "Trade Make" },
@@ -470,12 +475,16 @@ export function autoMapDealColumn(header: string): string {
     model: "vehicle_model", vehiclemodel: "vehicle_model",
     vehicletype: "vehicle_type", type: "vehicle_type",
     vehiclecost: "vehicle_cost", cost: "vehicle_cost", unitcost: "vehicle_cost",
+    // Vehicle age (days on lot)
+    age: "vehicle_age", vehicleage: "vehicle_age", lotdays: "vehicle_age",
+    agedays: "vehicle_age",
     newused: "new_used", condition: "new_used", newvused: "new_used",
     nu: "new_used",
     // Trade — single-word headers in trade position
     acv: "trade_acv",
     miles: "trade_mileage",
     payoff: "trade_payoff", owedontrade: "trade_payoff",
+    payof: "trade_payoff",
     // Trade — prefixed headers
     tradeyear: "trade_year", tradeyr: "trade_year",
     trademake: "trade_make",
@@ -491,11 +500,13 @@ export function autoMapDealColumn(header: string): string {
     // Salesperson
     salesperson: "salesperson", sp: "salesperson", salesrep: "salesperson",
     rep: "salesperson", soldby: "salesperson",
+    "1strep": "salesperson", firstrep: "salesperson",
     salespersonpct: "salesperson_pct", sppct: "salesperson_pct",
     spcommission: "salesperson_pct",
     secondsalesperson: "second_salesperson", sp2: "second_salesperson",
     secondsp: "second_salesperson", "2ndsp": "second_salesperson",
     "2ndsalesperson": "second_salesperson",
+    "2ndrep": "second_salesperson", secondrep: "second_salesperson",
     secondsppct: "second_sp_pct", sp2pct: "second_sp_pct",
     // Pricing
     sellingprice: "selling_price", saleprice: "selling_price",
@@ -551,9 +562,13 @@ export function autoMapDealColumn(header: string): string {
   if (raw.includes("service") && raw.includes("contract")) return "warranty";
   if (raw.includes("aftermarket") || raw.includes("after market")) return "aftermarket_1";
   if (raw.includes("lead") && raw.includes("source")) return "source";
+  if (raw.includes("vehicle") && raw.includes("age")) return "vehicle_age";
+  if (raw.includes("lot") && raw.includes("day")) return "vehicle_age";
   if (raw.includes("sold") && raw.includes("by")) return "salesperson";
   if (raw.includes("sales") && raw.includes("rep")) return "salesperson";
+  if (raw.includes("1st") && raw.includes("rep")) return "salesperson";
   if (raw.includes("2nd") && raw.includes("sp")) return "second_salesperson";
+  if (raw.includes("2nd") && raw.includes("rep")) return "second_salesperson";
 
   // Handle deduped header suffixes: "YEAR_2" → trade_year, "MAKE_2" → trade_make, etc.
   const dedupMatch = raw.match(/^(.+?)[\s_]+(\d+)$/);
@@ -670,6 +685,8 @@ export function autoMapCampaignsColumn(header: string): string {
     day12: "day_12", d12: "day_12", "12": "day_12",
     totalresponses: "total_responses", responses: "total_responses",
     totalresp: "total_responses", resp: "total_responses",
+    ziptotalups: "total_responses", totalups: "total_responses",
+    ziptotal: "total_responses",
   };
 
   if (exactMap[h]) return exactMap[h];

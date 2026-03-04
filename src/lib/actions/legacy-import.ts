@@ -4,7 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { ImportResult } from "./import-vehicles";
 import type { Database } from "@/types/database";
-import { syncInventoryFromDeals } from "./inventory";
+import { syncInventoryFromDeals, createTradeVehicle } from "./inventory";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
 
 type DealInsert = Database["public"]["Tables"]["sales_deals"]["Insert"];
 type LenderInsert = Database["public"]["Tables"]["lenders"]["Insert"];
@@ -157,6 +158,7 @@ export async function bulkImportDeals(
     const saleDay = parseNum(mapped.sale_day);
     const vehicleYear = parseNum(mapped.vehicle_year);
     const vehicleCost = parseNum(mapped.vehicle_cost);
+    const vehicleAge = parseNum(mapped.vehicle_age);
     const sellingPrice = parseNum(mapped.selling_price);
     const frontGrossRaw = parseNum(mapped.front_gross);
     const rate = parseNum(mapped.rate);
@@ -217,6 +219,7 @@ export async function bulkImportDeals(
       vehicle_model: str(mapped.vehicle_model),
       vehicle_type: str(mapped.vehicle_type),
       vehicle_cost: vehicleCost,
+      vehicle_age: vehicleAge,
       new_used: normalizeNewUsed(mapped.new_used),
       trade_year: tradeYear,
       trade_make: str(mapped.trade_make),
@@ -278,10 +281,14 @@ export async function bulkImportDeals(
   if (imported > 0) {
     await syncInventoryFromDeals(eventId);
     await matchSalespersonIds(eventId, supabase);
+    await createTradeVehiclesFromDeals(eventId);
+    await syncCampaignStatsFromDeals(eventId);
+    await syncDailyMetricsFromDeals(eventId);
   }
 
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/campaigns");
   revalidatePath("/dashboard");
 
   const totalSkipped = emptyRows + fluffRows + duplicates;
@@ -629,4 +636,199 @@ export async function bulkImportMailTracking(
     errorDetails,
     mode: "append",
   };
+}
+
+// ────────────────────────────────────────────────────────
+// Post-import: Auto-create trade vehicles from deal data
+// ────────────────────────────────────────────────────────
+
+async function createTradeVehiclesFromDeals(eventId: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return;
+
+  const admin = createServiceClient(url, serviceKey);
+
+  // Fetch deals with trade data that don't have trade_vehicle_id yet
+  const { data: deals } = await admin
+    .from("sales_deals")
+    .select(
+      "id, trade_year, trade_make, trade_model, trade_type, trade_mileage, trade_acv, trade_vehicle_id",
+    )
+    .eq("event_id", eventId)
+    .is("trade_vehicle_id", null);
+
+  if (!deals || deals.length === 0) return;
+
+  let created = 0;
+  for (const deal of deals) {
+    // Only create if there's meaningful trade data
+    if (!deal.trade_make && !deal.trade_model) continue;
+
+    const tradeVehicleId = await createTradeVehicle(eventId, {
+      year: deal.trade_year,
+      make: deal.trade_make,
+      model: deal.trade_model,
+      type: deal.trade_type,
+      mileage: deal.trade_mileage,
+      acv: deal.trade_acv,
+    });
+
+    if (tradeVehicleId) {
+      await admin
+        .from("sales_deals")
+        .update({ trade_vehicle_id: tradeVehicleId })
+        .eq("id", deal.id);
+      created++;
+    }
+  }
+
+  if (created > 0) {
+    console.log(
+      `[createTradeVehiclesFromDeals] Created ${created} trade vehicle records`,
+    );
+  }
+}
+
+// ────────────────────────────────────────────────────────
+// Post-import: Auto-sync campaign stats from deals
+// ────────────────────────────────────────────────────────
+
+async function syncCampaignStatsFromDeals(eventId: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return;
+
+  const admin = createServiceClient(url, serviceKey);
+
+  // Get all deals with customer_zip
+  const { data: deals } = await admin
+    .from("sales_deals")
+    .select("customer_zip, total_gross")
+    .eq("event_id", eventId)
+    .not("customer_zip", "is", null)
+    .not("status", "in", '("cancelled","unwound")');
+
+  if (!deals) return;
+
+  // Aggregate by zip: count and sum of total_gross
+  const zipStats = new Map<string, { count: number; gross: number }>();
+  for (const d of deals) {
+    const zip = (d.customer_zip ?? "").trim();
+    if (!zip) continue;
+    const entry = zipStats.get(zip) ?? { count: 0, gross: 0 };
+    entry.count++;
+    entry.gross += d.total_gross ?? 0;
+    zipStats.set(zip, entry);
+  }
+
+  // Get all mail_tracking rows for event
+  const { data: mailRows } = await admin
+    .from("mail_tracking")
+    .select("id, zip_code")
+    .eq("event_id", eventId);
+
+  if (!mailRows) return;
+
+  // Update each mail_tracking row with deal stats
+  let updated = 0;
+  for (const row of mailRows) {
+    const stats = zipStats.get(row.zip_code) ?? { count: 0, gross: 0 };
+    const { error } = await admin
+      .from("mail_tracking")
+      .update({
+        sold_from_mail: stats.count,
+        gross_from_mail: Math.round(stats.gross * 100) / 100,
+      })
+      .eq("id", row.id);
+    if (!error) updated++;
+  }
+
+  if (updated > 0) {
+    console.log(
+      `[syncCampaignStatsFromDeals] Updated ${updated} mail_tracking rows`,
+    );
+  }
+}
+
+// ────────────────────────────────────────────────────────
+// Post-import: Auto-sync daily metrics from deal timestamps
+// ────────────────────────────────────────────────────────
+
+async function syncDailyMetricsFromDeals(eventId: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return;
+
+  const admin = createServiceClient(url, serviceKey);
+
+  // Fetch all active deals for event
+  const { data: deals } = await admin
+    .from("sales_deals")
+    .select("created_at, sale_day, total_gross, front_gross, back_gross")
+    .eq("event_id", eventId)
+    .not("status", "in", '("cancelled","unwound")');
+
+  if (!deals || deals.length === 0) return;
+
+  // Group by DATE(created_at)
+  const byDate = new Map<
+    string,
+    {
+      saleDay: number;
+      totalGross: number;
+      totalFront: number;
+      totalBack: number;
+      count: number;
+    }
+  >();
+
+  for (const d of deals) {
+    const dateKey = (d.created_at ?? "").split("T")[0]; // YYYY-MM-DD
+    if (!dateKey) continue;
+    const entry = byDate.get(dateKey) ?? {
+      saleDay: d.sale_day ?? 1,
+      totalGross: 0,
+      totalFront: 0,
+      totalBack: 0,
+      count: 0,
+    };
+    entry.totalGross += d.total_gross ?? 0;
+    entry.totalFront += d.front_gross ?? 0;
+    entry.totalBack += d.back_gross ?? 0;
+    entry.count++;
+    byDate.set(dateKey, entry);
+  }
+
+  // Preserve existing total_ups values
+  const { data: existing } = await admin
+    .from("daily_metrics")
+    .select("sale_date, total_ups")
+    .eq("event_id", eventId);
+
+  const existingUps = new Map<string, number>();
+  for (const row of existing ?? []) {
+    if (row.sale_date) existingUps.set(row.sale_date, row.total_ups ?? 0);
+  }
+
+  // Delete existing metrics and re-insert with fresh data
+  await admin.from("daily_metrics").delete().eq("event_id", eventId);
+
+  const rows = [...byDate.entries()].map(([date, data]) => ({
+    event_id: eventId,
+    sale_day: data.saleDay,
+    sale_date: date,
+    total_ups: existingUps.get(date) ?? 0,
+    total_sold: data.count,
+    total_gross: Math.round(data.totalGross * 100) / 100,
+    total_front: Math.round(data.totalFront * 100) / 100,
+    total_back: Math.round(data.totalBack * 100) / 100,
+  }));
+
+  if (rows.length > 0) {
+    await admin.from("daily_metrics").insert(rows);
+    console.log(
+      `[syncDailyMetricsFromDeals] Synced ${rows.length} daily metric rows`,
+    );
+  }
 }

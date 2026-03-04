@@ -75,6 +75,60 @@ export async function createEvent(formData: FormData) {
 }
 
 // ────────────────────────────────────────────────────────────
+// Create event and return the ID (no redirect).
+// Used by the spreadsheet import flow so it can continue
+// importing data after the event is created.
+// ────────────────────────────────────────────────────────────
+
+export async function createEventAndReturnId(formData: FormData): Promise<string> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+
+  const name = formData.get("name") as string;
+  const dealerName = (formData.get("dealer_name") as string) || null;
+  const status = (formData.get("status") as string) || "draft";
+
+  if (!name) {
+    throw new Error("Event name is required");
+  }
+
+  const baseSlug = slugify(name);
+  const slug = `${baseSlug}-${Date.now().toString(36)}`;
+
+  const { data: event, error } = await supabase
+    .from("events")
+    .insert({
+      name,
+      slug,
+      status: status as "draft" | "active" | "completed" | "cancelled",
+      dealer_name: dealerName,
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  // Add creator as event owner
+  await supabase.from("event_members").insert({
+    event_id: event.id,
+    user_id: user.id,
+    role: "owner" as const,
+  });
+
+  return event.id;
+}
+
+// ────────────────────────────────────────────────────────────
 // Create event from template — copies config, roster, lenders,
 // and creates a new Google Sheet via Drive API
 // ────────────────────────────────────────────────────────────

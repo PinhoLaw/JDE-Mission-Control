@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
-import { getDealsPerZip } from "@/lib/actions/deals";
+import { getDealsPerZip, getGrossPerZip } from "@/lib/actions/deals";
 import type { MailTracking } from "@/types/database";
 import {
   Card,
@@ -31,11 +31,16 @@ export default function CampaignsPage() {
   const [loading, setLoading] = useState(true);
   // Deal zip counts: { "62656": 5, "62526": 3, ... }
   const [soldByZip, setSoldByZip] = useState<Record<string, number>>({});
+  // Deal gross sums per zip: { "62656": 12500, "62526": 8300, ... }
+  const [grossByZip, setGrossByZip] = useState<Record<string, number>>({});
 
   // Server-action fetch for deals per zip (reliable on production)
-  const refreshDealsPerZip = useCallback(
+  const refreshDealStats = useCallback(
     (eventId: string) =>
-      getDealsPerZip(eventId).then((counts) => setSoldByZip(counts)),
+      Promise.all([
+        getDealsPerZip(eventId).then((counts) => setSoldByZip(counts)),
+        getGrossPerZip(eventId).then((sums) => setGrossByZip(sums)),
+      ]),
     [],
   );
 
@@ -51,7 +56,7 @@ export default function CampaignsPage() {
         .eq("event_id", currentEvent.id)
         .order("pieces_sent", { ascending: false })
         .then(({ data: rows }) => setData(rows ?? [])),
-      refreshDealsPerZip(currentEvent.id),
+      refreshDealStats(currentEvent.id),
     ]).then(() => setLoading(false));
 
     // Realtime on mail_tracking
@@ -88,7 +93,7 @@ export default function CampaignsPage() {
           filter: `event_id=eq.${currentEvent.id}`,
         },
         () => {
-          refreshDealsPerZip(currentEvent.id);
+          refreshDealStats(currentEvent.id);
         },
       )
       .subscribe();
@@ -97,7 +102,7 @@ export default function CampaignsPage() {
       supabase.removeChannel(mailChannel);
       supabase.removeChannel(dealsChannel);
     };
-  }, [currentEvent, refreshDealsPerZip]);
+  }, [currentEvent, refreshDealStats]);
 
   const stats = useMemo(() => {
     const totalPieces = data.reduce((s, d) => s + (d.pieces_sent ?? 0), 0);
@@ -106,25 +111,35 @@ export default function CampaignsPage() {
       (s, d) => s + (soldByZip[d.zip_code] ?? 0),
       0,
     );
+    const totalGross = data.reduce(
+      (s, d) => s + (grossByZip[d.zip_code] ?? 0),
+      0,
+    );
     const rate = totalPieces > 0 ? (totalResponses / totalPieces) * 100 : 0;
+    const closeRate = totalResponses > 0 ? (totalSold / totalResponses) * 100 : 0;
     const topZips = [...data]
       .sort((a, b) => b.total_responses - a.total_responses)
       .slice(0, 5);
-    return { totalPieces, totalResponses, totalSold, rate, topZips };
-  }, [data, soldByZip]);
+    return { totalPieces, totalResponses, totalSold, totalGross, rate, closeRate, topZips };
+  }, [data, soldByZip, grossByZip]);
 
   const exportCSV = () => {
     const headers = [
       "Zip", "Town", "Pieces", "Day1", "Day2", "Day3", "Day4", "Day5",
-      "Day6", "Day7", "Total", "Sold", "Rate",
+      "Day6", "Day7", "Total", "Sold", "Gross", "Rate", "Close %",
     ];
-    const rows = data.map((r) =>
-      [
+    const rows = data.map((r) => {
+      const sold = soldByZip[r.zip_code] ?? 0;
+      const gross = grossByZip[r.zip_code] ?? 0;
+      const closePct = r.total_responses > 0
+        ? ((sold / r.total_responses) * 100).toFixed(1)
+        : "0.0";
+      return [
         r.zip_code, r.town, r.pieces_sent, r.day_1, r.day_2, r.day_3,
         r.day_4, r.day_5, r.day_6, r.day_7, r.total_responses,
-        soldByZip[r.zip_code] ?? 0, r.response_rate,
-      ].join(","),
-    );
+        sold, gross.toFixed(2), r.response_rate, `${closePct}%`,
+      ].join(",");
+    });
     const csv = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -173,7 +188,7 @@ export default function CampaignsPage() {
       ) : (
         <>
           {/* Stats */}
-          <div className="grid gap-4 sm:grid-cols-5">
+          <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
             <Card>
               <CardHeader className="pb-2">
                 <CardDescription>Total Pieces</CardDescription>
@@ -204,6 +219,16 @@ export default function CampaignsPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
+                <CardDescription>Gross from Mail</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-emerald-700">
+                  ${stats.totalGross.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
                 <CardDescription>Response Rate</CardDescription>
               </CardHeader>
               <CardContent>
@@ -214,10 +239,12 @@ export default function CampaignsPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardDescription>Zip Codes</CardDescription>
+                <CardDescription>Close Rate</CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-bold">{data.length}</p>
+                <p className="text-2xl font-bold text-purple-700">
+                  {stats.closeRate.toFixed(1)}%
+                </p>
               </CardContent>
             </Card>
           </div>
@@ -254,6 +281,12 @@ export default function CampaignsPage() {
                             • {soldByZip[z.zip_code]} sold
                           </span>
                         )}
+                        {(grossByZip[z.zip_code] ?? 0) > 0 && (
+                          <span className="text-emerald-700 dark:text-emerald-400 font-medium">
+                            {" "}
+                            • ${grossByZip[z.zip_code].toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                        )}
                       </p>
                     </div>
                   ))}
@@ -283,7 +316,9 @@ export default function CampaignsPage() {
                       ))}
                       <TableHead className="text-right">Total</TableHead>
                       <TableHead className="text-right">Sold</TableHead>
+                      <TableHead className="text-right">Gross</TableHead>
                       <TableHead className="text-right">Rate</TableHead>
+                      <TableHead className="text-right">Close %</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -328,9 +363,19 @@ export default function CampaignsPage() {
                         <TableCell className="text-right font-medium text-blue-700">
                           {soldByZip[row.zip_code] ?? 0}
                         </TableCell>
+                        <TableCell className="text-right font-medium text-emerald-700">
+                          {(grossByZip[row.zip_code] ?? 0) > 0
+                            ? `$${grossByZip[row.zip_code].toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                            : "—"}
+                        </TableCell>
                         <TableCell className="text-right">
                           {row.response_rate != null
                             ? `${(row.response_rate * 100).toFixed(1)}%`
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-purple-700">
+                          {row.total_responses > 0
+                            ? `${(((soldByZip[row.zip_code] ?? 0) / row.total_responses) * 100).toFixed(1)}%`
                             : "—"}
                         </TableCell>
                       </TableRow>
