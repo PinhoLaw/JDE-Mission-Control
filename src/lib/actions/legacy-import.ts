@@ -544,9 +544,11 @@ export async function bulkImportMailTracking(
       mapped[dbField] = raw[spreadsheetCol] ?? null;
     }
 
-    // zip_code is the required field
+    // zip_code is the required field — must be a 5-digit numeric code.
+    // Skip empty rows AND summary/label rows (e.g. "TOTAL", "NON FLYER")
+    // that spreadsheets often include at the bottom.
     const zipCode = mapped.zip_code ? String(mapped.zip_code).trim() : "";
-    if (!zipCode) continue; // skip empty rows
+    if (!zipCode || !/^\d{5}$/.test(zipCode)) continue;
 
     // Dedup check
     if (existingZips.has(zipCode)) {
