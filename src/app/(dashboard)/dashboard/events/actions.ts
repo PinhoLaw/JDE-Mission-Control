@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { slugify } from "@/lib/utils";
 import { copySpreadsheet } from "@/lib/services/googleSheets";
 
@@ -362,4 +363,81 @@ export async function fetchEventsForTemplateSelection() {
     .order("created_at", { ascending: false });
 
   return events ?? [];
+}
+
+// Delete Event feature - safe type-to-confirm deletion added March 2026
+// ────────────────────────────────────────────────────────────
+// Permanently delete an event and ALL related records.
+// Uses service-role client to bypass RLS and cascade through
+// all child tables. Requires owner role.
+// ────────────────────────────────────────────────────────────
+
+export async function deleteEvent(eventId: string): Promise<{ success: true }> {
+  // Verify user is authenticated
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+
+  // Verify user is an owner of this event
+  const { data: membership } = await supabase
+    .from("event_members")
+    .select("role")
+    .eq("event_id", eventId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!membership || membership.role !== "owner") {
+    throw new Error("Only event owners can delete events");
+  }
+
+  // Use service-role client to cascade deletes through all child tables
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) throw new Error("Missing service role key");
+  const admin = createServiceClient(url, serviceKey);
+
+  // Delete all child tables that reference event_id (order matters for FK constraints)
+  const childTables = [
+    "audit_logs",
+    "user_achievements",
+    "streaks",
+    "commissions",
+    "chargebacks",
+    "mail_tracking",
+    "daily_metrics",
+    "sales_deals",
+    "vehicle_inventory",
+    "roster",
+    "lenders",
+    "event_config",
+    "event_members",
+  ] as const;
+
+  for (const table of childTables) {
+    const { error } = await admin.from(table).delete().eq("event_id", eventId);
+    if (error) {
+      console.error(`[deleteEvent] Failed to delete from ${table}:`, error.message);
+      // Continue deleting other tables even if one fails
+    }
+  }
+
+  // Finally delete the event itself
+  const { error: eventError } = await admin
+    .from("events")
+    .delete()
+    .eq("id", eventId);
+
+  if (eventError) {
+    throw new Error(`Failed to delete event: ${eventError.message}`);
+  }
+
+  revalidatePath("/dashboard/events");
+  revalidatePath("/dashboard");
+
+  return { success: true };
 }

@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { LegacyUploadButton } from "@/components/events/legacy-spreadsheet-upload";
+import { DeleteEventButton } from "@/components/events/delete-event-button";
 import type { Database } from "@/types/database";
 
 type Event = Database["public"]["Tables"]["events"]["Row"];
@@ -181,7 +182,10 @@ export default async function EventOverviewPage({
               )}
             </div>
           </div>
-          <LegacyUploadButton eventId={eventId} sheetId={event.sheet_id} />
+          <div className="flex items-center gap-2">
+            <LegacyUploadButton eventId={eventId} sheetId={event.sheet_id} />
+            <DeleteEventButton eventId={eventId} eventName={event.name} />
+          </div>
         </div>
       </div>
 
