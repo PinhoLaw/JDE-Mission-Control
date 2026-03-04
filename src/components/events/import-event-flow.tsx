@@ -300,6 +300,16 @@ export function ImportEventFlow() {
     }
   }, [eventName, dealerName, sheets, router]);
 
+  // ── Memoized sheet groups (must be before early returns — React hooks rules) ──
+  const importableSheets = useMemo(
+    () => sheets.filter((s) => s.detectedType !== "unknown"),
+    [sheets],
+  );
+  const unknownSheets = useMemo(
+    () => sheets.filter((s) => s.detectedType === "unknown"),
+    [sheets],
+  );
+
   const typeLabel: Record<TabType, string> = {
     inventory: "Inventory",
     deals: "Deal Log",
@@ -375,16 +385,6 @@ export function ImportEventFlow() {
       </Card>
     );
   }
-
-  // ── Memoized sheet groups ──
-  const importableSheets = useMemo(
-    () => sheets.filter((s) => s.detectedType !== "unknown"),
-    [sheets],
-  );
-  const unknownSheets = useMemo(
-    () => sheets.filter((s) => s.detectedType === "unknown"),
-    [sheets],
-  );
 
   // ── Configure step (name event + select sheets) ──
   if (step === "configure") {
