@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
   AlertTriangle,
   Layers,
+  ChevronDown,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
@@ -34,6 +35,7 @@ import { bulkImportDeals, bulkImportMailTracking } from "@/lib/actions/legacy-im
 import { createEventAndReturnId } from "@/app/(dashboard)/dashboard/events/actions";
 import {
   detectTabType,
+  detectTabTypeFromHeaders,
   autoMapColumn,
   autoMapRosterColumn,
   autoMapDealColumn,
@@ -73,6 +75,7 @@ export function ImportEventFlow() {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState("");
   const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [showUnknown, setShowUnknown] = useState(false);
 
   // ── File scanning (lightweight — no row data) ──
   const parseFile = useCallback(async (file: File) => {
@@ -85,10 +88,15 @@ export function ImportEventFlow() {
 
       setFileName(result.fileName);
 
-      // Detect tab types for each sheet
+      // Detect tab types for each sheet — try sheet name first, then headers
       const sheetsWithTypes: SheetWithType[] = result.sheets.map((s) => {
-        const detectedType = detectTabType(s.name);
-        const importable = ["inventory", "deals", "roster", "campaigns"].includes(detectedType);
+        let detectedType = detectTabType(s.name);
+        // If sheet name didn't identify it, try content-based header detection
+        if (detectedType === "unknown" && s.headers.length > 0) {
+          const { tabType, score } = detectTabTypeFromHeaders(s.headers);
+          if (score >= 2) detectedType = tabType;
+        }
+        const importable = ["inventory", "deals", "roster", "campaigns", "lenders"].includes(detectedType);
         return { ...s, detectedType, selected: importable };
       });
 
@@ -100,8 +108,12 @@ export function ImportEventFlow() {
       setDealerName(baseName);
 
       setStep("configure");
-      const importableCount = sheetsWithTypes.filter((s) => s.selected).length;
-      toast.success(`Found ${result.sheets.length} sheets — ${importableCount} recognized for import`);
+      const importableCount = sheetsWithTypes.filter((s) => s.detectedType !== "unknown").length;
+      const unknownCount = sheetsWithTypes.filter((s) => s.detectedType === "unknown").length;
+      const msg = unknownCount > 0
+        ? `${importableCount} importable sheet(s) found, ${unknownCount} skipped`
+        : `${importableCount} sheet(s) recognized for import`;
+      toast.success(msg);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to parse file");
     } finally {
@@ -364,10 +376,55 @@ export function ImportEventFlow() {
     );
   }
 
+  // ── Memoized sheet groups ──
+  const importableSheets = useMemo(
+    () => sheets.filter((s) => s.detectedType !== "unknown"),
+    [sheets],
+  );
+  const unknownSheets = useMemo(
+    () => sheets.filter((s) => s.detectedType === "unknown"),
+    [sheets],
+  );
+
   // ── Configure step (name event + select sheets) ──
   if (step === "configure") {
     const selectedSheets = sheets.filter((s) => s.selected);
     const totalRows = selectedSheets.reduce((s, sh) => s + sh.rowCount, 0);
+
+    const renderSheetRow = (sheet: SheetWithType, i: number) => (
+      <button
+        key={i}
+        onClick={() => toggleSheet(sheets.indexOf(sheet))}
+        className={`w-full flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-colors ${
+          sheet.selected
+            ? "border-primary bg-primary/5"
+            : "border-muted hover:border-primary/20"
+        }`}
+      >
+        <Checkbox
+          checked={sheet.selected}
+          onCheckedChange={() => toggleSheet(sheets.indexOf(sheet))}
+          className="pointer-events-none"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold truncate">{sheet.name}</p>
+            <Badge
+              variant="secondary"
+              className={`text-[10px] ${typeColor[sheet.detectedType]}`}
+            >
+              {typeLabel[sheet.detectedType]}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {sheet.rowCount} rows · {sheet.headers.length} columns
+          </p>
+        </div>
+        <Badge variant="outline" className="shrink-0 text-xs">
+          {sheet.rowCount} rows
+        </Badge>
+      </button>
+    );
 
     return (
       <div className="space-y-4 max-w-2xl">
@@ -410,45 +467,34 @@ export function ImportEventFlow() {
               Sheets to Import
             </CardTitle>
             <CardDescription>
-              {fileName} — {sheets.length} sheets detected.
+              {fileName} — {importableSheets.length} importable sheet(s) detected.
               Uncheck any you don&apos;t want to import.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            {sheets.map((sheet, i) => (
-              <button
-                key={i}
-                onClick={() => toggleSheet(i)}
-                className={`w-full flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-colors ${
-                  sheet.selected
-                    ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-primary/20"
-                }`}
-              >
-                <Checkbox
-                  checked={sheet.selected}
-                  onCheckedChange={() => toggleSheet(i)}
-                  className="pointer-events-none"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold truncate">{sheet.name}</p>
-                    <Badge
-                      variant="secondary"
-                      className={`text-[10px] ${typeColor[sheet.detectedType]}`}
-                    >
-                      {typeLabel[sheet.detectedType]}
-                    </Badge>
+            {/* Importable sheets (always visible) */}
+            {importableSheets.map((sheet, i) => renderSheetRow(sheet, i))}
+
+            {/* Unknown sheets (collapsed by default) */}
+            {unknownSheets.length > 0 && (
+              <div className="mt-3">
+                <button
+                  onClick={() => setShowUnknown((v) => !v)}
+                  className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+                >
+                  <ChevronDown
+                    className={`h-3 w-3 transition-transform ${showUnknown ? "rotate-0" : "-rotate-90"}`}
+                  />
+                  {unknownSheets.length} unrecognized sheet(s) — click to{" "}
+                  {showUnknown ? "hide" : "show"}
+                </button>
+                {showUnknown && (
+                  <div className="space-y-2 mt-2">
+                    {unknownSheets.map((sheet, i) => renderSheetRow(sheet, i))}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    {sheet.rowCount} rows · {sheet.headers.length} columns
-                  </p>
-                </div>
-                <Badge variant="outline" className="shrink-0 text-xs">
-                  {sheet.rowCount} rows
-                </Badge>
-              </button>
-            ))}
+                )}
+              </div>
+            )}
 
             {selectedSheets.length > 0 && (
               <div className="rounded-md border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30 p-3 mt-3">

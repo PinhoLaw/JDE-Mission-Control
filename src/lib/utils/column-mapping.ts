@@ -29,6 +29,28 @@ export interface FieldDef {
 export function detectTabType(sheetName: string): TabType {
   const lower = sheetName.toLowerCase().trim();
 
+  // ── Exclusions: skip sheets that look like summaries / internal tools ──
+  // "Dealer Recap", "Salesperson Washout", "Washout", "Pay Calc", etc.
+  if (
+    lower.includes("recap") ||
+    lower.includes("washout") ||
+    lower.includes("pay calc") ||
+    lower.includes("commission") ||
+    lower.includes("performance") ||
+    lower.includes("chart") ||
+    lower.includes("data") ||
+    lower.includes("fix") ||
+    lower.includes("chargeback") ||
+    lower.includes("rollup") ||
+    lower.includes("credential") ||
+    lower.includes("information") ||
+    lower.includes("zip code") ||
+    /^day\s*\d+$/i.test(lower) ||
+    /^sheet\d+$/i.test(lower)
+  ) {
+    return "unknown";
+  }
+
   // Order matters — check more specific patterns first
   if (
     lower.includes("mail") ||
@@ -38,21 +60,19 @@ export function detectTabType(sheetName: string): TabType {
   ) {
     return "campaigns";
   }
+
+  // "Deal Log" but NOT "Dealer" (Dealer Recap already excluded above)
   if (
-    lower.includes("deal") ||
     lower.includes("deal log") ||
+    lower === "deal log" ||
+    lower === "deals" ||
     lower === "sales" ||
     lower.includes("sales log")
   ) {
     return "deals";
   }
-  if (
-    lower.includes("lender") ||
-    lower.includes("finance") ||
-    lower.includes("bank")
-  ) {
-    return "lenders";
-  }
+
+  // Roster check BEFORE lenders — "Roster & Lenders" should be roster
   if (
     lower.includes("roster") ||
     lower.includes("tables") ||
@@ -63,6 +83,15 @@ export function detectTabType(sheetName: string): TabType {
   ) {
     return "roster";
   }
+
+  if (
+    lower.includes("lender") ||
+    lower.includes("finance") ||
+    lower.includes("bank")
+  ) {
+    return "lenders";
+  }
+
   if (
     lower.includes("inventory") ||
     lower.includes("stock") ||

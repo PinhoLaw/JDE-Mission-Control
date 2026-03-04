@@ -180,6 +180,11 @@ export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
     const ws = workbook.worksheets[i];
     if (!ws || ws.rowCount < 2) continue;
 
+    // Skip hidden / very-hidden sheets (ExcelJS includes them by default)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sheetState = (ws as any).state;
+    if (sheetState === "hidden" || sheetState === "veryHidden") continue;
+
     // Quick header extraction — scan first 10 rows for best header
     let headerRowNum = 1;
     let bestScore = 0;
