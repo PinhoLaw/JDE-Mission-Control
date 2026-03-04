@@ -268,6 +268,8 @@ const HEADER_KEYWORDS = new Set([
   // Deal log keywords
   "deal", "customer", "gross", "reserve", "warranty", "gap", "lender",
   "acv", "payoff", "finance", "selling", "store", "zipcode",
+  // Campaign tracking keywords
+  "zip", "pieces", "sent", "sold", "town", "ups", "closing", "campaign",
 ]);
 
 // ────────────────────────────────────────────────────────
