@@ -793,3 +793,121 @@ export async function copySpreadsheet(
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${data.id}`,
   };
 }
+
+// ─────────────────────────────────────────────────────────────
+// Google Sheets auto-creation — replaces Excel upload flow (March 2026)
+// CREATE FROM TEMPLATE — Auto-create a Google Sheet for a new event
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Create a new Google Sheet for an event by copying the master template.
+ *
+ * Uses GOOGLE_TEMPLATE_SHEET_ID as the source template. If
+ * GOOGLE_DRIVE_FOLDER_ID is set, the new sheet is moved into that folder.
+ *
+ * The new sheet is shared with "anyone with the link" as editor so
+ * dealership staff can immediately start entering data.
+ *
+ * @param eventName — used to title the new sheet: "${eventName} - JDE Mission Control"
+ * @returns { sheetId, sheetUrl }
+ */
+export async function createEventSheetFromTemplate(
+  eventName: string,
+): Promise<{ sheetId: string; sheetUrl: string }> {
+  const templateId = process.env.GOOGLE_TEMPLATE_SHEET_ID;
+  if (!templateId) {
+    throw new Error(
+      "[GoogleSheets] Missing env var: GOOGLE_TEMPLATE_SHEET_ID. " +
+        "Set this to the Google Sheet ID of your master upload template.",
+    );
+  }
+
+  const newTitle = `${eventName} - JDE Mission Control`;
+  console.log(
+    `[GoogleSheets] createEventSheetFromTemplate: copying template ${templateId} → "${newTitle}"`,
+  );
+
+  // Step 1: Copy the template
+  const auth = createAuthClient();
+  await auth.authorize();
+  const token = (await auth.getAccessToken()).token;
+
+  const copyBody: Record<string, unknown> = { name: newTitle };
+
+  // If a folder ID is configured, place the copy there
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  if (folderId) {
+    copyBody.parents = [folderId];
+  }
+
+  const copyRes = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${templateId}/copy`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(copyBody),
+    },
+  );
+
+  if (!copyRes.ok) {
+    const errBody = await copyRes.text();
+    throw new Error(
+      `[GoogleSheets] Template copy failed (${copyRes.status}): ${errBody}`,
+    );
+  }
+
+  const newFile = await copyRes.json();
+  const sheetId = newFile.id as string;
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit`;
+
+  console.log(
+    `[GoogleSheets] Created sheet: ${sheetId} → ${sheetUrl}`,
+  );
+
+  // Step 2: Share with anyone (editor) so dealership staff can use it immediately
+  try {
+    const shareRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${sheetId}/permissions`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ role: "writer", type: "anyone" }),
+      },
+    );
+
+    if (!shareRes.ok) {
+      console.warn(
+        `[GoogleSheets] Could not share sheet publicly: ${await shareRes.text()}`,
+      );
+    } else {
+      console.log("[GoogleSheets] Sheet shared: anyone with the link can edit");
+    }
+  } catch (shareErr) {
+    // Non-fatal — sheet was created, just not shared publicly
+    console.warn("[GoogleSheets] Share failed (non-fatal):", shareErr);
+  }
+
+  // Step 3: If no folder was set during copy, move to folder after the fact
+  // (some Drive API versions require a separate call to move into folders)
+  if (folderId && !copyBody.parents) {
+    try {
+      await fetch(
+        `https://www.googleapis.com/drive/v3/files/${sheetId}?addParents=${folderId}`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+    } catch {
+      console.warn("[GoogleSheets] Could not move to folder (non-fatal)");
+    }
+  }
+
+  return { sheetId, sheetUrl };
+}

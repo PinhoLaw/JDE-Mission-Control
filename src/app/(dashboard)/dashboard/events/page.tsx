@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CalendarDays, MapPin, Plus } from "lucide-react";
+import { CalendarDays, MapPin, Plus, FileSpreadsheet, ExternalLink } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { CreateFromTemplateDialog } from "@/components/events/create-from-template-dialog";
 
@@ -95,11 +95,30 @@ export default async function EventsPage() {
                         ? new Date(event.start_date).toLocaleDateString()
                         : "No date set"}
                     </span>
-                    {event.budget != null && (
-                      <span className="font-medium text-foreground">
-                        {formatCurrency(event.budget)}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {/* Google Sheets auto-creation — replaces Excel upload flow (March 2026) */}
+                      {(event.sheet_url || event.sheet_id) && (
+                        <a
+                          href={
+                            event.sheet_url ||
+                            `https://docs.google.com/spreadsheets/d/${event.sheet_id}/edit`
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          title="Open Google Sheet"
+                        >
+                          <FileSpreadsheet className="h-3.5 w-3.5" />
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                      {event.budget != null && (
+                        <span className="font-medium text-foreground">
+                          {formatCurrency(event.budget)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

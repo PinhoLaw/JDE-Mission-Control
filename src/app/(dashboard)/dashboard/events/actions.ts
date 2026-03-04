@@ -5,7 +5,7 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { slugify } from "@/lib/utils";
-import { copySpreadsheet } from "@/lib/services/googleSheets";
+import { copySpreadsheet, createEventSheetFromTemplate } from "@/lib/services/googleSheets";
 
 export async function createEvent(formData: FormData) {
   const supabase = await createClient();
@@ -79,6 +79,20 @@ export async function createEvent(formData: FormData) {
     role: "owner" as const,
   });
 
+  // Google Sheets auto-creation — replaces Excel upload flow (March 2026)
+  // Automatically create a Google Sheet from the master template
+  try {
+    const { sheetId, sheetUrl } = await createEventSheetFromTemplate(name);
+    await admin
+      .from("events")
+      .update({ sheet_id: sheetId, sheet_url: sheetUrl })
+      .eq("id", event.id);
+    console.log(`[createEvent] Google Sheet created for "${name}": ${sheetUrl}`);
+  } catch (sheetErr) {
+    // Non-fatal — event is created, sheet can be linked later
+    console.error("[createEvent] Google Sheet creation failed (non-fatal):", sheetErr);
+  }
+
   redirect(`/dashboard/events/${event.id}/overview`);
 }
 
@@ -139,6 +153,18 @@ export async function createEventAndReturnId(formData: FormData): Promise<string
     user_id: user.id,
     role: "owner" as const,
   });
+
+  // Google Sheets auto-creation — replaces Excel upload flow (March 2026)
+  try {
+    const { sheetId, sheetUrl } = await createEventSheetFromTemplate(name);
+    await admin
+      .from("events")
+      .update({ sheet_id: sheetId, sheet_url: sheetUrl })
+      .eq("id", event.id);
+    console.log(`[createEventAndReturnId] Google Sheet created for "${name}": ${sheetUrl}`);
+  } catch (sheetErr) {
+    console.error("[createEventAndReturnId] Google Sheet creation failed (non-fatal):", sheetErr);
+  }
 
   return event.id;
 }

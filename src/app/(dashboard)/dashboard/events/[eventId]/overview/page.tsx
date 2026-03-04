@@ -28,10 +28,11 @@ import {
   Users,
   Package,
   ClipboardList,
-  Upload,
   FileSpreadsheet,
+  ExternalLink,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { OpenGoogleSheetButton } from "@/components/events/open-google-sheet-button";
 import { LegacyUploadButton } from "@/components/events/legacy-spreadsheet-upload";
 import { DeleteEventButton } from "@/components/events/delete-event-button";
 import type { Database } from "@/types/database";
@@ -182,7 +183,12 @@ export default async function EventOverviewPage({
               )}
             </div>
           </div>
+          {/* Google Sheets auto-creation — replaces Excel upload flow (March 2026) */}
           <div className="flex items-center gap-2">
+            <OpenGoogleSheetButton
+              sheetUrl={event.sheet_url}
+              sheetId={event.sheet_id}
+            />
             <LegacyUploadButton eventId={eventId} sheetId={event.sheet_id} />
             <DeleteEventButton eventId={eventId} eventName={event.name} />
           </div>
@@ -191,7 +197,7 @@ export default async function EventOverviewPage({
 
       <Separator />
 
-      {/* ── Upload Prompt (shown when event has no data) ── */}
+      {/* ── Google Sheet Prompt (shown when event has no data) ── */}
       {totalDeals === 0 && totalVehicles === 0 && (
         <Card className="border-dashed border-2 border-primary/30 bg-primary/5">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
@@ -199,20 +205,29 @@ export default async function EventOverviewPage({
               <FileSpreadsheet className="h-10 w-10 text-primary" />
             </div>
             <h2 className="text-xl font-semibold mb-2">
-              Upload Your Spreadsheet
+              Open Your Google Sheet
             </h2>
             <p className="text-muted-foreground max-w-md mb-6">
-              Import your event data from an Excel spreadsheet. The system
-              auto-detects tabs for Inventory, Deals, Roster, Lenders &amp;
-              Campaigns and maps columns for you.
+              A Google Sheet was automatically created for this event. Open it to
+              enter your Inventory, Deals, Roster, Lenders &amp; Campaign data,
+              then import it back into the dashboard.
             </p>
-            <LegacyUploadButton
-              eventId={eventId}
-              sheetId={event.sheet_id}
-              size="default"
-              variant="default"
-              label="Upload Spreadsheet"
-            />
+            <div className="flex items-center gap-3">
+              <OpenGoogleSheetButton
+                sheetUrl={event.sheet_url}
+                sheetId={event.sheet_id}
+                size="default"
+                variant="default"
+                label="Open Google Sheet"
+              />
+              <LegacyUploadButton
+                eventId={eventId}
+                sheetId={event.sheet_id}
+                size="default"
+                variant="outline"
+                label="Import Spreadsheet"
+              />
+            </div>
           </CardContent>
         </Card>
       )}

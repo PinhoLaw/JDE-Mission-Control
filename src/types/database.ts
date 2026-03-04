@@ -58,6 +58,7 @@ export type Database = {
           notes: string | null;
           created_by: string | null;
           sheet_id: string | null;
+          sheet_url: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -79,6 +80,7 @@ export type Database = {
           notes?: string | null;
           created_by?: string | null;
           sheet_id?: string | null;
+          sheet_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -100,6 +102,7 @@ export type Database = {
           notes?: string | null;
           created_by?: string | null;
           sheet_id?: string | null;
+          sheet_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };

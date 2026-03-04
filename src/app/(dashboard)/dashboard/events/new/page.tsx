@@ -1,3 +1,4 @@
+// Google Sheets auto-creation — replaces Excel upload flow (March 2026)
 "use client";
 
 import { useState } from "react";
@@ -53,14 +54,34 @@ export default function NewEventPage() {
       {/* ── Choice screen ── */}
       {mode === "choose" && (
         <div className="grid gap-4 sm:grid-cols-2 max-w-2xl">
+          <button onClick={() => setMode("manual")} className="text-left">
+            <Card className="h-full transition-shadow hover:shadow-md hover:border-primary/50 cursor-pointer border-primary/30">
+              <CardHeader>
+                <FileSpreadsheet className="h-8 w-8 text-primary mb-2" />
+                <CardTitle className="text-lg">Create Event</CardTitle>
+                <CardDescription>
+                  Set up event details and a Google Sheet will be automatically
+                  created from the master template — ready for your team to
+                  start entering data immediately.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">
+                  A Google Sheet with Deal Log, Inventory, Mail Tracking,
+                  Roster &amp; Lenders tabs will be auto-created and linked.
+                </p>
+              </CardContent>
+            </Card>
+          </button>
+
           <button onClick={() => setMode("import")} className="text-left">
             <Card className="h-full transition-shadow hover:shadow-md hover:border-primary/50 cursor-pointer">
               <CardHeader>
-                <FileSpreadsheet className="h-8 w-8 text-primary mb-2" />
-                <CardTitle className="text-lg">Import Spreadsheet</CardTitle>
+                <PenLine className="h-8 w-8 text-muted-foreground mb-2" />
+                <CardTitle className="text-lg">Import Existing Spreadsheet</CardTitle>
                 <CardDescription>
-                  Upload your JDE event spreadsheet to auto-create the event and
-                  import inventory, deals, roster, and campaign data all at once.
+                  Already have a completed spreadsheet? Upload it to create the
+                  event and import all data at once.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -71,31 +92,13 @@ export default function NewEventPage() {
               </CardContent>
             </Card>
           </button>
-
-          <button onClick={() => setMode("manual")} className="text-left">
-            <Card className="h-full transition-shadow hover:shadow-md hover:border-primary/50 cursor-pointer">
-              <CardHeader>
-                <PenLine className="h-8 w-8 text-primary mb-2" />
-                <CardTitle className="text-lg">Create from Scratch</CardTitle>
-                <CardDescription>
-                  Manually fill in event details — dealer name, dates, location,
-                  budget — and add data later.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground">
-                  Best for new events where you don&apos;t have a spreadsheet yet.
-                </p>
-              </CardContent>
-            </Card>
-          </button>
         </div>
       )}
 
-      {/* ── Manual creation (existing form) ── */}
+      {/* ── Standard creation (form + auto Google Sheet) ── */}
       {mode === "manual" && <CreateEventForm />}
 
-      {/* ── Import from spreadsheet ── */}
+      {/* ── Import from existing spreadsheet ── */}
       {mode === "import" && <ImportEventFlow />}
     </div>
   );
