@@ -26,9 +26,8 @@
 // ── Your master template sheet ID ──
 var TEMPLATE_SHEET_ID = "1zb2XMU7YwsFmQyGEEd5wjSJNlAYRiVA5ZBvL-CXF2XA";
 
-// ── Optional: folder ID to place new sheets in ──
-// Leave empty string to create in root Drive
-var DRIVE_FOLDER_ID = "";
+// ── Folder name for all event sheets ──
+var FOLDER_NAME = "JDE Mission Control Events";
 
 /**
  * Handle POST requests from the Next.js server
@@ -90,12 +89,10 @@ function createEventSheet(eventName) {
   var templateFile = DriveApp.getFileById(TEMPLATE_SHEET_ID);
   var newFile = templateFile.makeCopy(newTitle);
 
-  // 2. Move to folder if configured
-  if (DRIVE_FOLDER_ID) {
-    var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
-    folder.addFile(newFile);
-    DriveApp.getRootFolder().removeFile(newFile);
-  }
+  // 2. Move to "JDE Mission Control Events" folder (auto-create if missing)
+  var folder = getOrCreateFolder(FOLDER_NAME);
+  folder.addFile(newFile);
+  DriveApp.getRootFolder().removeFile(newFile);
 
   // 3. Set sharing — anyone with the link can edit
   newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
@@ -111,6 +108,17 @@ function createEventSheet(eventName) {
     sheetUrl: sheetUrl,
     title: newTitle
   };
+}
+
+/**
+ * Find existing folder by name, or create it in root Drive
+ */
+function getOrCreateFolder(name) {
+  var folders = DriveApp.getFoldersByName(name);
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+  return DriveApp.createFolder(name);
 }
 
 /**

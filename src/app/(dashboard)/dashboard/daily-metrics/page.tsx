@@ -1,3 +1,4 @@
+// Daily Metrics auto-sync from Google Sheet Deal Log — removes double entry
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -8,6 +9,7 @@ import { formatCurrency } from "@/lib/utils";
 import {
   bulkUpsertDailyMetrics,
   deleteDailyMetric,
+  refreshDailyMetricsFromSheet,
 } from "@/lib/actions/daily-metrics";
 import {
   Card,
@@ -37,6 +39,7 @@ import {
   Users,
   DollarSign,
   RotateCcw,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -56,9 +59,10 @@ interface EditableRow {
   notes: string;
   _dirty: boolean; // track if row was modified
   _isNew: boolean; // track if this is a new unsaved row
+  _fromSheet: boolean; // track if sold/gross data came from Google Sheet
 }
 
-function metricToRow(m: DailyMetric): EditableRow {
+function metricToRow(m: DailyMetric, sheetDates?: Set<string>): EditableRow {
   return {
     id: m.id,
     sale_day: m.sale_day,
@@ -71,6 +75,7 @@ function metricToRow(m: DailyMetric): EditableRow {
     notes: m.notes ?? "",
     _dirty: false,
     _isNew: false,
+    _fromSheet: sheetDates ? sheetDates.has(m.sale_date ?? "") : false,
   };
 }
 
@@ -86,6 +91,7 @@ function emptyRow(saleDay: number): EditableRow {
     notes: "",
     _dirty: true,
     _isNew: true,
+    _fromSheet: false,
   };
 }
 
@@ -98,6 +104,11 @@ export default function DailyMetricsPage() {
   const [rows, setRows] = useState<EditableRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  // Track which dates have sheet-synced data
+  const [sheetDates, setSheetDates] = useState<Set<string>>(new Set());
+
+  const hasLinkedSheet = !!(currentEvent?.sheet_id);
 
   // -----------------------------------------------------------------------
   // Fetch existing daily_metrics
@@ -119,13 +130,47 @@ export default function DailyMetricsPage() {
       toast.error("Failed to load daily metrics");
     }
 
-    setRows((data ?? []).map(metricToRow));
+    setRows((data ?? []).map((m) => metricToRow(m, sheetDates)));
     setLoading(false);
-  }, [currentEvent]);
+  }, [currentEvent, sheetDates]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // -----------------------------------------------------------------------
+  // Refresh from Google Sheet
+  // -----------------------------------------------------------------------
+
+  const syncFromSheet = useCallback(async () => {
+    if (!currentEvent?.sheet_id) return;
+    setSyncing(true);
+
+    try {
+      const result = await refreshDailyMetricsFromSheet(
+        currentEvent.id,
+        currentEvent.sheet_id,
+      );
+
+      if (result.success) {
+        // Track which dates came from the sheet
+        const dates = new Set(result.sheetMetrics.map((m) => m.sale_date));
+        setSheetDates(dates);
+
+        toast.success(
+          `Synced ${result.daysUpdated} day(s), ${result.totalDeals} deals from Google Sheet`,
+        );
+        // Reload to get updated data
+        await loadData();
+      }
+    } catch (err) {
+      toast.error(
+        `Sheet sync failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }, [currentEvent, loadData]);
 
   // -----------------------------------------------------------------------
   // Row manipulation
@@ -260,6 +305,23 @@ export default function DailyMetricsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Refresh from Google Sheet — prominent green button */}
+          {hasLinkedSheet && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={syncFromSheet}
+              disabled={syncing || loading}
+              className="border-green-300 text-green-700 hover:bg-green-50 hover:text-green-800 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
+            >
+              {syncing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="h-4 w-4" />
+              )}
+              Refresh from Google Sheet
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -361,8 +423,18 @@ export default function DailyMetricsPage() {
             <CardHeader>
               <CardTitle>Day-by-Day Entry</CardTitle>
               <CardDescription>
-                Enter or edit metrics for each sale day. Changed rows are
-                highlighted and saved with the Save button.
+                {hasLinkedSheet ? (
+                  <>
+                    Sold, Gross, Front &amp; Back are auto-filled from the
+                    Google Sheet. <strong>Ups</strong> and{" "}
+                    <strong>Notes</strong> are manual.
+                  </>
+                ) : (
+                  <>
+                    Enter or edit metrics for each sale day. Changed rows are
+                    highlighted and saved with the Save button.
+                  </>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -370,12 +442,30 @@ export default function DailyMetricsPage() {
                 <div className="flex flex-col items-center justify-center py-12">
                   <CalendarDays className="h-12 w-12 text-muted-foreground mb-4" />
                   <p className="text-muted-foreground mb-4">
-                    No daily metrics yet. Click &quot;Add Day&quot; to start
-                    entering data.
+                    {hasLinkedSheet
+                      ? 'No daily metrics yet. Click "Refresh from Google Sheet" to pull deal data, or "Add Day" to enter manually.'
+                      : 'No daily metrics yet. Click "Add Day" to start entering data.'}
                   </p>
-                  <Button variant="outline" onClick={addDay}>
-                    <Plus className="h-4 w-4" /> Add Day 1
-                  </Button>
+                  <div className="flex gap-2">
+                    {hasLinkedSheet && (
+                      <Button
+                        variant="outline"
+                        onClick={syncFromSheet}
+                        disabled={syncing}
+                        className="border-green-300 text-green-700 hover:bg-green-50"
+                      >
+                        {syncing ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <FileSpreadsheet className="h-4 w-4" />
+                        )}
+                        Refresh from Google Sheet
+                      </Button>
+                    )}
+                    <Button variant="outline" onClick={addDay}>
+                      <Plus className="h-4 w-4" /> Add Day 1
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-md border">
@@ -421,6 +511,9 @@ export default function DailyMetricsPage() {
                               weekday: "short",
                             })
                           : "";
+                        const isAutoFilled =
+                          row._fromSheet ||
+                          sheetDates.has(row.sale_date);
 
                         return (
                           <TableRow
@@ -428,7 +521,9 @@ export default function DailyMetricsPage() {
                             className={
                               row._dirty
                                 ? "bg-yellow-50 dark:bg-yellow-950/30"
-                                : ""
+                                : isAutoFilled
+                                  ? "bg-green-50/50 dark:bg-green-950/20"
+                                  : ""
                             }
                           >
                             {/* Day number */}
@@ -443,6 +538,15 @@ export default function DailyMetricsPage() {
                                     className="text-[10px] px-1 py-0"
                                   >
                                     new
+                                  </Badge>
+                                )}
+                                {isAutoFilled && !row._isNew && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] px-1 py-0 border-green-300 text-green-700 dark:border-green-700 dark:text-green-400"
+                                  >
+                                    <FileSpreadsheet className="h-2.5 w-2.5 mr-0.5" />
+                                    Sheet
                                   </Badge>
                                 )}
                               </div>
@@ -465,7 +569,7 @@ export default function DailyMetricsPage() {
                               />
                             </TableCell>
 
-                            {/* Ups */}
+                            {/* Ups — always manual/editable */}
                             <TableCell>
                               <Input
                                 type="number"
@@ -483,76 +587,100 @@ export default function DailyMetricsPage() {
                               />
                             </TableCell>
 
-                            {/* Sold */}
+                            {/* Sold — auto-filled when sheet linked, otherwise editable */}
                             <TableCell>
-                              <Input
-                                type="number"
-                                min={0}
-                                value={row.total_sold || ""}
-                                onChange={(e) =>
-                                  updateRow(
-                                    idx,
-                                    "total_sold",
-                                    parseInt(e.target.value) || 0,
-                                  )
-                                }
-                                placeholder="0"
-                                className="h-8 text-sm text-right"
-                              />
+                              {isAutoFilled ? (
+                                <div className="text-right text-sm font-medium pr-3 text-green-700 dark:text-green-400">
+                                  {row.total_sold}
+                                </div>
+                              ) : (
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={row.total_sold || ""}
+                                  onChange={(e) =>
+                                    updateRow(
+                                      idx,
+                                      "total_sold",
+                                      parseInt(e.target.value) || 0,
+                                    )
+                                  }
+                                  placeholder="0"
+                                  className="h-8 text-sm text-right"
+                                />
+                              )}
                             </TableCell>
 
-                            {/* Total Gross */}
+                            {/* Total Gross — auto-filled when sheet linked */}
                             <TableCell>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={row.total_gross || ""}
-                                onChange={(e) =>
-                                  updateRow(
-                                    idx,
-                                    "total_gross",
-                                    parseFloat(e.target.value) || 0,
-                                  )
-                                }
-                                placeholder="0.00"
-                                className="h-8 text-sm text-right"
-                              />
+                              {isAutoFilled ? (
+                                <div className="text-right text-sm font-medium pr-3 text-green-700 dark:text-green-400">
+                                  {formatCurrency(row.total_gross)}
+                                </div>
+                              ) : (
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={row.total_gross || ""}
+                                  onChange={(e) =>
+                                    updateRow(
+                                      idx,
+                                      "total_gross",
+                                      parseFloat(e.target.value) || 0,
+                                    )
+                                  }
+                                  placeholder="0.00"
+                                  className="h-8 text-sm text-right"
+                                />
+                              )}
                             </TableCell>
 
-                            {/* Front Gross */}
+                            {/* Front Gross — auto-filled when sheet linked */}
                             <TableCell>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={row.total_front || ""}
-                                onChange={(e) =>
-                                  updateRow(
-                                    idx,
-                                    "total_front",
-                                    parseFloat(e.target.value) || 0,
-                                  )
-                                }
-                                placeholder="0.00"
-                                className="h-8 text-sm text-right"
-                              />
+                              {isAutoFilled ? (
+                                <div className="text-right text-sm font-medium pr-3 text-green-700 dark:text-green-400">
+                                  {formatCurrency(row.total_front)}
+                                </div>
+                              ) : (
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={row.total_front || ""}
+                                  onChange={(e) =>
+                                    updateRow(
+                                      idx,
+                                      "total_front",
+                                      parseFloat(e.target.value) || 0,
+                                    )
+                                  }
+                                  placeholder="0.00"
+                                  className="h-8 text-sm text-right"
+                                />
+                              )}
                             </TableCell>
 
-                            {/* Back Gross */}
+                            {/* Back Gross — auto-filled when sheet linked */}
                             <TableCell>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={row.total_back || ""}
-                                onChange={(e) =>
-                                  updateRow(
-                                    idx,
-                                    "total_back",
-                                    parseFloat(e.target.value) || 0,
-                                  )
-                                }
-                                placeholder="0.00"
-                                className="h-8 text-sm text-right"
-                              />
+                              {isAutoFilled ? (
+                                <div className="text-right text-sm font-medium pr-3 text-green-700 dark:text-green-400">
+                                  {formatCurrency(row.total_back)}
+                                </div>
+                              ) : (
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={row.total_back || ""}
+                                  onChange={(e) =>
+                                    updateRow(
+                                      idx,
+                                      "total_back",
+                                      parseFloat(e.target.value) || 0,
+                                    )
+                                  }
+                                  placeholder="0.00"
+                                  className="h-8 text-sm text-right"
+                                />
+                              )}
                             </TableCell>
 
                             {/* Close % (computed, read-only) */}
@@ -569,7 +697,7 @@ export default function DailyMetricsPage() {
                               </span>
                             </TableCell>
 
-                            {/* Notes */}
+                            {/* Notes — always manual/editable */}
                             <TableCell>
                               <Input
                                 value={row.notes}

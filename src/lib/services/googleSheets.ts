@@ -795,6 +795,180 @@ export async function copySpreadsheet(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Daily Metrics auto-sync from Google Sheet Deal Log — removes double entry
+// READ DEAL LOG — Pull deal data and aggregate by date for daily metrics
+// ─────────────────────────────────────────────────────────────
+
+export interface DailyMetricRow {
+  sale_date: string; // YYYY-MM-DD
+  total_sold: number;
+  total_gross: number;
+  total_front: number;
+  total_back: number;
+}
+
+/**
+ * Read the "DEAL LOG" tab from an event's Google Sheet and aggregate
+ * deal data by date. Returns one DailyMetricRow per unique sale date.
+ *
+ * Uses the same service-account auth that powers all other sheet reads.
+ * The service account must have at least Viewer access on the event sheet.
+ *
+ * @param sheetId — the Google Spreadsheet ID (event.sheet_id)
+ * @returns Array of aggregated daily metrics sorted by date
+ */
+export async function getDailyMetricsFromSheet(
+  sheetId: string,
+): Promise<DailyMetricRow[]> {
+  const auth = createAuthClient();
+  await auth.authorize();
+  const token = (await auth.getAccessToken()).token;
+
+  // Read all data from DEAL LOG tab
+  const range = encodeURIComponent("'DEAL LOG'!A:ZZ");
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}` +
+    `/values/${range}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(
+      `[GoogleSheets] getDailyMetricsFromSheet failed (${res.status}): ${errBody}`,
+    );
+  }
+
+  const data = await res.json();
+  const allRows: string[][] = data.values ?? [];
+
+  if (allRows.length < 2) {
+    console.log("[GoogleSheets] getDailyMetricsFromSheet: no data rows found");
+    return [];
+  }
+
+  // Parse headers (row 0) to find column indices
+  const headers = allRows[0].map((h) =>
+    String(h).trim().toUpperCase().replace(/[^A-Z0-9]/g, ""),
+  );
+
+  const dateIdx = headers.findIndex(
+    (h) => h === "DATE" || h === "SALEDATE" || h === "SOLDDATE",
+  );
+  const frontGrossIdx = headers.findIndex(
+    (h) => h === "FRONTGROSS" || h === "FRONT" || h === "FEG",
+  );
+  // Back gross components: RESERVE, WARRANTY, GAP, AFT1, AFT2
+  const reserveIdx = headers.findIndex((h) => h === "RESERVE");
+  const warrantyIdx = headers.findIndex((h) => h === "WARRANTY");
+  const gapIdx = headers.findIndex((h) => h === "GAP");
+  const aft1Idx = headers.findIndex((h) => h === "AFT1");
+  const aft2Idx = headers.findIndex((h) => h === "AFT2");
+
+  if (dateIdx === -1) {
+    throw new Error(
+      "[GoogleSheets] getDailyMetricsFromSheet: no DATE column found in DEAL LOG headers. " +
+        `Found: ${allRows[0].join(", ")}`,
+    );
+  }
+
+  // Aggregate by date
+  const byDate = new Map<
+    string,
+    { sold: number; frontGross: number; backGross: number }
+  >();
+
+  for (let i = 1; i < allRows.length; i++) {
+    const row = allRows[i];
+    const rawDate = row[dateIdx]?.trim();
+    if (!rawDate) continue;
+
+    // Parse date — support multiple formats (M/D/YYYY, YYYY-MM-DD, etc.)
+    const parsed = parseSheetDate(rawDate);
+    if (!parsed) continue;
+
+    const frontGross =
+      frontGrossIdx >= 0 ? parseSheetNum(row[frontGrossIdx]) : 0;
+
+    // Sum back gross components
+    const reserve = reserveIdx >= 0 ? parseSheetNum(row[reserveIdx]) : 0;
+    const warranty = warrantyIdx >= 0 ? parseSheetNum(row[warrantyIdx]) : 0;
+    const gap = gapIdx >= 0 ? parseSheetNum(row[gapIdx]) : 0;
+    const aft1 = aft1Idx >= 0 ? parseSheetNum(row[aft1Idx]) : 0;
+    const aft2 = aft2Idx >= 0 ? parseSheetNum(row[aft2Idx]) : 0;
+    const backGross = reserve + warranty + gap + aft1 + aft2;
+
+    const existing = byDate.get(parsed) ?? {
+      sold: 0,
+      frontGross: 0,
+      backGross: 0,
+    };
+    existing.sold += 1;
+    existing.frontGross += frontGross;
+    existing.backGross += backGross;
+    byDate.set(parsed, existing);
+  }
+
+  // Convert to sorted array
+  const result: DailyMetricRow[] = Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, agg]) => ({
+      sale_date: date,
+      total_sold: agg.sold,
+      total_front: Math.round(agg.frontGross * 100) / 100,
+      total_back: Math.round(agg.backGross * 100) / 100,
+      total_gross:
+        Math.round((agg.frontGross + agg.backGross) * 100) / 100,
+    }));
+
+  console.log(
+    `[GoogleSheets] getDailyMetricsFromSheet(${sheetId}) → ${result.length} days, ` +
+      `${result.reduce((s, r) => s + r.total_sold, 0)} total deals`,
+  );
+
+  return result;
+}
+
+/** Parse a number from a sheet cell — handles $1,234.56, (1234), etc. */
+function parseSheetNum(raw: string | undefined): number {
+  if (!raw) return 0;
+  // Remove $, commas, spaces
+  let cleaned = raw.replace(/[$,\s]/g, "");
+  // Handle accounting negative: (1234) → -1234
+  if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
+    cleaned = "-" + cleaned.slice(1, -1);
+  }
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
+/** Parse a date from a sheet cell → YYYY-MM-DD string */
+function parseSheetDate(raw: string): string | null {
+  // Try YYYY-MM-DD first
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  // Try M/D/YYYY or MM/DD/YYYY
+  const slashMatch = raw.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/);
+  if (slashMatch) {
+    const month = slashMatch[1].padStart(2, "0");
+    const day = slashMatch[2].padStart(2, "0");
+    let year = slashMatch[3];
+    if (year.length === 2) year = "20" + year;
+    return `${year}-${month}-${day}`;
+  }
+
+  // Try Date.parse as fallback
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().split("T")[0];
+  }
+
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Google Sheets auto-creation — replaces Excel upload flow (March 2026)
 // CREATE FROM TEMPLATE — Auto-create a Google Sheet for a new event
 //
