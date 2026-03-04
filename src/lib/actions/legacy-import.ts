@@ -491,6 +491,7 @@ export async function bulkImportMailTracking(
   rows: Record<string, string>[],
   columnMap: Record<string, string>,
   eventId: string,
+  campaignSource: string = "current",
 ): Promise<ImportResult> {
   const supabase = await createClient();
 
@@ -520,11 +521,12 @@ export async function bulkImportMailTracking(
     }
   }
 
-  // Fetch existing zip codes for dedup
+  // Fetch existing zip codes for dedup (scoped by campaign_source)
   const { data: existing } = await supabase
     .from("mail_tracking")
     .select("zip_code")
-    .eq("event_id", eventId);
+    .eq("event_id", eventId)
+    .eq("campaign_source", campaignSource);
 
   const existingZips = new Set(
     (existing ?? []).map((r) => String(r.zip_code).trim()),
@@ -581,6 +583,10 @@ export async function bulkImportMailTracking(
 
     const town = mapped.town ? String(mapped.town).trim() || null : null;
 
+    // Use mapped sold/gross values from the spreadsheet (fall back to 0)
+    const soldFromMail = parseNum(mapped.sold_from_mail) ?? 0;
+    const grossFromMail = parseNum(mapped.gross_from_mail) ?? 0;
+
     toInsert.push({
       event_id: eventId,
       zip_code: zipCode,
@@ -600,7 +606,9 @@ export async function bulkImportMailTracking(
       day_12: day12,
       total_responses: totalResponses,
       response_rate: responseRate,
-      sold_from_mail: 0,
+      sold_from_mail: soldFromMail,
+      gross_from_mail: grossFromMail,
+      campaign_source: campaignSource,
     });
   }
 

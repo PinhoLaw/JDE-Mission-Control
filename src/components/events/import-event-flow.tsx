@@ -258,6 +258,16 @@ export function ImportEventFlow() {
         }
 
         if (detectedType === "campaigns") {
+          // Determine campaign_source: "current" for main Campaign Tracking sheet,
+          // otherwise use the sheet name (e.g. "June 2025 Campaign Data")
+          const sheetNameLower = sheet.name.toLowerCase().trim();
+          const isCurrent =
+            sheetNameLower === "campaign tracking" ||
+            sheetNameLower === "campaigns" ||
+            sheetNameLower === "campaign" ||
+            sheetNameLower === "mail tracking";
+          const campaignSource = isCurrent ? "current" : sheet.name.trim();
+
           setImportProgress(`Importing campaign data (${parsedRows.length} rows)...`);
           const colMap: Record<string, string> = {};
           for (const h of parsedHeaders) colMap[h] = autoMapCampaignsColumn(h);
@@ -266,6 +276,7 @@ export function ImportEventFlow() {
               parsedRows as Record<string, string>[],
               colMap,
               eventId,
+              campaignSource,
             );
             campaignCount += result.imported;
             if (result.errors > 0) errors.push(`Campaigns: ${result.errors} row errors`);

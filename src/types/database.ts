@@ -611,6 +611,7 @@ export type Database = {
           response_rate: number | null;
           sold_from_mail: number;
           gross_from_mail: number;
+          campaign_source: string;
           created_at: string;
           updated_at: string;
         };
@@ -636,6 +637,7 @@ export type Database = {
           response_rate?: number | null;
           sold_from_mail?: number;
           gross_from_mail?: number;
+          campaign_source?: string;
           created_at?: string;
           updated_at?: string;
         };
@@ -661,6 +663,7 @@ export type Database = {
           response_rate?: number | null;
           sold_from_mail?: number;
           gross_from_mail?: number;
+          campaign_source?: string;
           created_at?: string;
           updated_at?: string;
         };

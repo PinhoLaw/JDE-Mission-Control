@@ -628,6 +628,38 @@ export async function getGrossPerZip(eventId: string) {
 }
 
 // ────────────────────────────────────────────────────────
+// Fetch distinct campaign_source values for event
+// (for the Current/Previous campaign toggle dropdown)
+// ────────────────────────────────────────────────────────
+export async function getCampaignSources(eventId: string): Promise<string[]> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    console.error("[getCampaignSources] Missing Supabase env vars");
+    return ["current"];
+  }
+
+  const admin = createServiceClient(url, serviceKey);
+
+  const { data: rows } = await admin
+    .from("mail_tracking")
+    .select("campaign_source")
+    .eq("event_id", eventId);
+
+  if (!rows || rows.length === 0) return ["current"];
+
+  // Get distinct values, put "current" first
+  const unique = [...new Set(rows.map((r) => r.campaign_source))];
+  const sorted = unique.sort((a, b) => {
+    if (a === "current") return -1;
+    if (b === "current") return 1;
+    return a.localeCompare(b);
+  });
+  return sorted;
+}
+
+// ────────────────────────────────────────────────────────
 // Look up vehicle by stock number for deal form
 // ────────────────────────────────────────────────────────
 export async function lookupVehicle(stockNumber: string, eventId: string) {

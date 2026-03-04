@@ -683,6 +683,8 @@ export const CAMPAIGNS_DB_FIELDS: FieldDef[] = [
   { value: "day_11", label: "Day 11" },
   { value: "day_12", label: "Day 12" },
   { value: "total_responses", label: "Total Responses" },
+  { value: "sold_from_mail", label: "# Sold" },
+  { value: "gross_from_mail", label: "Gross per ZIP" },
 ];
 
 /**
@@ -716,6 +718,13 @@ export function autoMapCampaignsColumn(header: string): string {
     totalresp: "total_responses", resp: "total_responses",
     ziptotalups: "total_responses", totalups: "total_responses",
     ziptotal: "total_responses",
+    // # SOLD column (column E in standardized format)
+    sold: "sold_from_mail", numsold: "sold_from_mail",
+    soldfrommail: "sold_from_mail", soldmail: "sold_from_mail",
+    // Gross per ZIP
+    grossperzip: "gross_from_mail", grossperzipcode: "gross_from_mail",
+    grosszip: "gross_from_mail", gross: "gross_from_mail",
+    grossfrommail: "gross_from_mail", totalgross: "gross_from_mail",
   };
 
   if (exactMap[h]) return exactMap[h];
@@ -726,8 +735,14 @@ export function autoMapCampaignsColumn(header: string): string {
   if (raw.includes("mail") && raw.includes("piece")) return "pieces_sent";
   if (raw.includes("total") && raw.includes("resp")) return "total_responses";
   if (raw.includes("total") && raw.includes("show")) return "total_responses";
+  // "# SOLD" or "SOLD" — map to sold_from_mail
+  if (raw.includes("sold")) return "sold_from_mail";
+  // "Gross per ZIP" — map to gross_from_mail
+  if (raw.includes("gross") && raw.includes("zip")) return "gross_from_mail";
+  // "CLOSING %" or "CLOSE RATE" — skip (computed field)
+  if (raw.includes("closing") || raw.includes("close")) return "__skip__";
 
-  // Match "Day X" patterns
+  // Match "Day X" patterns dynamically
   const dayMatch = raw.match(/day\s*(\d{1,2})/);
   if (dayMatch) {
     const num = parseInt(dayMatch[1]);
