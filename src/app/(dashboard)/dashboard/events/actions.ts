@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 import { slugify } from "@/lib/utils";
 import { copySpreadsheet } from "@/lib/services/googleSheets";
@@ -38,7 +39,13 @@ export async function createEvent(formData: FormData) {
   const baseSlug = slugify(name);
   const slug = `${baseSlug}-${Date.now().toString(36)}`;
 
-  const { data: event, error } = await supabase
+  // Use service-role client for the insert to avoid RLS cookie/session issues
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) throw new Error("Missing service role key");
+  const admin = createServiceClient(url, serviceKey);
+
+  const { data: event, error } = await admin
     .from("events")
     .insert({
       name,
@@ -65,7 +72,7 @@ export async function createEvent(formData: FormData) {
   }
 
   // Add creator as event owner (also handled by trigger, but explicit for safety)
-  await supabase.from("event_members").insert({
+  await admin.from("event_members").insert({
     event_id: event.id,
     user_id: user.id,
     role: "owner" as const,
@@ -81,8 +88,8 @@ export async function createEvent(formData: FormData) {
 // ────────────────────────────────────────────────────────────
 
 export async function createEventAndReturnId(formData: FormData): Promise<string> {
+  // Verify user is authenticated via SSR client
   const supabase = await createClient();
-
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -99,10 +106,17 @@ export async function createEventAndReturnId(formData: FormData): Promise<string
     throw new Error("Event name is required");
   }
 
+  // Use service-role client for the insert (same pattern as import functions)
+  // to avoid RLS cookie/session issues in server actions
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) throw new Error("Missing service role key");
+  const admin = createServiceClient(url, serviceKey);
+
   const baseSlug = slugify(name);
   const slug = `${baseSlug}-${Date.now().toString(36)}`;
 
-  const { data: event, error } = await supabase
+  const { data: event, error } = await admin
     .from("events")
     .insert({
       name,
@@ -118,8 +132,8 @@ export async function createEventAndReturnId(formData: FormData): Promise<string
     throw new Error(error.message);
   }
 
-  // Add creator as event owner
-  await supabase.from("event_members").insert({
+  // Add creator as event owner (also handled by trigger, but explicit for safety)
+  await admin.from("event_members").insert({
     event_id: event.id,
     user_id: user.id,
     role: "owner" as const,
