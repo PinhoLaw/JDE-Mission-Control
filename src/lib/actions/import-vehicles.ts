@@ -1,3 +1,4 @@
+// Fixed multi-sheet XLSX serialization issue - Dates + undefined values now cleaned for Next.js Server Actions
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
@@ -6,6 +7,44 @@ import { z } from "zod";
 // NOTE: ExcelJS is loaded via dynamic import() inside parseExcel() only.
 // Top-level import crashes Vercel serverless functions because ExcelJS
 // pulls in Node.js stream/crypto modules that fail to bundle.
+
+// ────────────────────────────────────────────────────────
+// Sanitize data for Next.js Server Action serialization.
+// ExcelJS can return Date objects, undefined values, NaN, Infinity,
+// circular refs, etc. that the RSC serializer cannot handle in
+// production builds. This ensures every value is a JSON-safe primitive.
+// ────────────────────────────────────────────────────────
+function sanitizeForClient<T extends Record<string, unknown>>(data: T[]): T[] {
+  return data.map((row) => {
+    const clean: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (value instanceof Date) {
+        clean[key] = value.toISOString().split("T")[0]; // YYYY-MM-DD
+      } else if (value === undefined) {
+        clean[key] = null;
+      } else if (typeof value === "number" && !Number.isFinite(value)) {
+        clean[key] = null; // NaN, Infinity, -Infinity
+      } else if (typeof value === "object" && value !== null) {
+        // Nested objects (rich text, formula refs, etc.) — coerce to string
+        clean[key] = String(value);
+      } else {
+        clean[key] = value; // string, number, boolean, null — all safe
+      }
+    }
+    return clean as T;
+  });
+}
+
+// Sanitize a flat string array (headers) — ensure no Date/object leaks
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function sanitizeHeaders(headers: any[]): string[] {
+  return headers.map((h) => {
+    if (h == null || h === undefined) return "col";
+    if (h instanceof Date) return h.toISOString().split("T")[0];
+    if (typeof h !== "string") return String(h);
+    return h;
+  });
+}
 
 // ────────────────────────────────────────────────────────
 // Cell value → string helper (handles ALL ExcelJS value types)
@@ -229,9 +268,9 @@ export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
     const dataRowCount = Math.max(0, ws.rowCount - headerRowNum);
 
     sheets.push({
-      name: ws.name ?? `Sheet ${i + 1}`,
+      name: String(ws.name ?? `Sheet ${i + 1}`),
       index: i,
-      headers,
+      headers: sanitizeHeaders(headers),
       rowCount: dataRowCount,
     });
   }
@@ -242,7 +281,7 @@ export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
     throw new Error("No importable sheets found — check that headers are in row 1");
   }
 
-  return { fileName, sheets };
+  return { fileName: String(fileName), sheets };
 }
 
 // ────────────────────────────────────────────────────────
@@ -269,7 +308,13 @@ export async function parseSingleSheet(
   const parsed = parseOneSheet(ws, sheetIndex);
   if (!parsed) throw new Error(`Sheet "${ws.name}" has no data`);
 
-  return parsed;
+  // Sanitize for Next.js Server Action serialization — Date objects and
+  // undefined values from ExcelJS crash the RSC serializer in production.
+  return {
+    ...parsed,
+    headers: sanitizeHeaders(parsed.headers),
+    rows: sanitizeForClient(parsed.rows),
+  };
 }
 
 // Known inventory header keywords — used to detect the real header row
@@ -936,7 +981,12 @@ async function parseExcel(
   for (let i = 0; i < workbook.worksheets.length; i++) {
     const parsed = parseOneSheet(workbook.worksheets[i], i);
     if (parsed) {
-      sheets.push(parsed);
+      // Sanitize for Next.js Server Action serialization
+      sheets.push({
+        ...parsed,
+        headers: sanitizeHeaders(parsed.headers),
+        rows: sanitizeForClient(parsed.rows),
+      });
     }
   }
 
