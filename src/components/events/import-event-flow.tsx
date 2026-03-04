@@ -24,10 +24,11 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
-  parseSpreadsheet,
+  scanSpreadsheet,
+  parseSingleSheet,
   executeImport,
   executeRosterImport,
-  type ParsedSheet,
+  type SheetMeta,
 } from "@/lib/actions/import-vehicles";
 import { bulkImportDeals, bulkImportMailTracking } from "@/lib/actions/legacy-import";
 import { createEventAndReturnId } from "@/app/(dashboard)/dashboard/events/actions";
@@ -42,7 +43,7 @@ import {
 
 type Step = "upload" | "configure" | "importing" | "done";
 
-interface SheetWithType extends ParsedSheet {
+interface SheetWithType extends SheetMeta {
   detectedType: TabType;
   selected: boolean;
 }
@@ -59,6 +60,8 @@ interface ImportSummary {
 export function ImportEventFlow() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Keep the raw file around so we can re-read individual sheets during import
+  const uploadedFileRef = useRef<File | null>(null);
 
   const [step, setStep] = useState<Step>("upload");
   const [isParsing, setIsParsing] = useState(false);
@@ -71,27 +74,27 @@ export function ImportEventFlow() {
   const [importProgress, setImportProgress] = useState("");
   const [summary, setSummary] = useState<ImportSummary | null>(null);
 
-  // ── File parsing ──
+  // ── File scanning (lightweight — no row data) ──
   const parseFile = useCallback(async (file: File) => {
     setIsParsing(true);
     try {
+      uploadedFileRef.current = file;
       const formData = new FormData();
       formData.append("file", file);
-      const result = await parseSpreadsheet(formData);
+      const result = await scanSpreadsheet(formData);
 
       setFileName(result.fileName);
 
       // Detect tab types for each sheet
       const sheetsWithTypes: SheetWithType[] = result.sheets.map((s) => {
         const detectedType = detectTabType(s.name);
-        // Auto-select importable sheets
         const importable = ["inventory", "deals", "roster", "campaigns"].includes(detectedType);
         return { ...s, detectedType, selected: importable };
       });
 
       setSheets(sheetsWithTypes);
 
-      // Try to derive a sensible event name from the file name
+      // Derive event name from filename
       const baseName = file.name.replace(/\.(xlsx|xls|csv)$/i, "").replace(/\s*\(\d+\)\s*$/, "").trim();
       setEventName(baseName);
       setDealerName(baseName);
@@ -143,6 +146,12 @@ export function ImportEventFlow() {
       return;
     }
 
+    if (!uploadedFileRef.current) {
+      toast.error("File lost — please re-upload");
+      setStep("upload");
+      return;
+    }
+
     setIsImporting(true);
     setStep("importing");
     const errors: string[] = [];
@@ -154,24 +163,40 @@ export function ImportEventFlow() {
     try {
       // Step 1: Create the event (returns the ID directly, no redirect)
       setImportProgress("Creating event...");
-      const formData = new FormData();
-      formData.set("name", eventName.trim());
-      formData.set("dealer_name", dealerName.trim() || eventName.trim());
-      formData.set("status", "active");
+      const eventFormData = new FormData();
+      eventFormData.set("name", eventName.trim());
+      eventFormData.set("dealer_name", dealerName.trim() || eventName.trim());
+      eventFormData.set("status", "active");
 
-      const eventId = await createEventAndReturnId(formData);
+      const eventId = await createEventAndReturnId(eventFormData);
 
-      // Step 2: Import each selected sheet by type
+      // Step 2: Import each selected sheet — parse one at a time to avoid payload limits
       for (const sheet of selected) {
         const { detectedType } = sheet;
 
+        setImportProgress(`Parsing "${sheet.name}" (${sheet.rowCount} rows)...`);
+
+        // Re-read the file and parse just this sheet
+        let parsedRows: Record<string, unknown>[];
+        let parsedHeaders: string[];
+        try {
+          const fd = new FormData();
+          fd.append("file", uploadedFileRef.current);
+          const parsed = await parseSingleSheet(fd, sheet.index);
+          parsedRows = parsed.rows;
+          parsedHeaders = parsed.headers;
+        } catch (err) {
+          errors.push(`${sheet.name}: parse failed — ${err instanceof Error ? err.message : "unknown"}`);
+          continue;
+        }
+
         if (detectedType === "inventory") {
-          setImportProgress(`Importing inventory (${sheet.rowCount} rows)...`);
+          setImportProgress(`Importing inventory (${parsedRows.length} rows)...`);
           const colMap: Record<string, string> = {};
-          for (const h of sheet.headers) colMap[h] = autoMapColumn(h);
+          for (const h of parsedHeaders) colMap[h] = autoMapColumn(h);
           try {
             const result = await executeImport(
-              sheet.rows as Record<string, string>[],
+              parsedRows as Record<string, string>[],
               colMap,
               eventId,
               "replace",
@@ -184,12 +209,12 @@ export function ImportEventFlow() {
         }
 
         if (detectedType === "roster") {
-          setImportProgress(`Importing roster (${sheet.rowCount} rows)...`);
+          setImportProgress(`Importing roster (${parsedRows.length} rows)...`);
           const colMap: Record<string, string> = {};
-          for (const h of sheet.headers) colMap[h] = autoMapRosterColumn(h);
+          for (const h of parsedHeaders) colMap[h] = autoMapRosterColumn(h);
           try {
             const result = await executeRosterImport(
-              sheet.rows as Record<string, string>[],
+              parsedRows as Record<string, string>[],
               colMap,
               eventId,
               "replace",
@@ -202,12 +227,12 @@ export function ImportEventFlow() {
         }
 
         if (detectedType === "deals") {
-          setImportProgress(`Importing deals (${sheet.rowCount} rows)...`);
+          setImportProgress(`Importing deals (${parsedRows.length} rows)...`);
           const colMap: Record<string, string> = {};
-          for (const h of sheet.headers) colMap[h] = autoMapDealColumn(h);
+          for (const h of parsedHeaders) colMap[h] = autoMapDealColumn(h);
           try {
             const result = await bulkImportDeals(
-              sheet.rows as Record<string, string>[],
+              parsedRows as Record<string, string>[],
               colMap,
               eventId,
             );
@@ -219,12 +244,12 @@ export function ImportEventFlow() {
         }
 
         if (detectedType === "campaigns") {
-          setImportProgress(`Importing campaign data (${sheet.rowCount} rows)...`);
+          setImportProgress(`Importing campaign data (${parsedRows.length} rows)...`);
           const colMap: Record<string, string> = {};
-          for (const h of sheet.headers) colMap[h] = autoMapCampaignsColumn(h);
+          for (const h of parsedHeaders) colMap[h] = autoMapCampaignsColumn(h);
           try {
             const result = await bulkImportMailTracking(
-              sheet.rows as Record<string, string>[],
+              parsedRows as Record<string, string>[],
               colMap,
               eventId,
             );

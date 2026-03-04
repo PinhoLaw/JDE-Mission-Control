@@ -138,6 +138,118 @@ export async function parseSpreadsheet(
   throw new Error("Unsupported file type — upload .xlsx or .csv");
 }
 
+// ────────────────────────────────────────────────────────
+// Lightweight scan — returns only sheet metadata (no row data).
+// Used by the import-event-flow to show the sheet picker without
+// sending megabytes of row data through the server action response.
+// ────────────────────────────────────────────────────────
+
+export interface SheetMeta {
+  name: string;
+  index: number;
+  headers: string[];
+  rowCount: number;
+}
+
+export interface ScanResult {
+  fileName: string;
+  sheets: SheetMeta[];
+}
+
+export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
+  const file = formData.get("file") as File | null;
+  if (!file || file.size === 0) throw new Error("No file provided");
+
+  const fileName = file.name;
+  const arrayBuffer = await file.arrayBuffer();
+  if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+    throw new Error("File too large — maximum 10 MB");
+  }
+
+  if (!fileName.toLowerCase().endsWith(".xlsx") && !fileName.toLowerCase().endsWith(".xls")) {
+    throw new Error("Unsupported file type — upload .xlsx");
+  }
+
+  const ExcelJS = (await import("@protobi/exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await workbook.xlsx.load(arrayBuffer as any);
+
+  const sheets: SheetMeta[] = [];
+  for (let i = 0; i < workbook.worksheets.length; i++) {
+    const ws = workbook.worksheets[i];
+    if (!ws || ws.rowCount < 2) continue;
+
+    // Quick header extraction — scan first 10 rows for best header
+    let headerRowNum = 1;
+    let bestScore = 0;
+    const maxScan = Math.min(ws.rowCount, 10);
+    for (let r = 1; r <= maxScan; r++) {
+      const score = scoreHeaderRow(ws.getRow(r));
+      if (score >= bestScore && score > 0) {
+        bestScore = score;
+        headerRowNum = r;
+      }
+    }
+
+    if (bestScore < 3) continue; // skip sheets without recognizable headers
+
+    const headerRow = ws.getRow(headerRowNum);
+    const colCount = headerRow.cellCount ?? headerRow.values?.length ?? 0;
+    const headers: string[] = [];
+    for (let c = 1; c <= colCount; c++) {
+      let val: string | null = null;
+      try { val = extractCellValue(headerRow.getCell(c)); } catch { /* ignore */ }
+      headers.push(val?.trim() || `col${c}`);
+    }
+
+    if (headers.length === 0) continue;
+
+    // Count real data rows (rough estimate — just use rowCount minus header)
+    const dataRowCount = Math.max(0, ws.rowCount - headerRowNum);
+
+    sheets.push({
+      name: ws.name ?? `Sheet ${i + 1}`,
+      index: i,
+      headers,
+      rowCount: dataRowCount,
+    });
+  }
+
+  if (sheets.length === 0) {
+    throw new Error("No importable sheets found — check that headers are in row 1");
+  }
+
+  return { fileName, sheets };
+}
+
+// ────────────────────────────────────────────────────────
+// Parse a single sheet by index for import.
+// Re-reads the file and extracts only the requested sheet.
+// ────────────────────────────────────────────────────────
+
+export async function parseSingleSheet(
+  formData: FormData,
+  sheetIndex: number,
+): Promise<ParsedSheet> {
+  const file = formData.get("file") as File | null;
+  if (!file || file.size === 0) throw new Error("No file provided");
+
+  const arrayBuffer = await file.arrayBuffer();
+  const ExcelJS = (await import("@protobi/exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await workbook.xlsx.load(arrayBuffer as any);
+
+  const ws = workbook.worksheets[sheetIndex];
+  if (!ws) throw new Error(`Sheet at index ${sheetIndex} not found`);
+
+  const parsed = parseOneSheet(ws, sheetIndex);
+  if (!parsed) throw new Error(`Sheet "${ws.name}" has no data`);
+
+  return parsed;
+}
+
 // Known inventory header keywords — used to detect the real header row
 // when row 1 is a title like "FORD INVENTORY" instead of column headers
 const HEADER_KEYWORDS = new Set([
