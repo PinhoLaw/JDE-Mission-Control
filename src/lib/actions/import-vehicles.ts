@@ -161,6 +161,7 @@ export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
   if (!file || file.size === 0) throw new Error("No file provided");
 
   const fileName = file.name;
+  console.log(`[scanSpreadsheet] File: ${fileName}, size: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
   const arrayBuffer = await file.arrayBuffer();
   if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
     throw new Error("File too large — maximum 10 MB");
@@ -170,10 +171,24 @@ export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
     throw new Error("Unsupported file type — upload .xlsx");
   }
 
-  const ExcelJS = (await import("@protobi/exceljs")).default;
+  let ExcelJS;
+  try {
+    ExcelJS = (await import("@protobi/exceljs")).default;
+    console.log("[scanSpreadsheet] ExcelJS loaded");
+  } catch (err) {
+    console.error("[scanSpreadsheet] Failed to load ExcelJS:", err);
+    throw new Error(`Failed to load spreadsheet parser: ${err instanceof Error ? err.message : "unknown"}`);
+  }
+
   const workbook = new ExcelJS.Workbook();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await workbook.xlsx.load(arrayBuffer as any);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await workbook.xlsx.load(arrayBuffer as any);
+    console.log(`[scanSpreadsheet] Workbook loaded: ${workbook.worksheets.length} worksheets`);
+  } catch (err) {
+    console.error("[scanSpreadsheet] Failed to parse workbook:", err);
+    throw new Error(`Failed to parse Excel file: ${err instanceof Error ? err.message : "unknown"}`);
+  }
 
   const sheets: SheetMeta[] = [];
   for (let i = 0; i < workbook.worksheets.length; i++) {
@@ -220,6 +235,8 @@ export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
       rowCount: dataRowCount,
     });
   }
+
+  console.log(`[scanSpreadsheet] Found ${sheets.length} importable sheet(s): ${sheets.map(s => s.name).join(", ")}`);
 
   if (sheets.length === 0) {
     throw new Error("No importable sheets found — check that headers are in row 1");

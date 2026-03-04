@@ -115,7 +115,9 @@ export function ImportEventFlow() {
         : `${importableCount} sheet(s) recognized for import`;
       toast.success(msg);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to parse file");
+      console.error("[ImportEventFlow] Scan error:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Scan failed: ${msg}`);
     } finally {
       setIsParsing(false);
     }
@@ -293,7 +295,9 @@ export function ImportEventFlow() {
 
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Import failed");
+      console.error("[ImportEventFlow] Import error:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Import failed: ${msg}`);
       setStep("configure");
     } finally {
       setIsImporting(false);
