@@ -151,7 +151,6 @@ export type Database = {
           target_pvr: number | null;
           washout_threshold: number | null;
           marketing_cost: number | null;
-          jde_commission_tiers: { min: number; max: number | null; pct: number }[] | null;
           misc_expenses: number | null;
           prize_giveaways: number | null;
           created_at: string;
@@ -175,7 +174,7 @@ export type Database = {
           target_pvr?: number | null;
           washout_threshold?: number | null;
           marketing_cost?: number | null;
-          jde_commission_tiers?: { min: number; max: number | null; pct: number }[] | null;
+
           misc_expenses?: number | null;
           prize_giveaways?: number | null;
           created_at?: string;
@@ -199,7 +198,7 @@ export type Database = {
           target_pvr?: number | null;
           washout_threshold?: number | null;
           marketing_cost?: number | null;
-          jde_commission_tiers?: { min: number; max: number | null; pct: number }[] | null;
+
           misc_expenses?: number | null;
           prize_giveaways?: number | null;
           created_at?: string;

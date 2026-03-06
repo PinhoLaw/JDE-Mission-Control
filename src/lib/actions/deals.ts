@@ -760,7 +760,7 @@ export async function saveRecapConfig(
   eventId: string,
   config: {
     marketing_cost?: number | null;
-    jde_commission_tiers?: { min: number; max: number | null; pct: number }[] | null;
+    jde_commission_pct?: number | null;
     misc_expenses?: number | null;
     prize_giveaways?: number | null;
   },
@@ -775,8 +775,7 @@ export async function saveRecapConfig(
     .from("event_config")
     .update({
       marketing_cost: config.marketing_cost,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      jde_commission_tiers: config.jde_commission_tiers as any,
+      jde_commission_pct: config.jde_commission_pct,
       misc_expenses: config.misc_expenses,
       prize_giveaways: config.prize_giveaways,
       updated_at: new Date().toISOString(),

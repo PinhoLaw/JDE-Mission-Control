@@ -41,14 +41,6 @@ import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────
-type CommTier = { min: number; max: number | null; pct: number };
-
-const DEFAULT_TIERS: CommTier[] = [
-  { min: 0, max: 299999, pct: 0.22 },
-  { min: 300000, max: 349999, pct: 0.24 },
-  { min: 350000, max: null, pct: 0.25 },
-];
-
 interface SpSummary {
   name: string;
   units: number;
@@ -71,19 +63,6 @@ function fmtPct(n: number): string {
   return `${(n * 100).toFixed(0)}%`;
 }
 
-function fmtTierRange(tier: CommTier): string {
-  const min = `$${tier.min.toLocaleString()}`;
-  if (tier.max == null) return `${min}+`;
-  return `${min} to $${tier.max.toLocaleString()}`;
-}
-
-function pickTierPct(tiers: CommTier[], gross: number): number {
-  for (let i = tiers.length - 1; i >= 0; i--) {
-    if (gross >= tiers[i].min) return tiers[i].pct;
-  }
-  return tiers[0]?.pct ?? 0.22;
-}
-
 // ═════════════════════════════════════════════════════════
 // Page Component
 // ═════════════════════════════════════════════════════════
@@ -101,7 +80,7 @@ export default function RecapPage() {
 
   // ── Configurable fields (editable) ──
   const [marketingCost, setMarketingCost] = useState(0);
-  const [tiers, setTiers] = useState<CommTier[]>(DEFAULT_TIERS);
+  const [jdeCommissionPct, setJdeCommissionPct] = useState(25); // display value (e.g. 25 for 25%)
   const [miscExpenses, setMiscExpenses] = useState(0);
   const [prizeGiveaways, setPrizeGiveaways] = useState(0);
   const [showSetup, setShowSetup] = useState(false);
@@ -144,11 +123,7 @@ export default function RecapPage() {
       // Hydrate configurable fields from DB
       if (cfg) {
         setMarketingCost(cfg.marketing_cost ?? 0);
-        setTiers(
-          Array.isArray(cfg.jde_commission_tiers) && cfg.jde_commission_tiers.length > 0
-            ? (cfg.jde_commission_tiers as unknown as CommTier[])
-            : DEFAULT_TIERS,
-        );
+        setJdeCommissionPct((cfg.jde_commission_pct ?? 0.25) * 100);
         setMiscExpenses(cfg.misc_expenses ?? 0);
         setPrizeGiveaways(cfg.prize_giveaways ?? 0);
       }
@@ -215,8 +190,8 @@ export default function RecapPage() {
     const totalBackGross = deals.reduce((s, d) => s + (d.back_gross ?? 0), 0);
     const totalCommissionableGross = totalFrontGross + totalBackGross;
 
-    // JDE Commission — tier based on commissionable gross
-    const jdePct = pickTierPct(tiers, totalCommissionableGross);
+    // JDE Commission — flat percentage from local editable state
+    const jdePct = jdeCommissionPct / 100;
     const jdeCommission = totalCommissionableGross * jdePct;
 
     // Non-commissionable gross (doc fees + pack per deal, pack varies by new/used)
@@ -274,7 +249,7 @@ export default function RecapPage() {
       variableNet,
       totalNet,
     };
-  }, [deals, dailyMetrics, config, tiers, marketingCost, defaultRate, rosterRateMap]);
+  }, [deals, dailyMetrics, config, jdeCommissionPct, marketingCost, defaultRate, rosterRateMap]);
 
   // ── Salesperson summary (grouped by ID, fallback to name) ──
   const includeDocFee = config?.include_doc_fee_in_commission ?? false;
@@ -355,7 +330,7 @@ export default function RecapPage() {
     try {
       await saveRecapConfig(currentEvent.id, {
         marketing_cost: marketingCost,
-        jde_commission_tiers: tiers,
+        jde_commission_pct: jdeCommissionPct / 100,
         misc_expenses: miscExpenses,
         prize_giveaways: prizeGiveaways,
       });
@@ -365,7 +340,7 @@ export default function RecapPage() {
     } finally {
       setSaving(false);
     }
-  }, [currentEvent, marketingCost, tiers, miscExpenses, prizeGiveaways]);
+  }, [currentEvent, marketingCost, jdeCommissionPct, miscExpenses, prizeGiveaways]);
 
   // ── Export ──
   const handleExport = useCallback(
@@ -502,7 +477,7 @@ export default function RecapPage() {
               <div>
                 <CardTitle className="text-base">Pre-Sale Financial Setup</CardTitle>
                 <CardDescription>
-                  Configure marketing cost, JDE commission tiers, and expenses
+                  Configure marketing cost and expenses
                 </CardDescription>
               </div>
             </div>
@@ -526,6 +501,18 @@ export default function RecapPage() {
                 />
               </div>
               <div>
+                <Label>JDE Commission %</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  value={jdeCommissionPct || ""}
+                  onChange={(e) => setJdeCommissionPct(Number(e.target.value) || 0)}
+                  placeholder="25"
+                />
+              </div>
+              <div>
                 <Label>Misc Expenses</Label>
                 <Input
                   type="number"
@@ -543,84 +530,6 @@ export default function RecapPage() {
                   placeholder="0"
                 />
               </div>
-            </div>
-
-            <Separator />
-
-            <div>
-              <Label className="mb-2 block">JDE Commission Tiers</Label>
-              <div className="space-y-2">
-                {tiers.map((tier, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-3 text-sm"
-                  >
-                    <span className="w-8 font-mono text-muted-foreground">
-                      T{i + 1}
-                    </span>
-                    <Input
-                      type="number"
-                      className="w-32"
-                      value={tier.min || ""}
-                      onChange={(e) => {
-                        const next = [...tiers];
-                        next[i] = { ...next[i], min: Number(e.target.value) || 0 };
-                        setTiers(next);
-                      }}
-                      placeholder="Min"
-                    />
-                    <span className="text-muted-foreground">to</span>
-                    <Input
-                      type="number"
-                      className="w-32"
-                      value={tier.max ?? ""}
-                      onChange={(e) => {
-                        const next = [...tiers];
-                        const val = e.target.value;
-                        next[i] = {
-                          ...next[i],
-                          max: val === "" ? null : Number(val) || 0,
-                        };
-                        setTiers(next);
-                      }}
-                      placeholder="Max (empty = unlimited)"
-                    />
-                    <span className="text-muted-foreground">=</span>
-                    <Input
-                      type="number"
-                      className="w-20"
-                      value={(tier.pct * 100) || ""}
-                      onChange={(e) => {
-                        const next = [...tiers];
-                        next[i] = {
-                          ...next[i],
-                          pct: (Number(e.target.value) || 0) / 100,
-                        };
-                        setTiers(next);
-                      }}
-                      placeholder="%"
-                    />
-                    <span className="text-muted-foreground">%</span>
-                  </div>
-                ))}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2"
-                onClick={() =>
-                  setTiers((prev) => [
-                    ...prev,
-                    {
-                      min: prev.length > 0 ? (prev[prev.length - 1].max ?? 0) + 1 : 0,
-                      max: null,
-                      pct: 0.25,
-                    },
-                  ])
-                }
-              >
-                + Add tier
-              </Button>
             </div>
 
             <div className="flex justify-end">
