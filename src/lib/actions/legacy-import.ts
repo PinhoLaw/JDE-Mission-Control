@@ -84,6 +84,14 @@ export async function bulkImportDeals(
     throw new Error("Only owners and managers can import deals");
   }
 
+  // Fetch event start_date for deriving sale_date from sale_day
+  const { data: eventRow } = await supabase
+    .from("events")
+    .select("start_date")
+    .eq("id", eventId)
+    .single();
+  const eventStartDate = eventRow?.start_date ?? null;
+
   // ── REPLACE MODE: Delete all existing deals for this event first ──
   const { data: deletedRows } = await supabase
     .from("sales_deals")
@@ -205,11 +213,23 @@ export async function bulkImportDeals(
     const str = (v: unknown): string | null =>
       v ? String(v).trim() || null : null;
 
+    // Derive sale_date: explicit value, or computed from sale_day + event start_date
+    let derivedSaleDate = str(mapped.sale_date);
+    if (!derivedSaleDate && saleDay != null && eventStartDate) {
+      try {
+        const start = new Date(eventStartDate + "T12:00:00");
+        start.setDate(start.getDate() + (saleDay - 1));
+        derivedSaleDate = start.toISOString().slice(0, 10); // YYYY-MM-DD
+      } catch {
+        // If date parsing fails, leave as null
+      }
+    }
+
     const row: DealInsert = {
       event_id: eventId,
       deal_number: dealNumber,
       sale_day: saleDay,
-      sale_date: str(mapped.sale_date),
+      sale_date: derivedSaleDate,
       customer_name: customerName,
       customer_zip: str(mapped.customer_zip),
       customer_phone: str(mapped.customer_phone),
@@ -775,13 +795,13 @@ async function syncDailyMetricsFromDeals(eventId: string) {
   // Fetch all active deals for event
   const { data: deals } = await admin
     .from("sales_deals")
-    .select("created_at, sale_day, total_gross, front_gross, back_gross")
+    .select("created_at, sale_date, sale_day, total_gross, front_gross, back_gross")
     .eq("event_id", eventId)
     .not("status", "in", '("cancelled","unwound")');
 
   if (!deals || deals.length === 0) return;
 
-  // Group by DATE(created_at)
+  // Group by sale_date (preferred) or DATE(created_at) as fallback
   const byDate = new Map<
     string,
     {
@@ -794,7 +814,7 @@ async function syncDailyMetricsFromDeals(eventId: string) {
   >();
 
   for (const d of deals) {
-    const dateKey = (d.created_at ?? "").split("T")[0]; // YYYY-MM-DD
+    const dateKey = d.sale_date ?? (d.created_at ?? "").split("T")[0]; // YYYY-MM-DD
     if (!dateKey) continue;
     const entry = byDate.get(dateKey) ?? {
       saleDay: d.sale_day ?? 1,

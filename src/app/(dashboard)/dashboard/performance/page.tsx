@@ -324,7 +324,7 @@ export default function PerformancePage() {
         };
       }
       stats[key].deals += 1;
-      stats[key].ups += deal.ups_count ?? 1;
+      stats[key].ups += deal.ups_count ?? 0;
       stats[key].frontGross += deal.front_gross ?? 0;
       stats[key].backGross += deal.back_gross ?? 0;
       stats[key].totalGross += deal.total_gross ?? 0;
@@ -355,7 +355,7 @@ export default function PerformancePage() {
     const totalUps =
       dailyMetrics.length > 0
         ? dailyMetrics.reduce((s, m) => s + (m.total_ups ?? 0), 0)
-        : deals.reduce((s, d) => s + (d.ups_count ?? 1), 0);
+        : deals.reduce((s, d) => s + (d.ups_count ?? 0), 0);
     const totalGross = deals.reduce((s, d) => s + (d.total_gross ?? 0), 0);
     const totalFront = deals.reduce((s, d) => s + (d.front_gross ?? 0), 0);
     const totalBack = deals.reduce((s, d) => s + (d.back_gross ?? 0), 0);

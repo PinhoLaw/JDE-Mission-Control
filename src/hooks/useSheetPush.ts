@@ -50,6 +50,11 @@ export function useSheetPush() {
       payload: Record<string, unknown>,
       options?: SheetPushOptions,
     ): Promise<SheetPushResult> => {
+      // Guard: skip silently if no Google Sheet is configured for this event
+      if (!currentEvent?.sheet_id) {
+        return { success: false, queued: false, error: null };
+      }
+
       const {
         successMessage = "Pushed to Google Sheet",
         queuedMessage = "Sheet push queued — will retry automatically",
@@ -59,8 +64,8 @@ export function useSheetPush() {
 
       // Inject event context if not already provided in payload
       const fullPayload: Record<string, unknown> = {
-        spreadsheetId: currentEvent?.sheet_id,
-        eventId: currentEvent?.id,
+        spreadsheetId: currentEvent.sheet_id,
+        eventId: currentEvent.id,
         ...payload,
       };
 

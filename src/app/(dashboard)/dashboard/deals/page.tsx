@@ -201,8 +201,8 @@ export default function DealsPage() {
     const lenderMap = new Map<string, number>();
     let warrantyCount = 0;
     let gapCount = 0;
-    let newCount = 0, newFrontSum = 0;
-    let usedCount = 0, usedFrontSum = 0;
+    let newCount = 0, newGrossSum = 0;
+    let usedCount = 0, usedGrossSum = 0;
     let highestDeal: { customer: string; gross: number; vehicle: string } | null = null;
 
     for (const d of filteredDeals) {
@@ -221,8 +221,8 @@ export default function DealsPage() {
       if ((d.gap ?? 0) > 0) gapCount++;
 
       // New vs Used
-      if (d.new_used === "New") { newCount++; newFrontSum += d.front_gross ?? 0; }
-      else if (d.new_used === "Used" || d.new_used === "Certified") { usedCount++; usedFrontSum += d.front_gross ?? 0; }
+      if (d.new_used === "New") { newCount++; newGrossSum += d.total_gross ?? 0; }
+      else if (d.new_used === "Used" || d.new_used === "Certified") { usedCount++; usedGrossSum += d.total_gross ?? 0; }
 
       // Highest single deal
       const g = d.total_gross ?? 0;
@@ -244,8 +244,8 @@ export default function DealsPage() {
     return {
       totalGross, totalFront, totalBack, avgPVR, count: filteredDeals.length,
       topSalespeople, highestDeal, warrantyCount, gapCount, topLenders,
-      newCount, newAvgFront: newCount > 0 ? newFrontSum / newCount : 0,
-      usedCount, usedAvgFront: usedCount > 0 ? usedFrontSum / usedCount : 0,
+      newCount, newAvgPvr: newCount > 0 ? newGrossSum / newCount : 0,
+      usedCount, usedAvgPvr: usedCount > 0 ? usedGrossSum / usedCount : 0,
     };
   }, [filteredDeals]);
 
@@ -743,11 +743,11 @@ export default function DealsPage() {
             <div className="space-y-1 text-sm">
               <div className="flex justify-between">
                 <span>New: {stats.newCount}</span>
-                <span className="text-muted-foreground">Avg {formatCurrency(stats.newAvgFront)}</span>
+                <span className="text-muted-foreground">Avg {formatCurrency(stats.newAvgPvr)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Used: {stats.usedCount}</span>
-                <span className="text-muted-foreground">Avg {formatCurrency(stats.usedAvgFront)}</span>
+                <span className="text-muted-foreground">Avg {formatCurrency(stats.usedAvgPvr)}</span>
               </div>
             </div>
           </CardContent>

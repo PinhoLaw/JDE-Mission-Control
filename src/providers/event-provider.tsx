@@ -6,9 +6,10 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/types/database";
 
@@ -37,65 +38,17 @@ const STORAGE_KEY = "jde-current-event-id";
 export function EventProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const [currentEvent, setCurrentEventState] = useState<EventRow | null>(null);
   const [availableEvents, setAvailableEvents] = useState<EventRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load available events the user has access to
-  useEffect(() => {
-    let cancelled = false;
+  // Track whether initial load has completed to avoid redundant fetches
+  const hasLoadedRef = useRef(false);
 
-    async function loadEvents() {
-      const supabase = createClient();
-
-      // Get events this user is a member of
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user || cancelled) {
-        setIsLoading(false);
-        return;
-      }
-
-      // Fetch event_members for this user, then get the events
-      const { data: memberships } = await supabase
-        .from("event_members")
-        .select("event_id")
-        .eq("user_id", user.id);
-
-      if (!memberships || memberships.length === 0 || cancelled) {
-        // Fallback: fetch all events (for superadmin or if no members yet)
-        const { data: allEvents } = await supabase
-          .from("events")
-          .select("*")
-          .order("created_at", { ascending: false });
-
-        if (!cancelled) {
-          const events = allEvents ?? [];
-          setAvailableEvents(events);
-          resolveCurrentEvent(events);
-          setIsLoading(false);
-        }
-        return;
-      }
-
-      const eventIds = memberships.map((m) => m.event_id);
-      const { data: events } = await supabase
-        .from("events")
-        .select("*")
-        .in("id", eventIds)
-        .order("created_at", { ascending: false });
-
-      if (!cancelled) {
-        const eventList = events ?? [];
-        setAvailableEvents(eventList);
-        resolveCurrentEvent(eventList);
-        setIsLoading(false);
-      }
-    }
-
-    function resolveCurrentEvent(events: EventRow[]) {
+  // Resolve which event should be active given a list of events
+  const resolveCurrentEvent = useCallback(
+    (events: EventRow[]) => {
       if (events.length === 0) return;
 
       // Priority: 1) URL param  2) localStorage  3) first active event  4) first event
@@ -125,6 +78,75 @@ export function EventProvider({ children }: { children: ReactNode }) {
       if (typeof window !== "undefined") {
         localStorage.setItem(STORAGE_KEY, fallback.id);
       }
+    },
+    [searchParams],
+  );
+
+  // Load available events the user has access to
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEvents() {
+      const supabase = createClient();
+
+      // Try getUser first, fall back to getSession for resilience
+      let userId: string | null = null;
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      userId = user?.id ?? null;
+
+      if (!userId) {
+        // Fallback: check session (handles edge cases with stale cookies)
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        userId = session?.user?.id ?? null;
+      }
+
+      if (!userId || cancelled) {
+        setIsLoading(false);
+        return;
+      }
+
+      // Fetch event_members for this user, then get the events
+      const { data: memberships } = await supabase
+        .from("event_members")
+        .select("event_id")
+        .eq("user_id", userId);
+
+      if (!memberships || memberships.length === 0 || cancelled) {
+        // Fallback: fetch all events (for superadmin or if no members yet)
+        const { data: allEvents } = await supabase
+          .from("events")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (!cancelled) {
+          const events = allEvents ?? [];
+          setAvailableEvents(events);
+          resolveCurrentEvent(events);
+          setIsLoading(false);
+          hasLoadedRef.current = true;
+        }
+        return;
+      }
+
+      const eventIds = memberships.map((m) => m.event_id);
+      const { data: events } = await supabase
+        .from("events")
+        .select("*")
+        .in("id", eventIds)
+        .order("created_at", { ascending: false });
+
+      if (!cancelled) {
+        const eventList = events ?? [];
+        setAvailableEvents(eventList);
+        resolveCurrentEvent(eventList);
+        setIsLoading(false);
+        hasLoadedRef.current = true;
+      }
     }
 
     loadEvents();
@@ -132,8 +154,15 @@ export function EventProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [resolveCurrentEvent]);
+
+  // On navigation, re-resolve current event from cached availableEvents.
+  // This ensures the context is never stale when navigating between pages.
+  useEffect(() => {
+    if (!hasLoadedRef.current || availableEvents.length === 0) return;
+    // Re-resolve: picks up any ?event= URL param changes on navigation
+    resolveCurrentEvent(availableEvents);
+  }, [pathname, availableEvents, resolveCurrentEvent]);
 
   const setCurrentEvent = useCallback(
     (eventId: string) => {
