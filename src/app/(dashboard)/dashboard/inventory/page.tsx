@@ -59,17 +59,18 @@ import {
   Handshake,
   Loader2,
   ChevronDown,
-  ImageIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import {
   updateVehicleStatus,
   deleteVehicles,
+  updateVehicleField,
 } from "@/lib/actions/inventory";
 import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import { uploadVehiclePhoto } from "@/lib/actions/photos";
 import { useSheetPush } from "@/hooks/useSheetPush";
+import { EditableCell } from "@/components/ui/editable-cell";
 
 const STATUS_COLORS: Record<string, string> = {
   available: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
@@ -100,6 +101,34 @@ export default function InventoryPage() {
   const handleStatusChangeRef = useRef<
     (ids: string[], status: "available" | "sold" | "hold" | "pending" | "wholesale") => Promise<void>
   >(() => Promise.resolve());
+
+  // ── Inline edit handler ──
+  const handleFieldSave = useCallback(
+    async (vehicleId: string, eventId: string, field: string, value: unknown) => {
+      // Optimistic update
+      setVehicles((prev) =>
+        prev.map((v) => (v.id === vehicleId ? { ...v, [field]: value } : v)),
+      );
+      try {
+        await updateVehicleField(vehicleId, eventId, field, value);
+      } catch (err) {
+        // Revert on error
+        toast.error(err instanceof Error ? err.message : "Failed to save");
+        // Re-fetch to get correct state
+        if (currentEvent) {
+          const supabase = createClient();
+          const { data } = await supabase
+            .from("vehicle_inventory")
+            .select("*")
+            .eq("event_id", currentEvent.id)
+            .order("hat_number", { ascending: true });
+          setVehicles(data ?? []);
+        }
+        throw err;
+      }
+    },
+    [currentEvent],
+  );
 
   // Load vehicles for current event
   useEffect(() => {
@@ -217,10 +246,18 @@ export default function InventoryPage() {
     );
   };
 
-  // ── Columns: EXACT 18-column spec ──
-  // 1.Stock# 2.Year 3.Make 4.Model 5.Class 6.Color 7.Odometer 8.VIN#
-  // 9.Series 10.Age 11.CleanTrade 12.CleanRetail 13.UnitCost 14.DIFF
-  // 15.115% 16.120% 17.125% 18.130%
+  // ── Sortable header helper ──
+  const sortHeader = (label: string) =>
+    ({ column }: { column: { toggleSorting: (desc: boolean) => void; getIsSorted: () => false | "asc" | "desc" } }) => (
+      <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
+        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
+        {label} <ArrowUpDown className="ml-1 h-3 w-3" />
+      </Button>
+    );
+
+  // ── Columns with inline editing ──
+  const eventId = currentEvent?.id ?? "";
+
   const columns: ColumnDef<Vehicle>[] = useMemo(
     () => [
       // ── Utility: checkbox ──
@@ -243,289 +280,287 @@ export default function InventoryPage() {
         enableSorting: false,
         size: 40,
       },
-      // ── 1. Stock # ──
+      // ── Hat # (editable) ──
+      {
+        accessorKey: "hat_number",
+        header: sortHeader("Hat #"),
+        cell: ({ row }) => (
+          <EditableCell type="number" vehicleId={row.original.id} eventId={eventId}
+            field="hat_number" value={row.original.hat_number} onSave={handleFieldSave}
+            placeholder="#" />
+        ),
+        size: 60,
+      },
+      // ── Stock # (editable) ──
       {
         accessorKey: "stock_number",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Stock # <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Stock #"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="stock_number" value={row.original.stock_number} onSave={handleFieldSave} />
         ),
         size: 90,
       },
-      // ── 2. Year ──
+      // ── Year (editable) ──
       {
         accessorKey: "year",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Year <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Year"),
+        cell: ({ row }) => (
+          <EditableCell type="number" vehicleId={row.original.id} eventId={eventId}
+            field="year" value={row.original.year} onSave={handleFieldSave} />
         ),
-        size: 55,
+        size: 60,
       },
-      // ── 3. Make ──
+      // ── Make (editable) ──
       {
         accessorKey: "make",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Make <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Make"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="make" value={row.original.make} onSave={handleFieldSave} />
         ),
         size: 80,
       },
-      // ── 4. Model ──
+      // ── Model (editable) ──
       {
         accessorKey: "model",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Model <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Model"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="model" value={row.original.model} onSave={handleFieldSave} />
         ),
         size: 100,
       },
-      // ── 5. Class (body_style) ──
+      // ── Trim / Series (editable) ──
+      {
+        accessorKey: "trim",
+        header: sortHeader("Trim"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="trim" value={row.original.trim} onSave={handleFieldSave} />
+        ),
+        size: 90,
+      },
+      // ── Class / Body Style (editable) ──
       {
         accessorKey: "body_style",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Class <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Class"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="body_style" value={row.original.body_style} onSave={handleFieldSave} />
         ),
         size: 70,
       },
-      // ── 6. Color ──
+      // ── Color (editable) ──
       {
         accessorKey: "color",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Color <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Color"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="color" value={row.original.color} onSave={handleFieldSave} />
         ),
         size: 80,
       },
-      // ── 7. Odometer (mileage) ──
+      // ── Mileage (editable) ──
       {
         accessorKey: "mileage",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Odometer <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Odometer"),
+        cell: ({ row }) => (
+          <EditableCell type="number" vehicleId={row.original.id} eventId={eventId}
+            field="mileage" value={row.original.mileage} onSave={handleFieldSave}
+            formatDisplay={(v) => v != null ? Number(v).toLocaleString() : "—"} />
         ),
-        cell: ({ row }) => {
-          const v = row.getValue("mileage") as number | null;
-          return v != null ? v.toLocaleString() : "—";
-        },
         size: 90,
       },
-      // ── 8. VIN # ──
+      // ── Drivetrain (editable) ──
+      {
+        accessorKey: "drivetrain",
+        header: sortHeader("Drive"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="drivetrain" value={row.original.drivetrain} onSave={handleFieldSave}
+            placeholder="AWD/FWD/RWD" />
+        ),
+        size: 70,
+      },
+      // ── VIN (editable) ──
       {
         accessorKey: "vin",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            VIN # <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("VIN"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="vin" value={row.original.vin} onSave={handleFieldSave} />
         ),
         size: 160,
       },
-      // ── 9. Series (trim) ──
-      {
-        accessorKey: "trim",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Series <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        size: 100,
-      },
-      // ── 10. Age ──
-      {
-        accessorKey: "age_days",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Age <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        size: 50,
-      },
-      // ── 11. Clean Trade (jd_trade_clean) ──
-      {
-        accessorKey: "jd_trade_clean",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Clean Trade <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        cell: ({ row }) => currencyCell(row.getValue("jd_trade_clean") as number | null),
-        size: 110,
-      },
-      // ── 12. Clean Retail (jd_retail_clean) ──
-      {
-        accessorKey: "jd_retail_clean",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Clean Retail <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        cell: ({ row }) => currencyCell(row.getValue("jd_retail_clean") as number | null),
-        size: 110,
-      },
-      // ── 13. Unit Cost (acquisition_cost) ──
+      // ── Unit Cost (editable) ──
       {
         accessorKey: "acquisition_cost",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Unit Cost <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Unit Cost"),
+        cell: ({ row }) => (
+          <EditableCell type="number" vehicleId={row.original.id} eventId={eventId}
+            field="acquisition_cost" value={row.original.acquisition_cost} onSave={handleFieldSave}
+            formatDisplay={(v) => v != null ? formatCurrency(Number(v)) : "—"} />
         ),
-        cell: ({ row }) => currencyCell(row.getValue("acquisition_cost") as number | null),
         size: 100,
       },
-      // ── 14. DIFF (dynamic: trade or retail based) ──
+      // ── Clean Trade (editable) ──
       {
-        id: "diff",
-        accessorFn: (row) => {
-          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
-          if (base == null || row.acquisition_cost == null) return null;
-          return base - row.acquisition_cost;
-        },
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            DIFF <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        accessorKey: "jd_trade_clean",
+        header: sortHeader("Clean Trade"),
+        cell: ({ row }) => (
+          <EditableCell type="number" vehicleId={row.original.id} eventId={eventId}
+            field="jd_trade_clean" value={row.original.jd_trade_clean} onSave={handleFieldSave}
+            formatDisplay={(v) => v != null ? formatCurrency(Number(v)) : "—"} />
         ),
+        size: 110,
+      },
+      // ── Clean Retail (editable) ──
+      {
+        accessorKey: "jd_retail_clean",
+        header: sortHeader("Clean Retail"),
+        cell: ({ row }) => (
+          <EditableCell type="number" vehicleId={row.original.id} eventId={eventId}
+            field="jd_retail_clean" value={row.original.jd_retail_clean} onSave={handleFieldSave}
+            formatDisplay={(v) => v != null ? formatCurrency(Number(v)) : "—"} />
+        ),
+        size: 110,
+      },
+      // ── DIFF Trade (read-only, auto-calc) ──
+      {
+        id: "diff_trade",
+        accessorFn: (row) => {
+          if (row.jd_trade_clean == null || row.acquisition_cost == null) return null;
+          return row.jd_trade_clean - row.acquisition_cost;
+        },
+        header: sortHeader("DIFF (T)"),
         cell: ({ row }) => {
           const v = row.original;
-          const base = pricingMode === "trade" ? v.jd_trade_clean : v.jd_retail_clean;
-          if (base == null || v.acquisition_cost == null) return "—";
-          const diff = base - v.acquisition_cost;
+          if (v.jd_trade_clean == null || v.acquisition_cost == null) return <span className="text-xs text-muted-foreground">—</span>;
+          const diff = v.jd_trade_clean - v.acquisition_cost;
           return diffCell(diff);
         },
         size: 90,
       },
-      // ── 15. 115% (dynamic) ──
+      // ── DIFF Retail (read-only, auto-calc) ──
       {
-        id: "pct_115",
+        id: "diff_retail",
         accessorFn: (row) => {
-          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
-          return base != null ? Math.round(base * 1.15) : null;
+          if (row.jd_retail_clean == null || row.acquisition_cost == null) return null;
+          return row.jd_retail_clean - row.acquisition_cost;
         },
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            115% <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
+        header: sortHeader("DIFF (R)"),
         cell: ({ row }) => {
-          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
-          return currencyCell(base != null ? Math.round(base * 1.15) : null);
+          const v = row.original;
+          if (v.jd_retail_clean == null || v.acquisition_cost == null) return <span className="text-xs text-muted-foreground">—</span>;
+          const diff = v.jd_retail_clean - v.acquisition_cost;
+          return diffCell(diff);
         },
         size: 90,
       },
-      // ── 16. 120% (dynamic) ──
+      // ── Trade 115% (read-only) ──
       {
-        id: "pct_120",
-        accessorFn: (row) => {
-          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
-          return base != null ? Math.round(base * 1.20) : null;
-        },
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            120% <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        cell: ({ row }) => {
-          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
-          return currencyCell(base != null ? Math.round(base * 1.20) : null);
-        },
-        size: 90,
+        id: "trade_115",
+        accessorFn: (row) => row.jd_trade_clean != null ? Math.round(row.jd_trade_clean * 1.15) : null,
+        header: sortHeader("T 115%"),
+        cell: ({ row }) => currencyCell(row.original.jd_trade_clean != null ? Math.round(row.original.jd_trade_clean * 1.15) : null),
+        size: 85,
       },
-      // ── 17. 125% (dynamic) ──
+      // ── Trade 120% (read-only) ──
       {
-        id: "pct_125",
-        accessorFn: (row) => {
-          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
-          return base != null ? Math.round(base * 1.25) : null;
-        },
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            125% <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        cell: ({ row }) => {
-          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
-          return currencyCell(base != null ? Math.round(base * 1.25) : null);
-        },
-        size: 90,
+        id: "trade_120",
+        accessorFn: (row) => row.jd_trade_clean != null ? Math.round(row.jd_trade_clean * 1.20) : null,
+        header: sortHeader("T 120%"),
+        cell: ({ row }) => currencyCell(row.original.jd_trade_clean != null ? Math.round(row.original.jd_trade_clean * 1.20) : null),
+        size: 85,
       },
-      // ── 18. 130% (dynamic) ──
+      // ── Trade 125% (read-only) ──
       {
-        id: "pct_130",
-        accessorFn: (row) => {
-          const base = pricingMode === "trade" ? row.jd_trade_clean : row.jd_retail_clean;
-          return base != null ? Math.round(base * 1.30) : null;
-        },
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            130% <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        cell: ({ row }) => {
-          const base = pricingMode === "trade" ? row.original.jd_trade_clean : row.original.jd_retail_clean;
-          return currencyCell(base != null ? Math.round(base * 1.30) : null);
-        },
-        size: 90,
+        id: "trade_125",
+        accessorFn: (row) => row.jd_trade_clean != null ? Math.round(row.jd_trade_clean * 1.25) : null,
+        header: sortHeader("T 125%"),
+        cell: ({ row }) => currencyCell(row.original.jd_trade_clean != null ? Math.round(row.original.jd_trade_clean * 1.25) : null),
+        size: 85,
       },
-      // ── Utility: status badge ──
+      // ── Trade 130% (read-only) ──
+      {
+        id: "trade_130",
+        accessorFn: (row) => row.jd_trade_clean != null ? Math.round(row.jd_trade_clean * 1.30) : null,
+        header: sortHeader("T 130%"),
+        cell: ({ row }) => currencyCell(row.original.jd_trade_clean != null ? Math.round(row.original.jd_trade_clean * 1.30) : null),
+        size: 85,
+      },
+      // ── Retail 115% (read-only) ──
+      {
+        id: "retail_115",
+        accessorFn: (row) => row.jd_retail_clean != null ? Math.round(row.jd_retail_clean * 1.15) : null,
+        header: sortHeader("R 115%"),
+        cell: ({ row }) => currencyCell(row.original.jd_retail_clean != null ? Math.round(row.original.jd_retail_clean * 1.15) : null),
+        size: 85,
+      },
+      // ── Retail 120% (read-only) ──
+      {
+        id: "retail_120",
+        accessorFn: (row) => row.jd_retail_clean != null ? Math.round(row.jd_retail_clean * 1.20) : null,
+        header: sortHeader("R 120%"),
+        cell: ({ row }) => currencyCell(row.original.jd_retail_clean != null ? Math.round(row.original.jd_retail_clean * 1.20) : null),
+        size: 85,
+      },
+      // ── Retail 125% (read-only) ──
+      {
+        id: "retail_125",
+        accessorFn: (row) => row.jd_retail_clean != null ? Math.round(row.jd_retail_clean * 1.25) : null,
+        header: sortHeader("R 125%"),
+        cell: ({ row }) => currencyCell(row.original.jd_retail_clean != null ? Math.round(row.original.jd_retail_clean * 1.25) : null),
+        size: 85,
+      },
+      // ── Retail 130% (read-only) ──
+      {
+        id: "retail_130",
+        accessorFn: (row) => row.jd_retail_clean != null ? Math.round(row.jd_retail_clean * 1.30) : null,
+        header: sortHeader("R 130%"),
+        cell: ({ row }) => currencyCell(row.original.jd_retail_clean != null ? Math.round(row.original.jd_retail_clean * 1.30) : null),
+        size: 85,
+      },
+      // ── Status (editable dropdown) ──
       {
         accessorKey: "status",
-        header: ({ column }) => (
-          <Button variant="ghost" size="sm" className="h-8 px-1 -ml-1"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
-            Status <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
+        header: sortHeader("Status"),
+        cell: ({ row }) => (
+          <EditableCell type="select" vehicleId={row.original.id} eventId={eventId}
+            field="status" value={row.original.status} onSave={handleFieldSave}
+            options={[
+              { value: "available", label: "Available", className: "text-green-700 dark:text-green-400" },
+              { value: "hold", label: "Hold", className: "text-yellow-700 dark:text-yellow-400" },
+              { value: "sold", label: "Sold", className: "text-red-700 dark:text-red-400" },
+              { value: "pending", label: "Pending", className: "text-blue-700 dark:text-blue-400" },
+              { value: "wholesale", label: "Wholesale", className: "text-purple-700 dark:text-purple-400" },
+              { value: "removed", label: "Removed" },
+            ]} />
         ),
-        cell: ({ row }) => {
-          const st = row.getValue("status") as string;
-          return (
-            <Badge variant="secondary" className={STATUS_COLORS[st] ?? ""}>
-              {st}
-            </Badge>
-          );
-        },
-        size: 90,
+        size: 110,
+      },
+      // ── Label (editable) ──
+      {
+        accessorKey: "label",
+        header: sortHeader("Label"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="label" value={row.original.label} onSave={handleFieldSave}
+            placeholder="Label" />
+        ),
+        size: 80,
+      },
+      // ── Notes (editable) ──
+      {
+        accessorKey: "notes",
+        header: sortHeader("Notes"),
+        cell: ({ row }) => (
+          <EditableCell type="text" vehicleId={row.original.id} eventId={eventId}
+            field="notes" value={row.original.notes} onSave={handleFieldSave}
+            placeholder="Notes" />
+        ),
+        size: 120,
       },
       // ── Utility: actions menu ──
       {
@@ -581,7 +616,7 @@ export default function InventoryPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [uploadingPhotoId, pricingMode],
+    [eventId, handleFieldSave, pricingMode],
   );
 
   const table = useReactTable({

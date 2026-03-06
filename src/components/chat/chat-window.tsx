@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Rocket, Trash2, RefreshCw, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDraggable } from "@/hooks/useDraggable";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const MAX_RETRIES = 2;
@@ -28,10 +29,19 @@ export function ChatWindow() {
   const context = useChatContext();
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const lastSentRef = useRef<string>("");
+
+  // ── Draggable ─────────────────────────────────────────────────────────────
+  const { style: dragStyle, isDragged } = useDraggable({
+    containerRef: panelRef,
+    handleRef,
+    enabled: isOpen,
+  });
 
   // Keep a ref so the fetch wrapper always reads the latest context
   const contextRef = useRef(context);
@@ -198,17 +208,24 @@ export function ChatWindow() {
 
   return (
     <div
+      ref={panelRef}
       className={cn(
-        "fixed bottom-24 right-6 z-50 flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl",
+        "fixed z-50 flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl",
         "animate-in slide-in-from-bottom-4 fade-in duration-200",
         // Larger window — fills more of the screen
         "w-[520px] h-[calc(100vh-8rem)] max-h-[780px]",
         // Mobile responsive
         "max-sm:bottom-0 max-sm:right-0 max-sm:left-0 max-sm:w-full max-sm:h-full max-sm:max-h-full max-sm:rounded-none",
+        // Default position (when not dragged)
+        !isDragged && "bottom-24 right-6",
       )}
+      style={dragStyle}
     >
-      {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 px-4 py-3">
+      {/* ── Header (drag handle) ────────────────────────────── */}
+      <div
+        ref={handleRef}
+        className="flex shrink-0 items-center justify-between border-b bg-muted/30 px-4 py-3"
+      >
         <div className="flex items-center gap-2">
           <Rocket className="h-5 w-5 text-primary" />
           <div>

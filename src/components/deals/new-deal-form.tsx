@@ -63,6 +63,8 @@ const dealFormSchema = z.object({
   salesperson_id: z.string().uuid().optional().nullable(),
   second_salesperson: z.string().optional(),
   second_sp_id: z.string().uuid().optional().nullable(),
+  closer: z.string().optional(),
+  closer_id: z.string().uuid().optional().nullable(),
   selling_price: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? 0 : Number(v)),
     z.number().min(0, "Selling price is required"),
@@ -250,6 +252,7 @@ export function NewDealForm({
       data.trade_payoff ?? "",                                 // PAYOFF
       data.salesperson ?? "",                                  // SALESPERSON
       data.second_salesperson ?? "",                           // 2ND SALESPERSON
+      data.closer ?? "",                                        // CLOSER
       frontGross,                                              // FRONT GROSS
       data.lender ?? "",                                       // LENDER
       data.rate ?? "",                                         // RATE
@@ -298,6 +301,8 @@ export function NewDealForm({
         salesperson_id: data.salesperson_id || null,
         second_salesperson: data.second_salesperson || null,
         second_sp_id: data.second_sp_id || null,
+        closer: data.closer || null,
+        closer_id: data.closer_id || null,
         selling_price: Number(data.selling_price),
         front_gross: frontGross,
         lender: data.lender || null,
@@ -552,6 +557,36 @@ export function NewDealForm({
                   setValue("second_salesperson", name ?? undefined);
                 }}
               />
+            </div>
+            <div>
+              <Label htmlFor="closer">Closer</Label>
+              <Select
+                value={watch("closer_id") ?? watch("closer") ?? ""}
+                onValueChange={(val) => {
+                  if (val === "__home_team__") {
+                    setValue("closer_id", undefined);
+                    setValue("closer", "Home Team");
+                  } else if (val === "__none__") {
+                    setValue("closer_id", undefined);
+                    setValue("closer", undefined);
+                  } else {
+                    const member = roster.find((r) => r.id === val);
+                    setValue("closer_id", val);
+                    setValue("closer", member?.name ?? undefined);
+                  }
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  <SelectItem value="__home_team__">Home Team</SelectItem>
+                  {roster.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

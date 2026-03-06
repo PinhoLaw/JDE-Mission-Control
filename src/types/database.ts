@@ -441,6 +441,8 @@ export type Database = {
           second_salesperson: string | null;
           second_sp_pct: number | null;
           second_sp_id: string | null;
+          closer: string | null;
+          closer_id: string | null;
           selling_price: number | null;
           front_gross: number | null;
           lender: string | null;
@@ -501,6 +503,8 @@ export type Database = {
           second_salesperson?: string | null;
           second_sp_pct?: number | null;
           second_sp_id?: string | null;
+          closer?: string | null;
+          closer_id?: string | null;
           selling_price?: number | null;
           front_gross?: number | null;
           lender?: string | null;
@@ -561,6 +565,8 @@ export type Database = {
           second_salesperson?: string | null;
           second_sp_pct?: number | null;
           second_sp_id?: string | null;
+          closer?: string | null;
+          closer_id?: string | null;
           selling_price?: number | null;
           front_gross?: number | null;
           lender?: string | null;

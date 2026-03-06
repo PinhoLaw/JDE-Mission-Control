@@ -29,6 +29,9 @@ var TEMPLATE_SHEET_ID = "1zb2XMU7YwsFmQyGEEd5wjSJNlAYRiVA5ZBvL-CXF2XA";
 // ── Folder name for all event sheets ──
 var FOLDER_NAME = "JDE Mission Control Events";
 
+// ── Service account email — auto-shared as Editor on every new sheet ──
+var SERVICE_ACCOUNT_EMAIL = "dashboard-access@dashboard-access-488723.iam.gserviceaccount.com";
+
 /**
  * Handle POST requests from the Next.js server
  */
@@ -96,6 +99,10 @@ function createEventSheet(eventName) {
 
   // 3. Set sharing — anyone with the link can edit
   newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
+
+  // 4. Share with service account so it can read the DEAL LOG for daily metrics sync
+  var ss = SpreadsheetApp.openById(newFile.getId());
+  ss.addEditor(SERVICE_ACCOUNT_EMAIL);
 
   var sheetId = newFile.getId();
   var sheetUrl = "https://docs.google.com/spreadsheets/d/" + sheetId + "/edit";

@@ -463,6 +463,7 @@ export const DEAL_DB_FIELDS: FieldDef[] = [
   { value: "salesperson_pct", label: "SP Commission %" },
   { value: "second_salesperson", label: "2nd Salesperson" },
   { value: "second_sp_pct", label: "2nd SP Commission %" },
+  { value: "closer", label: "Closer" },
   { value: "selling_price", label: "Selling Price" },
   { value: "front_gross", label: "Front Gross" },
   { value: "lender", label: "Lender" },
@@ -537,6 +538,9 @@ export function autoMapDealColumn(header: string): string {
     "2ndsalesperson": "second_salesperson",
     "2ndrep": "second_salesperson", secondrep: "second_salesperson",
     secondsppct: "second_sp_pct", sp2pct: "second_sp_pct",
+    // Closer
+    closer: "closer", closername: "closer", closingmanager: "closer",
+    closedby: "closer", turnto: "closer",
     // Pricing
     sellingprice: "selling_price", saleprice: "selling_price",
     price: "selling_price", sellprice: "selling_price",
@@ -598,6 +602,8 @@ export function autoMapDealColumn(header: string): string {
   if (raw.includes("1st") && raw.includes("rep")) return "salesperson";
   if (raw.includes("2nd") && raw.includes("sp")) return "second_salesperson";
   if (raw.includes("2nd") && raw.includes("rep")) return "second_salesperson";
+  if (raw.includes("clos") && (raw.includes("manager") || raw.includes("by") || raw.includes("er"))) return "closer";
+  if (raw.includes("turn") && raw.includes("to")) return "closer";
 
   // Handle deduped header suffixes: "YEAR_2" → trade_year, "MAKE_2" → trade_make, etc.
   const dedupMatch = raw.match(/^(.+?)[\s_]+(\d+)$/);

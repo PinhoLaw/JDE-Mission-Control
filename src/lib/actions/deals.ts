@@ -40,6 +40,8 @@ const newDealSchema = z.object({
   second_salesperson: z.string().optional().nullable(),
   second_sp_id: z.string().uuid().optional().nullable(),
   second_sp_pct: z.coerce.number().optional().nullable(),
+  closer: z.string().optional().nullable(),
+  closer_id: z.string().uuid().optional().nullable(),
   selling_price: z.coerce.number().min(0, "Selling price required"),
   front_gross: z.coerce.number().optional().nullable(),
   lender: z.string().optional().nullable(),
@@ -105,6 +107,15 @@ export async function createDeal(input: NewDealInput) {
       .single();
     if (member) d.second_salesperson = member.name;
   }
+  // Resolve closer name from roster ID (skip for "Home Team" which has no roster ID)
+  if (d.closer_id) {
+    const { data: member } = await supabase
+      .from("roster")
+      .select("name")
+      .eq("id", d.closer_id)
+      .single();
+    if (member) d.closer = member.name;
+  }
 
   // Fetch event config for pack values
   const { data: eventConfig } = await supabase
@@ -168,6 +179,8 @@ export async function createDeal(input: NewDealInput) {
       second_salesperson: d.second_salesperson ?? null,
       second_sp_id: d.second_sp_id ?? null,
       second_sp_pct: d.second_sp_pct ?? null,
+      closer: d.closer ?? null,
+      closer_id: d.closer_id ?? null,
       selling_price: d.selling_price,
       front_gross: frontGross,
       lender: d.lender ?? null,
@@ -309,6 +322,14 @@ export async function updateDeal(input: UpdateDealInput) {
       .single();
     if (member) d.second_salesperson = member.name;
   }
+  if (d.closer_id) {
+    const { data: member } = await supabase
+      .from("roster")
+      .select("name")
+      .eq("id", d.closer_id)
+      .single();
+    if (member) d.closer = member.name;
+  }
 
   // Fetch event config for pack values
   const { data: eventConfig } = await supabase
@@ -370,6 +391,8 @@ export async function updateDeal(input: UpdateDealInput) {
       second_salesperson: d.second_salesperson ?? null,
       second_sp_id: d.second_sp_id ?? null,
       second_sp_pct: d.second_sp_pct ?? null,
+      closer: d.closer ?? null,
+      closer_id: d.closer_id ?? null,
       selling_price: d.selling_price,
       front_gross: frontGross,
       lender: d.lender ?? null,

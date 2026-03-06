@@ -40,6 +40,7 @@ import {
   X,
   Users,
   TrendingUp,
+  ChevronRight,
 } from "lucide-react";
 import {
   BarChart,
@@ -104,6 +105,9 @@ export default function CommissionsPage() {
   const [salespersonFilter, setSalespersonFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+
+  // ── Expanded rows ──
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   // ── Export state ──
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
@@ -306,8 +310,43 @@ export default function CommissionsPage() {
       entry.avgPVR = totalDeals > 0 ? entry.totalGross / totalDeals : 0;
     }
 
-    return Object.values(byPerson).sort((a, b) => b.commission - a.commission);
+    return Object.entries(byPerson)
+      .map(([key, entry]) => ({ ...entry, _key: key }))
+      .sort((a, b) => b.commission - a.commission);
   }, [filteredDeals, defaultRate, rosterRateMap, includeDocFee]);
+
+  // ── Deals grouped by salesperson key (for expanded rows) ──
+
+  const dealsByPerson = useMemo(() => {
+    const map: Record<string, Deal[]> = {};
+    for (const deal of filteredDeals) {
+      // Exclude unwound/cancelled
+      if (deal.status === "unwound" || deal.status === "cancelled") continue;
+
+      const sp = deal.salesperson;
+      if (sp) {
+        const spKey = deal.salesperson_id ?? sp;
+        if (!map[spKey]) map[spKey] = [];
+        map[spKey].push(deal);
+      }
+      // Also add to second salesperson if split
+      if (deal.second_salesperson) {
+        const sp2Key = deal.second_sp_id ?? deal.second_salesperson;
+        if (!map[sp2Key]) map[sp2Key] = [];
+        map[sp2Key].push(deal);
+      }
+    }
+    return map;
+  }, [filteredDeals]);
+
+  const toggleRow = useCallback((key: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   // ── Summary stats ──
 
@@ -634,6 +673,7 @@ export default function CommissionsPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-8"></TableHead>
                         <TableHead>Salesperson</TableHead>
                         <TableHead className="text-right">Rate</TableHead>
                         <TableHead className="text-center">Full</TableHead>
@@ -655,59 +695,161 @@ export default function CommissionsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {commissions.map((c) => (
-                        <TableRow key={c.name}>
-                          <TableCell className="font-medium">
-                            {c.name}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            <span
-                              className={
-                                c.commissionRate !== defaultRate
-                                  ? "text-blue-600 dark:text-blue-400 font-medium"
-                                  : ""
-                              }
+                      {commissions.map((c) => {
+                        const isExpanded = expandedRows.has(c._key);
+                        const personDeals = dealsByPerson[c._key] ?? [];
+                        return (
+                          <>
+                            <TableRow
+                              key={c._key}
+                              className="cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => toggleRow(c._key)}
                             >
-                              {(c.commissionRate * 100).toFixed(0)}%
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {c.fullDeals}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {c.splitDeals}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(c.weightedFrontGross)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-blue-700 dark:text-blue-400">
-                            {formatCurrency(c.totalBackGross)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(c.totalGross)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatCurrency(c.avgPVR)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums font-bold text-green-700 dark:text-green-400">
-                            {formatCurrency(c.commission)}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            {c.washouts > 0 ? (
-                              <Badge
-                                variant="destructive"
-                                className="text-[10px]"
+                              <TableCell className="w-8 px-2">
+                                <ChevronRight
+                                  className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isExpanded ? "rotate-90" : ""}`}
+                                />
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {c.name}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                <span
+                                  className={
+                                    c.commissionRate !== defaultRate
+                                      ? "text-blue-600 dark:text-blue-400 font-medium"
+                                      : ""
+                                  }
+                                >
+                                  {(c.commissionRate * 100).toFixed(0)}%
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                {c.fullDeals}
+                              </TableCell>
+                              <TableCell className="text-center">
+                                {c.splitDeals}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatCurrency(c.weightedFrontGross)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-blue-700 dark:text-blue-400">
+                                {formatCurrency(c.totalBackGross)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatCurrency(c.totalGross)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatCurrency(c.avgPVR)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums font-bold text-green-700 dark:text-green-400">
+                                {formatCurrency(c.commission)}
+                              </TableCell>
+                              <TableCell className="text-center">
+                                {c.washouts > 0 ? (
+                                  <Badge
+                                    variant="destructive"
+                                    className="text-[10px]"
+                                  >
+                                    {c.washouts}
+                                  </Badge>
+                                ) : (
+                                  "—"
+                                )}
+                              </TableCell>
+                            </TableRow>
+                            {/* Expanded deals row */}
+                            <TableRow
+                              key={`${c._key}-deals`}
+                              className="hover:bg-transparent"
+                            >
+                              <TableCell
+                                colSpan={11}
+                                className="p-0 border-b-0"
                               >
-                                {c.washouts}
-                              </Badge>
-                            ) : (
-                              "—"
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                                <div
+                                  className={`grid transition-all duration-200 ease-in-out ${isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+                                >
+                                  <div className="overflow-hidden">
+                                    <div className="bg-muted/30 px-4 py-3 pl-10">
+                                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                                        {c.name}&apos;s Deals ({personDeals.length})
+                                      </p>
+                                      {personDeals.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground italic py-2">
+                                          No funded/pending deals
+                                        </p>
+                                      ) : (
+                                        <div className="rounded-md border bg-background overflow-x-auto">
+                                          <Table>
+                                            <TableHeader>
+                                              <TableRow className="text-[11px]">
+                                                <TableHead className="py-1.5">Customer</TableHead>
+                                                <TableHead className="py-1.5">Stock #</TableHead>
+                                                <TableHead className="py-1.5 text-center">N/U</TableHead>
+                                                <TableHead className="py-1.5">Vehicle</TableHead>
+                                                <TableHead className="py-1.5 text-right">Front Gross</TableHead>
+                                                <TableHead className="py-1.5 text-right">FI Total</TableHead>
+                                                <TableHead className="py-1.5 text-right">Total Gross</TableHead>
+                                                <TableHead className="py-1.5 text-center">Status</TableHead>
+                                              </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                              {personDeals.map((d) => (
+                                                <TableRow key={d.id} className="text-xs">
+                                                  <TableCell className="py-1.5">
+                                                    {d.customer_name ?? "—"}
+                                                  </TableCell>
+                                                  <TableCell className="py-1.5 font-mono text-[11px]">
+                                                    {d.stock_number ?? "—"}
+                                                  </TableCell>
+                                                  <TableCell className="py-1.5 text-center">
+                                                    <Badge
+                                                      variant="outline"
+                                                      className={`text-[10px] px-1.5 ${d.new_used === "New" ? "border-green-300 text-green-700 dark:border-green-700 dark:text-green-400" : ""}`}
+                                                    >
+                                                      {d.new_used}
+                                                    </Badge>
+                                                  </TableCell>
+                                                  <TableCell className="py-1.5">
+                                                    {[d.vehicle_year, d.vehicle_make, d.vehicle_model]
+                                                      .filter(Boolean)
+                                                      .join(" ") || "—"}
+                                                  </TableCell>
+                                                  <TableCell className="py-1.5 text-right tabular-nums">
+                                                    {formatCurrency(d.front_gross ?? 0)}
+                                                  </TableCell>
+                                                  <TableCell className="py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-400">
+                                                    {formatCurrency(d.fi_total ?? 0)}
+                                                  </TableCell>
+                                                  <TableCell className="py-1.5 text-right tabular-nums font-medium">
+                                                    {formatCurrency(d.total_gross ?? 0)}
+                                                  </TableCell>
+                                                  <TableCell className="py-1.5 text-center">
+                                                    <Badge
+                                                      variant={d.status === "funded" ? "default" : "secondary"}
+                                                      className="text-[10px]"
+                                                    >
+                                                      {d.status}
+                                                    </Badge>
+                                                  </TableCell>
+                                                </TableRow>
+                                              ))}
+                                            </TableBody>
+                                          </Table>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          </>
+                        );
+                      })}
                       {/* Totals row */}
                       <TableRow className="border-t-2 font-bold bg-muted/50">
+                        <TableCell></TableCell>
                         <TableCell>TOTALS</TableCell>
                         <TableCell className="text-right">—</TableCell>
                         <TableCell className="text-center">

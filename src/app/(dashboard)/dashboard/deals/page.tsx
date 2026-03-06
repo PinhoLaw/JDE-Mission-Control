@@ -75,6 +75,16 @@ import { formatCurrency } from "@/lib/utils";
 import { EditDealForm } from "@/components/deals/edit-deal-form";
 import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
 import { bulkDeleteDeals, updateDealStatus } from "@/lib/actions/deals";
+import { useRosterMembers } from "@/hooks/useRosterMembers";
+
+const CLOSER_ROLE_COLORS: Record<string, string> = {
+  sales: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  team_leader: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  fi_manager: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
+  closer: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+  manager: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+  home_team: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+};
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
@@ -113,6 +123,7 @@ function SortableHeader({
 
 export default function DealsPage() {
   const { currentEvent } = useEvent();
+  const { roster } = useRosterMembers();
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -282,6 +293,13 @@ export default function DealsPage() {
     },
   });
 
+  // Build name → role map for closer badge colors
+  const rosterRoleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of roster) map.set(r.name, r.role ?? "sales");
+    return map;
+  }, [roster]);
+
   const columns: ColumnDef<Deal>[] = useMemo(
     () => [
       {
@@ -421,6 +439,22 @@ export default function DealsPage() {
       // Sales staff
       { accessorKey: "salesperson", header: ({ column }) => <SortableHeader column={column}>Salesperson</SortableHeader>, size: 120 },
       { accessorKey: "second_salesperson", header: ({ column }) => <SortableHeader column={column}>2nd SP</SortableHeader>, size: 110 },
+      // Closer
+      {
+        accessorKey: "closer",
+        header: ({ column }) => <SortableHeader column={column}>Closer</SortableHeader>,
+        size: 110,
+        cell: ({ row }) => {
+          const closer = row.getValue("closer") as string | null;
+          if (!closer) return "—";
+          const role = closer === "Home Team" ? "home_team" : (rosterRoleMap.get(closer) ?? "sales");
+          return (
+            <Badge variant="secondary" className={`text-[10px] px-1.5 py-0 ${CLOSER_ROLE_COLORS[role] ?? CLOSER_ROLE_COLORS.sales}`}>
+              {closer}
+            </Badge>
+          );
+        },
+      },
       // Gross & Finance
       {
         ...currencyCell("front_gross"),
@@ -511,7 +545,7 @@ export default function DealsPage() {
         ),
       },
     ],
-    [],
+    [rosterRoleMap],
   );
 
   const table = useReactTable({
@@ -569,7 +603,7 @@ export default function DealsPage() {
     const csvHeaders = [
       "Stock #", "Customer", "Zip", "New/Used", "Year", "Make", "Model", "Cost",
       "Trade Year", "Trade Make", "Trade Model", "Miles", "ACV", "Payoff",
-      "Salesperson", "2nd Salesperson", "Front Gross", "Lender", "Rate",
+      "Salesperson", "2nd Salesperson", "Closer", "Front Gross", "Lender", "Rate",
       "Reserve", "Warranty", "Aft 1", "GAP", "FI Total", "Total Gross", "Status",
     ];
     const esc = (v: unknown) => {
@@ -582,7 +616,7 @@ export default function DealsPage() {
         d.vehicle_year, d.vehicle_make, d.vehicle_model, d.vehicle_cost,
         d.trade_year, d.trade_make, d.trade_model, d.trade_mileage,
         d.trade_acv, d.trade_payoff,
-        d.salesperson, d.second_salesperson, d.front_gross, d.lender, d.rate,
+        d.salesperson, d.second_salesperson, d.closer, d.front_gross, d.lender, d.rate,
         d.reserve, d.warranty, d.aftermarket_1, d.gap, d.fi_total,
         d.total_gross, d.status,
       ].map(esc).join(","),

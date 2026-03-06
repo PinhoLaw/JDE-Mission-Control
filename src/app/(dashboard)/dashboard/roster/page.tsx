@@ -1032,135 +1032,6 @@ export default function RosterPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Add Roster Member Dialog */}
-          <Dialog open={rosterDialogOpen} onOpenChange={setRosterDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <UserPlus className="mr-1.5 h-4 w-4" />
-                Add Member
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Add Team Member</DialogTitle>
-                <DialogDescription>
-                  Add a new salesperson or team member to this event&apos;s
-                  roster.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="roster-name">Name *</Label>
-                  <Input
-                    id="roster-name"
-                    placeholder="John Smith"
-                    value={rosterForm.name}
-                    onChange={(e) =>
-                      setRosterForm((f) => ({ ...f, name: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="roster-phone">Phone</Label>
-                    <Input
-                      id="roster-phone"
-                      placeholder="(555) 123-4567"
-                      value={rosterForm.phone}
-                      onChange={(e) =>
-                        setRosterForm((f) => ({ ...f, phone: e.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="roster-email">Email</Label>
-                    <Input
-                      id="roster-email"
-                      type="email"
-                      placeholder="john@example.com"
-                      value={rosterForm.email}
-                      onChange={(e) =>
-                        setRosterForm((f) => ({ ...f, email: e.target.value }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="roster-role">Role</Label>
-                    <Select
-                      value={rosterForm.role}
-                      onValueChange={(v) =>
-                        setRosterForm((f) => ({
-                          ...f,
-                          role: v as RosterRole,
-                        }))
-                      }
-                    >
-                      <SelectTrigger id="roster-role">
-                        <SelectValue placeholder="Select role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="sales">Sales</SelectItem>
-                        <SelectItem value="team_leader">Team Leader</SelectItem>
-                        <SelectItem value="fi_manager">F&I Manager</SelectItem>
-                        <SelectItem value="closer">Closer</SelectItem>
-                        <SelectItem value="manager">Manager</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="roster-team">Team</Label>
-                    <Input
-                      id="roster-team"
-                      placeholder="Team A"
-                      value={rosterForm.team}
-                      onChange={(e) =>
-                        setRosterForm((f) => ({ ...f, team: e.target.value }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="roster-commission">Commission %</Label>
-                  <Input
-                    id="roster-commission"
-                    type="number"
-                    step="0.5"
-                    min="0"
-                    max="100"
-                    placeholder="25"
-                    value={rosterForm.commission_pct}
-                    onChange={(e) =>
-                      setRosterForm((f) => ({
-                        ...f,
-                        commission_pct: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setRosterDialogOpen(false)}
-                  disabled={submittingRoster}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleAddRosterMember}
-                  disabled={submittingRoster}
-                >
-                  {submittingRoster && (
-                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                  )}
-                  Add Member
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
           {/* Copy from Event Dialog */}
           <Dialog
             open={copyDialogOpen}
@@ -1370,91 +1241,6 @@ export default function RosterPage() {
           </Button>
 
           <LastSyncedIndicator syncedAt={lastSyncedAt} />
-
-          {/* Add Lender Dialog */}
-          <Dialog open={lenderDialogOpen} onOpenChange={setLenderDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" variant="outline">
-                <Building2 className="mr-1.5 h-4 w-4" />
-                Add Lender
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Add Lender</DialogTitle>
-                <DialogDescription>
-                  Add a new lender / finance source for this event.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="lender-name">Lender Name *</Label>
-                  <Input
-                    id="lender-name"
-                    placeholder="Capital One Auto Finance"
-                    value={lenderForm.name}
-                    onChange={(e) =>
-                      setLenderForm((f) => ({ ...f, name: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="lender-rate">Buy Rate %</Label>
-                    <Input
-                      id="lender-rate"
-                      type="number"
-                      step="0.25"
-                      min="0"
-                      placeholder="3.5"
-                      value={lenderForm.buy_rate_pct}
-                      onChange={(e) =>
-                        setLenderForm((f) => ({
-                          ...f,
-                          buy_rate_pct: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="lender-advance">Max Advance</Label>
-                    <Input
-                      id="lender-advance"
-                      type="number"
-                      step="500"
-                      min="0"
-                      placeholder="45000"
-                      value={lenderForm.max_advance}
-                      onChange={(e) =>
-                        setLenderForm((f) => ({
-                          ...f,
-                          max_advance: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setLenderDialogOpen(false)}
-                  disabled={submittingLender}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleAddLender}
-                  disabled={submittingLender}
-                >
-                  {submittingLender && (
-                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                  )}
-                  Add Lender
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
         </div>
       </div>
 
@@ -1529,13 +1315,142 @@ export default function RosterPage() {
       {/* Roster Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Team Roster
-            <Badge variant="secondary" className="ml-auto">
-              {roster.length} member{roster.length !== 1 ? "s" : ""}
-            </Badge>
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Team Roster
+              <Badge variant="secondary">
+                {roster.length} member{roster.length !== 1 ? "s" : ""}
+              </Badge>
+            </CardTitle>
+            <Dialog open={rosterDialogOpen} onOpenChange={setRosterDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <UserPlus className="mr-1.5 h-4 w-4" />
+                  Add Member
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Add Team Member</DialogTitle>
+                  <DialogDescription>
+                    Add a new salesperson or team member to this event&apos;s
+                    roster.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="roster-name">Name *</Label>
+                    <Input
+                      id="roster-name"
+                      placeholder="John Smith"
+                      value={rosterForm.name}
+                      onChange={(e) =>
+                        setRosterForm((f) => ({ ...f, name: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="roster-phone">Phone</Label>
+                      <Input
+                        id="roster-phone"
+                        placeholder="(555) 123-4567"
+                        value={rosterForm.phone}
+                        onChange={(e) =>
+                          setRosterForm((f) => ({ ...f, phone: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="roster-email">Email</Label>
+                      <Input
+                        id="roster-email"
+                        type="email"
+                        placeholder="john@example.com"
+                        value={rosterForm.email}
+                        onChange={(e) =>
+                          setRosterForm((f) => ({ ...f, email: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="roster-role">Role</Label>
+                      <Select
+                        value={rosterForm.role}
+                        onValueChange={(v) =>
+                          setRosterForm((f) => ({
+                            ...f,
+                            role: v as RosterRole,
+                          }))
+                        }
+                      >
+                        <SelectTrigger id="roster-role">
+                          <SelectValue placeholder="Select role" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sales">Sales</SelectItem>
+                          <SelectItem value="team_leader">Team Leader</SelectItem>
+                          <SelectItem value="fi_manager">F&I Manager</SelectItem>
+                          <SelectItem value="closer">Closer</SelectItem>
+                          <SelectItem value="manager">Manager</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="roster-team">Team</Label>
+                      <Input
+                        id="roster-team"
+                        placeholder="Team A"
+                        value={rosterForm.team}
+                        onChange={(e) =>
+                          setRosterForm((f) => ({ ...f, team: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="roster-commission">Commission %</Label>
+                    <Input
+                      id="roster-commission"
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      max="100"
+                      placeholder="25"
+                      value={rosterForm.commission_pct}
+                      onChange={(e) =>
+                        setRosterForm((f) => ({
+                          ...f,
+                          commission_pct: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setRosterDialogOpen(false)}
+                    disabled={submittingRoster}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleAddRosterMember}
+                    disabled={submittingRoster}
+                  >
+                    {submittingRoster && (
+                      <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    )}
+                    Add Member
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
           <CardDescription>
             Manage your sales team for this event. Toggle confirmed status and
             active/inactive.
@@ -1814,13 +1729,98 @@ export default function RosterPage() {
       {/* Lenders Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5" />
-            Lenders
-            <Badge variant="secondary" className="ml-auto">
-              {lenders.length} lender{lenders.length !== 1 ? "s" : ""}
-            </Badge>
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5" />
+              Lenders
+              <Badge variant="secondary">
+                {lenders.length} lender{lenders.length !== 1 ? "s" : ""}
+              </Badge>
+            </CardTitle>
+            <Dialog open={lenderDialogOpen} onOpenChange={setLenderDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <Building2 className="mr-1.5 h-4 w-4" />
+                  Add Lender
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Add Lender</DialogTitle>
+                  <DialogDescription>
+                    Add a new lender / finance source for this event.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="lender-name">Lender Name *</Label>
+                    <Input
+                      id="lender-name"
+                      placeholder="Capital One Auto Finance"
+                      value={lenderForm.name}
+                      onChange={(e) =>
+                        setLenderForm((f) => ({ ...f, name: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="lender-rate">Buy Rate %</Label>
+                      <Input
+                        id="lender-rate"
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        placeholder="3.5"
+                        value={lenderForm.buy_rate_pct}
+                        onChange={(e) =>
+                          setLenderForm((f) => ({
+                            ...f,
+                            buy_rate_pct: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="lender-advance">Max Advance</Label>
+                      <Input
+                        id="lender-advance"
+                        type="number"
+                        step="500"
+                        min="0"
+                        placeholder="45000"
+                        value={lenderForm.max_advance}
+                        onChange={(e) =>
+                          setLenderForm((f) => ({
+                            ...f,
+                            max_advance: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setLenderDialogOpen(false)}
+                    disabled={submittingLender}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleAddLender}
+                    disabled={submittingLender}
+                  >
+                    {submittingLender && (
+                      <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    )}
+                    Add Lender
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
           <CardDescription>
             Finance sources and lender configurations for this event.
           </CardDescription>
