@@ -284,8 +284,10 @@ export default function DealsPage() {
   }, [filteredDeals]);
 
   // Currency cell helper — compact format for the spreadsheet-style table
+  // Uses "basic" sortingFn so nulls and numbers sort correctly (not as strings)
   const currencyCell = (key: keyof Deal, color?: string) => ({
     accessorKey: key,
+    sortingFn: "basic" as const,
     cell: ({ row }: { row: { getValue: (k: string) => unknown } }) => {
       const v = row.getValue(key as string) as number | null;
       if (v == null) return "—";
@@ -373,6 +375,7 @@ export default function DealsPage() {
       {
         accessorKey: "stock_number",
         header: ({ column }) => <SortableHeader column={column}>Stock #</SortableHeader>,
+        sortingFn: "alphanumeric",
         size: 100,
         cell: ({ row }) => {
           const sn = row.getValue("stock_number") as string | null;
@@ -405,7 +408,7 @@ export default function DealsPage() {
           return v === "New" ? "N" : v === "Certified" ? "CPO" : "U";
         },
       },
-      { accessorKey: "vehicle_year", header: ({ column }) => <SortableHeader column={column}>Year</SortableHeader>, size: 50 },
+      { accessorKey: "vehicle_year", header: ({ column }) => <SortableHeader column={column}>Year</SortableHeader>, sortingFn: "basic", size: 50 },
       { accessorKey: "vehicle_make", header: ({ column }) => <SortableHeader column={column}>Make</SortableHeader>, size: 80 },
       { accessorKey: "vehicle_model", header: ({ column }) => <SortableHeader column={column}>Model</SortableHeader>, size: 100 },
       {
@@ -420,6 +423,7 @@ export default function DealsPage() {
       {
         accessorKey: "trade_mileage",
         header: ({ column }) => <SortableHeader column={column}>Miles</SortableHeader>,
+        sortingFn: "basic",
         size: 70,
         cell: ({ row }) => {
           const v = row.getValue("trade_mileage") as number | null;
@@ -474,6 +478,7 @@ export default function DealsPage() {
       {
         accessorKey: "rate",
         header: ({ column }) => <SortableHeader column={column}>Rate</SortableHeader>,
+        sortingFn: "basic",
         size: 55,
         cell: ({ row }) => {
           const v = row.getValue("rate") as number | null;

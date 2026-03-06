@@ -129,10 +129,18 @@ export function NewDealForm({
       new_used: "Used",
       finance_type: "retail",
       stock_number: initialStockNumber ?? "",
-      sale_date: new Date().toISOString().split("T")[0],
+      sale_date: "",
       ups_count: 1,
     },
   });
+
+  // Set today's date on mount (client-side only to avoid hydration mismatch)
+  useEffect(() => {
+    const currentDate = watch("sale_date");
+    if (!currentDate) {
+      setValue("sale_date", new Date().toISOString().split("T")[0]);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Watch for auto-calculations
   const sellingPrice = watch("selling_price");

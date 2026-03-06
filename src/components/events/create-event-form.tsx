@@ -48,7 +48,7 @@ export function CreateEventForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form action={action} className="space-y-6">
+        <form action={action} className="space-y-6" autoComplete="off">
           {/* Event Name */}
           <div className="space-y-2">
             <Label htmlFor="name">Event Name *</Label>
