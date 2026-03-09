@@ -147,10 +147,16 @@ export default function CampaignsPage() {
     };
   }, [currentEvent, refreshDealStats]);
 
-  // Filter data by selected campaign source
+  // Filter data by selected campaign source (for table display)
   const data = useMemo(
     () => allData.filter((r) => r.campaign_source === selectedSource),
     [allData, selectedSource],
+  );
+
+  // Current campaign data — always used for summary stats regardless of selected source
+  const currentData = useMemo(
+    () => allData.filter((r) => r.campaign_source === "current"),
+    [allData],
   );
 
   // Determine which day columns have data for the selected source
@@ -165,35 +171,26 @@ export default function CampaignsPage() {
     [campaignSources],
   );
 
+  // Summary stats always reflect the CURRENT campaign only (not historical sources)
   const stats = useMemo(() => {
-    const totalPieces = data.reduce((s, d) => s + (d.pieces_sent ?? 0), 0);
-    const totalResponses = data.reduce((s, d) => s + d.total_responses, 0);
-
-    // For "current" campaign: use deal cross-reference for sold/gross
-    // For historical: use stored sold_from_mail / gross_from_mail values
-    let totalSold: number;
-    let totalGross: number;
-    if (isCurrent) {
-      totalSold = data.reduce(
-        (s, d) => s + (soldByZip[d.zip_code] ?? 0),
-        0,
-      );
-      totalGross = data.reduce(
-        (s, d) => s + (grossByZip[d.zip_code] ?? 0),
-        0,
-      );
-    } else {
-      totalSold = data.reduce((s, d) => s + (d.sold_from_mail ?? 0), 0);
-      totalGross = data.reduce((s, d) => s + (d.gross_from_mail ?? 0), 0);
-    }
+    const totalPieces = currentData.reduce((s, d) => s + (d.pieces_sent ?? 0), 0);
+    const totalResponses = currentData.reduce((s, d) => s + d.total_responses, 0);
+    const totalSold = currentData.reduce(
+      (s, d) => s + (soldByZip[d.zip_code] ?? 0),
+      0,
+    );
+    const totalGross = currentData.reduce(
+      (s, d) => s + (grossByZip[d.zip_code] ?? 0),
+      0,
+    );
 
     const rate = totalPieces > 0 ? (totalResponses / totalPieces) * 100 : 0;
     const closeRate = totalResponses > 0 ? (totalSold / totalResponses) * 100 : 0;
-    const topZips = [...data]
+    const topZips = [...currentData]
       .sort((a, b) => b.total_responses - a.total_responses)
       .slice(0, 5);
     return { totalPieces, totalResponses, totalSold, totalGross, rate, closeRate, topZips };
-  }, [data, soldByZip, grossByZip, isCurrent]);
+  }, [currentData, soldByZip, grossByZip]);
 
   /** Get sold count for a single row */
   const getSoldForRow = useCallback(

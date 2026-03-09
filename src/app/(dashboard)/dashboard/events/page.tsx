@@ -16,10 +16,16 @@ import { CreateFromTemplateDialog } from "@/components/events/create-from-templa
 export default async function EventsPage() {
   const supabase = await createClient();
 
-  const { data: events } = await supabase
+  const { data: eventsRaw } = await supabase
     .from("events")
-    .select("*")
-    .order("created_at", { ascending: false });
+    .select("*");
+
+  // Sort by most recent event date: end_date desc, falling back to start_date
+  const events = (eventsRaw ?? []).sort((a, b) => {
+    const dateA = a.end_date || a.start_date || "";
+    const dateB = b.end_date || b.start_date || "";
+    return dateB.localeCompare(dateA);
+  });
 
   const statusColor: Record<string, string> = {
     draft: "bg-yellow-100 text-yellow-800",
@@ -92,7 +98,7 @@ export default async function EventsPage() {
                   <div className="flex items-center justify-between text-sm text-muted-foreground">
                     <span>
                       {event.start_date
-                        ? new Date(event.start_date).toLocaleDateString()
+                        ? new Date(event.start_date + "T12:00:00").toLocaleDateString()
                         : "No date set"}
                     </span>
                     <div className="flex items-center gap-2">

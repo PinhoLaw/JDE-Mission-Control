@@ -120,11 +120,15 @@ export function EventProvider({ children }: { children: ReactNode }) {
         // Fallback: fetch all events (for superadmin or if no members yet)
         const { data: allEvents } = await supabase
           .from("events")
-          .select("*")
-          .order("created_at", { ascending: false });
+          .select("*");
 
         if (!cancelled) {
-          const events = allEvents ?? [];
+          // Sort by most recent event date: end_date desc, falling back to start_date
+          const events = (allEvents ?? []).sort((a, b) => {
+            const dateA = a.end_date || a.start_date || "";
+            const dateB = b.end_date || b.start_date || "";
+            return dateB.localeCompare(dateA);
+          });
           setAvailableEvents(events);
           resolveCurrentEvent(events);
           setIsLoading(false);
@@ -134,14 +138,18 @@ export function EventProvider({ children }: { children: ReactNode }) {
       }
 
       const eventIds = memberships.map((m) => m.event_id);
-      const { data: events } = await supabase
+      const { data: eventsRaw } = await supabase
         .from("events")
         .select("*")
-        .in("id", eventIds)
-        .order("created_at", { ascending: false });
+        .in("id", eventIds);
 
       if (!cancelled) {
-        const eventList = events ?? [];
+        // Sort by most recent event date: end_date desc, falling back to start_date
+        const eventList = (eventsRaw ?? []).sort((a, b) => {
+          const dateA = a.end_date || a.start_date || "";
+          const dateB = b.end_date || b.start_date || "";
+          return dateB.localeCompare(dateA);
+        });
         setAvailableEvents(eventList);
         resolveCurrentEvent(eventList);
         setIsLoading(false);

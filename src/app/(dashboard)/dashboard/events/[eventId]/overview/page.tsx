@@ -167,9 +167,9 @@ export default async function EventOverviewPage({
               {event.start_date && (
                 <span className="flex items-center gap-1">
                   <CalendarDays className="h-3 w-3" />
-                  {new Date(event.start_date).toLocaleDateString()}
+                  {new Date(event.start_date + "T12:00:00").toLocaleDateString()}
                   {event.end_date &&
-                    ` — ${new Date(event.end_date).toLocaleDateString()}`}
+                    ` — ${new Date(event.end_date + "T12:00:00").toLocaleDateString()}`}
                 </span>
               )}
               {event.budget != null && (

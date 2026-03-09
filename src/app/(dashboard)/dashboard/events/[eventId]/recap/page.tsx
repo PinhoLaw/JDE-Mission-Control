@@ -10,7 +10,6 @@ import type { Deal, EventConfig, RosterMember, DailyMetric } from "@/types/datab
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -24,16 +23,11 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import {
   Loader2,
   FileSpreadsheet,
   FileText,
   Save,
-  Settings2,
-  ChevronDown,
-  ChevronUp,
   ArrowLeft,
   BarChart3,
 } from "lucide-react";
@@ -83,7 +77,6 @@ export default function RecapPage() {
   const [jdeCommissionPct, setJdeCommissionPct] = useState(25); // display value (e.g. 25 for 25%)
   const [miscExpenses, setMiscExpenses] = useState(0);
   const [prizeGiveaways, setPrizeGiveaways] = useState(0);
-  const [showSetup, setShowSetup] = useState(false);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
 
@@ -123,7 +116,7 @@ export default function RecapPage() {
       // Hydrate configurable fields from DB
       if (cfg) {
         setMarketingCost(cfg.marketing_cost ?? 0);
-        setJdeCommissionPct((cfg.jde_commission_pct ?? 0.25) * 100);
+        setJdeCommissionPct((cfg.jde_commission_pct ?? cfg.rep_commission_pct ?? 0.25) * 100);
         setMiscExpenses(cfg.misc_expenses ?? 0);
         setPrizeGiveaways(cfg.prize_giveaways ?? 0);
       }
@@ -200,9 +193,9 @@ export default function RecapPage() {
       return s + docFee + pack;
     }, 0);
 
-    // Total Sale Gross
+    // Total Sale Gross (all expenses deducted)
     const totalSaleGross =
-      totalCommissionableGross - jdeCommission - marketingCost + nonCommGross;
+      totalCommissionableGross - jdeCommission - marketingCost - miscExpenses - prizeGiveaways + nonCommGross;
 
     // Reps commissions (same logic as commissions page, uses ID-based lookup)
     let repsCommissions = 0;
@@ -249,7 +242,7 @@ export default function RecapPage() {
       variableNet,
       totalNet,
     };
-  }, [deals, dailyMetrics, config, jdeCommissionPct, marketingCost, defaultRate, rosterRateMap]);
+  }, [deals, dailyMetrics, config, jdeCommissionPct, marketingCost, miscExpenses, prizeGiveaways, defaultRate, rosterRateMap]);
 
   // ── Salesperson summary (grouped by ID, fallback to name) ──
   const includeDocFee = config?.include_doc_fee_in_commission ?? false;
@@ -465,87 +458,6 @@ export default function RecapPage() {
         </div>
       </div>
 
-      {/* ── Pre-Sale Financial Setup ── */}
-      <Card>
-        <CardHeader
-          className="cursor-pointer select-none"
-          onClick={() => setShowSetup((p) => !p)}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Settings2 className="h-5 w-5 text-muted-foreground" />
-              <div>
-                <CardTitle className="text-base">Pre-Sale Financial Setup</CardTitle>
-                <CardDescription>
-                  Configure marketing cost and expenses
-                </CardDescription>
-              </div>
-            </div>
-            {showSetup ? (
-              <ChevronUp className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            )}
-          </div>
-        </CardHeader>
-        {showSetup && (
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <Label>Marketing Cost</Label>
-                <Input
-                  type="number"
-                  value={marketingCost || ""}
-                  onChange={(e) => setMarketingCost(Number(e.target.value) || 0)}
-                  placeholder="e.g. 45750"
-                />
-              </div>
-              <div>
-                <Label>JDE Commission %</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step="0.01"
-                  value={jdeCommissionPct || ""}
-                  onChange={(e) => setJdeCommissionPct(Number(e.target.value) || 0)}
-                  placeholder="25"
-                />
-              </div>
-              <div>
-                <Label>Misc Expenses</Label>
-                <Input
-                  type="number"
-                  value={miscExpenses || ""}
-                  onChange={(e) => setMiscExpenses(Number(e.target.value) || 0)}
-                  placeholder="0"
-                />
-              </div>
-              <div>
-                <Label>Helium / Prize Giveaways</Label>
-                <Input
-                  type="number"
-                  value={prizeGiveaways || ""}
-                  onChange={(e) => setPrizeGiveaways(Number(e.target.value) || 0)}
-                  placeholder="0"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <Button onClick={handleSave} disabled={saving} size="sm">
-                {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                Save Configuration
-              </Button>
-            </div>
-          </CardContent>
-        )}
-      </Card>
-
       {/* ── No deals empty state ── */}
       {deals.length === 0 ? (
         <Card>
@@ -580,24 +492,78 @@ export default function RecapPage() {
                       </TableCell>
                     </TableRow>
 
-                    {/* JDE COMMISSION */}
-                    <TableRow>
+                    {/* JDE COMMISSION — editable % */}
+                    <TableRow className="bg-muted/30">
                       <TableCell className="font-medium">
-                        JDE COMMISSION{" "}
-                        <span className="text-muted-foreground text-xs">
-                          [{fmtPct(pnl.jdePct)}]
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span>JDE COMMISSION</span>
+                          <span className="inline-flex items-center gap-1">
+                            <Input
+                              type="number"
+                              className="h-7 w-16 text-xs text-center"
+                              value={jdeCommissionPct || ""}
+                              onChange={(e) => setJdeCommissionPct(Number(e.target.value) || 0)}
+                              min={0}
+                              max={100}
+                              step="0.01"
+                            />
+                            <span className="text-xs text-muted-foreground">%</span>
+                          </span>
+                        </div>
                       </TableCell>
                       <TableCell className="text-right font-mono text-red-600 dark:text-red-400">
                         - {fmtCurrency(pnl.jdeCommission)}
                       </TableCell>
                     </TableRow>
 
-                    {/* MARKETING COST */}
-                    <TableRow>
+                    {/* MARKETING COST — editable $ */}
+                    <TableRow className="bg-muted/30">
                       <TableCell className="font-medium">MARKETING COST</TableCell>
-                      <TableCell className="text-right font-mono text-red-600 dark:text-red-400">
-                        - {fmtCurrency(marketingCost)}
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="text-xs text-red-600 dark:text-red-400">-&nbsp;$</span>
+                          <Input
+                            type="number"
+                            className="h-7 w-28 text-xs text-right font-mono"
+                            value={marketingCost || ""}
+                            onChange={(e) => setMarketingCost(Number(e.target.value) || 0)}
+                            placeholder="0"
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+
+                    {/* MISC EXPENSES — editable $ */}
+                    <TableRow className="bg-muted/30">
+                      <TableCell className="font-medium">MISC EXPENSES</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="text-xs text-red-600 dark:text-red-400">-&nbsp;$</span>
+                          <Input
+                            type="number"
+                            className="h-7 w-28 text-xs text-right font-mono"
+                            value={miscExpenses || ""}
+                            onChange={(e) => setMiscExpenses(Number(e.target.value) || 0)}
+                            placeholder="0"
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+
+                    {/* HELIUM / PRIZE GIVEAWAYS — editable $ */}
+                    <TableRow className="bg-muted/30">
+                      <TableCell className="font-medium">HELIUM / PRIZE GIVEAWAYS</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="text-xs text-red-600 dark:text-red-400">-&nbsp;$</span>
+                          <Input
+                            type="number"
+                            className="h-7 w-28 text-xs text-right font-mono"
+                            value={prizeGiveaways || ""}
+                            onChange={(e) => setPrizeGiveaways(Number(e.target.value) || 0)}
+                            placeholder="0"
+                          />
+                        </div>
                       </TableCell>
                     </TableRow>
 
@@ -647,46 +613,20 @@ export default function RecapPage() {
                         {fmtCurrency(pnl.totalNet)}
                       </TableCell>
                     </TableRow>
-
-                    {/* Separator */}
-                    <TableRow>
-                      <TableCell
-                        colSpan={2}
-                        className="h-2 bg-muted/50 p-0"
-                      />
-                    </TableRow>
-
-                    {/* MIS EXPENSES */}
-                    <TableRow>
-                      <TableCell className="text-muted-foreground font-medium">
-                        MIS EXPENSES
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {fmtCurrency(miscExpenses)}
-                      </TableCell>
-                    </TableRow>
-
-                    {/* HELIUM / PRIZE GIVEAWAYS */}
-                    <TableRow>
-                      <TableCell className="text-muted-foreground font-medium">
-                        HELIUM / PRIZE GIVEAWAYS ETC
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {fmtCurrency(prizeGiveaways)}
-                      </TableCell>
-                    </TableRow>
-
-                    {/* JDE COMMISSION (display) */}
-                    <TableRow>
-                      <TableCell className="text-muted-foreground font-medium">
-                        JDE COMMISSION
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {fmtCurrency(pnl.jdeCommission)}
-                      </TableCell>
-                    </TableRow>
                   </TableBody>
                 </Table>
+              </div>
+
+              {/* Save button for editable fields */}
+              <div className="mt-3 flex justify-end">
+                <Button onClick={handleSave} disabled={saving} size="sm" variant="outline">
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  Save
+                </Button>
               </div>
 
               {/* NEW / USED / CLOSING RATIO box */}

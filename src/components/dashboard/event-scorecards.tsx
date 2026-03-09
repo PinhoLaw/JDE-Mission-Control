@@ -46,8 +46,7 @@ export async function EventScoreCards() {
     supabase
       .from("events")
       .select("*")
-      .in("id", eventIds)
-      .order("created_at", { ascending: false }),
+      .in("id", eventIds),
     supabase
       .from("v_event_kpis")
       .select("*")
@@ -58,9 +57,16 @@ export async function EventScoreCards() {
       .in("event_id", eventIds),
   ]);
 
-  const events = eventsRes.data ?? [];
+  const eventsRaw = eventsRes.data ?? [];
   const kpis = kpisRes.data ?? [];
   const metricsData = metricsRes.data ?? [];
+
+  // Sort by most recent event date: end_date desc, falling back to start_date
+  const events = eventsRaw.sort((a, b) => {
+    const dateA = a.end_date || a.start_date || "";
+    const dateB = b.end_date || b.start_date || "";
+    return dateB.localeCompare(dateA);
+  });
 
   // 3. Build a KPI lookup by event_id
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,8 +110,8 @@ export async function EventScoreCards() {
 
           const dateRange = event.start_date
             ? event.end_date
-              ? `${new Date(event.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(event.end_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-              : new Date(event.start_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+              ? `${new Date(event.start_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(event.end_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+              : new Date(event.start_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
             : null;
 
           return (

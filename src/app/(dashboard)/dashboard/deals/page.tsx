@@ -126,7 +126,9 @@ export default function DealsPage() {
   const { roster } = useRosterMembers();
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "sale_date", desc: true },
+  ]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -370,6 +372,16 @@ export default function DealsPage() {
               </SelectContent>
             </Select>
           );
+        },
+      },
+      {
+        accessorKey: "sale_date",
+        header: ({ column }) => <SortableHeader column={column}>Date</SortableHeader>,
+        size: 90,
+        cell: ({ row }) => {
+          const v = row.getValue("sale_date") as string | null;
+          if (!v) return "—";
+          return new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric" });
         },
       },
       {
