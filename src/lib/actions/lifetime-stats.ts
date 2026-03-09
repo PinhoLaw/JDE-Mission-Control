@@ -87,24 +87,56 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
 
     if (events.length === 0) return empty;
 
-    // ── Path 1: Events WITH daily_metrics (dashboard-created) ──
-    // Group daily_metrics by event to identify which events have daily data
-    const eventsWithDailyMetrics = new Set<string>();
+    // ── Path 1: Events WITH real daily sales data (dashboard-created) ──
+    // Only rows with total_sold > 0 count toward units/gross/days.
+    // Ups-only rows (from computed closing ratios) are collected separately.
+    const eventsWithSalesMetrics = new Set<string>();
+    const eventsWithUps = new Set<string>();
     let dmUps = 0;
     let dmUnits = 0;
     let dmGross = 0;
     let dmDays = 0;
+    let upsOnlyTotal = 0;
 
     for (const m of metrics) {
-      eventsWithDailyMetrics.add(m.event_id);
-      dmUps += (m.total_ups as number) ?? 0;
-      dmUnits += (m.total_sold as number) ?? 0;
-      dmGross += (m.total_gross as number) ?? 0;
-      dmDays += 1;
+      const sold = (m.total_sold as number) ?? 0;
+      const gross = (m.total_gross as number) ?? 0;
+      const ups = (m.total_ups as number) ?? 0;
+
+      if (sold > 0 || gross > 0) {
+        // Real daily metrics row with actual sales data
+        eventsWithSalesMetrics.add(m.event_id);
+        if (ups > 0) eventsWithUps.add(m.event_id);
+        dmUps += ups;
+        dmUnits += sold;
+        dmGross += gross;
+        dmDays += 1;
+      } else if (ups > 0) {
+        // Ups-only row (computed from closing ratio for imported events)
+        eventsWithUps.add(m.event_id);
+        upsOnlyTotal += ups;
+      }
     }
 
-    // ── Path 2: Events WITHOUT daily_metrics (spreadsheet-imported) ──
-    // Use event dates to compute selling days, use KPI totals
+    // Build event lookup for selling day computation
+    const eventMap = new Map<string, { start_date: string | null; end_date: string | null }>();
+    for (const ev of events) {
+      eventMap.set(ev.id, { start_date: ev.start_date, end_date: ev.end_date });
+    }
+
+    // Compute selling days ONLY for events that have ups data
+    // (so avg ups/day isn't diluted by events without traffic info)
+    let upsDays = 0;
+    for (const eid of eventsWithUps) {
+      const ev = eventMap.get(eid);
+      if (ev?.start_date && ev?.end_date) {
+        upsDays += countSellingDays(ev.start_date, ev.end_date);
+      }
+    }
+
+    // ── Path 2: Events WITHOUT real daily sales data (spreadsheet-imported) ──
+    // Use event dates to compute selling days, use KPI totals.
+    // Events with ups-only rows still go through Path 2 for units/gross.
     let importedUnits = 0;
     let importedGross = 0;
     let importedDays = 0;
@@ -122,8 +154,8 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
     }
 
     for (const ev of events) {
-      // Skip events that have daily_metrics — they're handled above
-      if (eventsWithDailyMetrics.has(ev.id)) continue;
+      // Skip events that have real daily sales metrics — handled above
+      if (eventsWithSalesMetrics.has(ev.id)) continue;
 
       // Need valid date range to compute selling days
       if (!ev.start_date || !ev.end_date) continue;
@@ -143,7 +175,7 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
     const totalDays = dmDays + importedDays;
     const totalUnits = dmUnits + importedUnits;
     const totalGross = dmGross + importedGross;
-    const totalUps = dmUps; // Ups only available from daily_metrics
+    const totalUps = dmUps + upsOnlyTotal; // Ups from both real daily data + computed rows
 
     // PVR: average of per-event avg_pvr values (all events, not per-day)
     const pvrValues = kpis
@@ -155,7 +187,7 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
         : 0;
 
     return {
-      avgUpsPerDay: totalDays > 0 ? Math.round(totalUps / totalDays) : 0,
+      avgUpsPerDay: upsDays > 0 ? Math.round(totalUps / upsDays) : 0,
       avgUnitsPerDay:
         totalDays > 0
           ? Math.round((totalUnits / totalDays) * 10) / 10
