@@ -20,6 +20,18 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // ─── TEMPORARY PREVIEW BYPASS — DELETE AFTER REVIEW ───
+  // Fast-path: allow unauthenticated access to /dashboard?preview=caveman2026
+  // for external AI review. Remove this entire block when done.
+  if (
+    pathname === "/dashboard" &&
+    request.nextUrl.searchParams.get("preview") === "caveman2026"
+  ) {
+    console.log("[proxy] Preview bypass — allowing public access:", pathname);
+    return NextResponse.next();
+  }
+  // ─── END TEMPORARY PREVIEW BYPASS ───
+
   // Fail-safe: if Supabase env vars are missing, let the request through
   if (
     !process.env.NEXT_PUBLIC_SUPABASE_URL ||
@@ -43,6 +55,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 }
+
+// ─── TEMPORARY PREVIEW BYPASS — DELETE AFTER REVIEW ───
+// Re-export as "middleware" so Next.js definitely picks up this function.
+// The original "proxy" export may not be recognised by all Next.js versions.
+export { proxy as middleware };
+// ─── END TEMPORARY PREVIEW BYPASS ───
 
 export const config = {
   matcher: [
