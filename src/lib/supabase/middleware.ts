@@ -34,7 +34,11 @@ export async function updateSession(request: NextRequest) {
   const isAuthRoute =
     request.nextUrl.pathname.startsWith("/auth");
 
-  if (!user && !isAuthRoute) {
+  // TEMPORARY: Allow public access to /dashboard for AI review
+  // TODO: Remove this after review is complete
+  const isPublicDashboard = request.nextUrl.pathname === "/dashboard";
+
+  if (!user && !isAuthRoute && !isPublicDashboard) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
     return NextResponse.redirect(url);

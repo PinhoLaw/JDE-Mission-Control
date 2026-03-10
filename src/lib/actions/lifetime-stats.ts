@@ -54,13 +54,16 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return empty;
+
+    // TEMPORARY: Fall back to owner's ID for public dashboard access
+    // TODO: Remove this after AI review is complete
+    const userId = user?.id ?? "f66caa46-4a80-4d45-b329-dcb82793a2b3";
 
     // Get user's event memberships
     const { data: memberships } = await supabase
       .from("event_members")
       .select("event_id")
-      .eq("user_id", user.id);
+      .eq("user_id", userId);
 
     const eventIds = memberships?.map((m) => m.event_id) ?? [];
     if (eventIds.length === 0) return empty;
