@@ -1,6 +1,10 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import {
+  createClient,
+  isPreviewMode,
+  createAdminClient,
+} from "@/lib/supabase/server";
 
 export interface LifetimeStats {
   avgUpsPerDay: number;
@@ -50,14 +54,16 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
   };
 
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    // TEMPORARY: Fall back to owner's ID for public dashboard access
-    // TODO: Remove this after AI review is complete
-    const userId = user?.id ?? "f66caa46-4a80-4d45-b329-dcb82793a2b3";
+    // ─── TEMPORARY PREVIEW BYPASS — DELETE AFTER REVIEW ───
+    // In preview mode, use the service-role client (bypasses RLS)
+    // and the owner's user ID so the dashboard shows real data.
+    const preview = await isPreviewMode();
+    const supabase = preview ? createAdminClient() : await createClient();
+    const userId = preview
+      ? "f66caa46-4a80-4d45-b329-dcb82793a2b3"
+      : (await supabase.auth.getUser()).data.user?.id;
+    if (!userId) return empty;
+    // ─── END TEMPORARY PREVIEW BYPASS ───
 
     // Get user's event memberships
     const { data: memberships } = await supabase

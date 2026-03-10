@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { createClient as createJsClient } from "@supabase/supabase-js";
+import { cookies, headers } from "next/headers";
 import type { Database } from "@/types/database";
 
 export async function createClient() {
@@ -42,3 +43,20 @@ export async function createClient() {
     },
   });
 }
+
+// ─── TEMPORARY PREVIEW BYPASS — DELETE AFTER REVIEW ───
+// Returns true when the request carries the x-preview-bypass header
+// (set by the middleware for ?preview=caveman2026 requests).
+export async function isPreviewMode(): Promise<boolean> {
+  const h = await headers();
+  return h.get("x-preview-bypass") === "true";
+}
+
+// Service-role client that bypasses RLS. Used ONLY for the preview
+// bypass so unauthenticated visitors can see dashboard data.
+export function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  return createJsClient<Database>(url, serviceKey);
+}
+// ─── END TEMPORARY PREVIEW BYPASS ───
