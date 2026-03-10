@@ -29,12 +29,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-} from "@/components/ui/card";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -71,6 +65,7 @@ import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import { uploadVehiclePhoto } from "@/lib/actions/photos";
 import { useSheetPush } from "@/hooks/useSheetPush";
 import { EditableCell } from "@/components/ui/editable-cell";
+import { InventoryStatsCards } from "@/components/inventory/inventory-stats-cards";
 
 const STATUS_COLORS: Record<string, string> = {
   available: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
@@ -837,40 +832,12 @@ export default function InventoryPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Total Vehicles</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{stats.total}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Available</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-green-700 dark:text-green-400">{stats.available}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Sold</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.sold}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Avg Cost</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{formatCurrency(stats.avgCost)}</p>
-          </CardContent>
-        </Card>
-      </div>
+      <InventoryStatsCards
+        total={stats.total}
+        available={stats.available}
+        sold={stats.sold}
+        avgCost={stats.avgCost}
+      />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">

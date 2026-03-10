@@ -64,9 +64,12 @@ export async function POST(req: NextRequest) {
           type: "excel",
           fileName,
           fileSize,
-          // CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026
+          // ⚠️  SAFE IMPORT — scan results are READ-ONLY preview data.
+          // Actual import requires explicit user confirmation ("YES, IMPORT NOW")
+          // and ALWAYS creates a new event by default.
           isStandardizedSheet: scanResult.isStandardized,
           importReady: scanResult.sheets.length > 0,
+          importSafety: "ALWAYS_NEW_EVENT",
           sheets: scanResult.sheets.map((s) => ({
             name: s.name,
             index: s.index,

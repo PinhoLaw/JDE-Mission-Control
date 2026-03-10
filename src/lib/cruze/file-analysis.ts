@@ -107,6 +107,24 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ─── Import Safety ──────────────────────────────────────────────────────────
+// ⚠️  These types enforce the safe import flow:
+// 1. Scan (read-only) → 2. Preview (dry-run) → 3. Confirm → 4. Execute
+
+export type ImportMode = "new_event" | "into_existing";
+
+export interface ImportSafetyCheck {
+  mode: ImportMode;
+  /** For new_event: the name the user chose. For into_existing: the exact event name. */
+  targetEventName: string;
+  /** For into_existing only: the UUID of the event to merge into. */
+  targetEventId?: string;
+  /** True only when user typed "YES, IMPORT NOW" */
+  userConfirmed: boolean;
+  /** Dry-run preview was shown to user */
+  previewShown: boolean;
+}
+
 /** Get a file icon name based on category */
 export function getFileIcon(category: FileCategory): string {
   switch (category) {
