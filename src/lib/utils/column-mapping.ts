@@ -466,6 +466,10 @@ export const DEAL_DB_FIELDS: FieldDef[] = [
   { value: "closer", label: "Closer" },
   { value: "selling_price", label: "Selling Price" },
   { value: "front_gross", label: "Front Gross" },
+  // CRUZE TOTAL GROSS FIX — MARCH 2026
+  { value: "back_gross", label: "Back Gross" },
+  { value: "total_gross", label: "Total Gross" },
+  { value: "fi_total", label: "FI Total" },
   { value: "lender", label: "Lender" },
   { value: "rate", label: "Rate" },
   { value: "finance_type", label: "Finance Type" },
@@ -545,6 +549,14 @@ export function autoMapDealColumn(header: string): string {
     sellingprice: "selling_price", saleprice: "selling_price",
     price: "selling_price", sellprice: "selling_price",
     frontgross: "front_gross", front: "front_gross", feg: "front_gross",
+    // CRUZE TOTAL GROSS FIX — MARCH 2026
+    // Total Gross = front + back (the real number). Must map BEFORE front_gross.
+    totalgross: "total_gross", totaldealgross: "total_gross",
+    total: "total_gross", grossprofit: "total_gross",
+    backgross: "back_gross", backend: "back_gross", backendgross: "back_gross",
+    back: "back_gross", beg: "back_gross",
+    fitotal: "fi_total", totalfi: "fi_total", fiincome: "fi_total",
+    totalbackend: "fi_total", totalback: "back_gross",
     // Finance
     lender: "lender", lendername: "lender", bank: "lender",
     financesource: "lender",
@@ -578,6 +590,14 @@ export function autoMapDealColumn(header: string): string {
   if (raw.includes("sale") && raw.includes("day")) return "sale_day";
   if (raw.includes("sell") && raw.includes("price")) return "selling_price";
   if (raw.includes("sale") && raw.includes("price")) return "selling_price";
+  // CRUZE TOTAL GROSS FIX — MARCH 2026
+  // HIGH-PRIORITY: "Total Gross" must match BEFORE "Front Gross"
+  if (raw.includes("total") && raw.includes("gross")) return "total_gross";
+  if (raw.includes("back") && raw.includes("gross")) return "back_gross";
+  if (raw.includes("backend") && raw.includes("gross")) return "back_gross";
+  if (raw.includes("fi") && raw.includes("total")) return "fi_total";
+  if (raw.includes("total") && raw.includes("fi")) return "fi_total";
+  if (raw.includes("gross") && raw.includes("profit") && !raw.includes("front")) return "total_gross";
   if (raw.includes("front") && raw.includes("gross")) return "front_gross";
   if (raw.includes("vehicle") && raw.includes("cost")) return "vehicle_cost";
   if (raw.includes("unit") && raw.includes("cost")) return "vehicle_cost";

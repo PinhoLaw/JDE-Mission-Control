@@ -128,6 +128,15 @@ export async function scanXLSXForCruze(fileBuffer: ArrayBuffer, fileName: string
 
     const confidence = computeMappingConfidence(columnMap, detectedType);
 
+    // CRUZE TOTAL GROSS FIX — MARCH 2026
+    // Log which gross column was detected for deals sheets
+    if (detectedType === "deals") {
+      const grossMappings = Object.entries(columnMap)
+        .filter(([, v]) => v.includes("gross") || v === "fi_total")
+        .map(([header, field]) => `"${header}" → ${field}`);
+      console.log(`[Cruze Scan] Deals sheet "${sheet.name}" gross columns: ${grossMappings.join(", ") || "NONE FOUND"}`);
+    }
+
     sheets.push({
       name: sheet.name,
       index: sheet.index,
@@ -394,9 +403,37 @@ export async function executeXLSXImport(
             dealCount += result.imported;
             if (result.errors > 0) errors.push(`Deals: ${result.errors} row errors`);
 
+            // CRUZE TOTAL GROSS FIX + FILE RELIABILITY — MARCH 2026
+            // Smart Total Gross: prefer total_gross column, fall back to front_gross
+            const hasTotalGrossCol = Object.values(columnMap).includes("total_gross");
+            const hasFrontGrossCol = Object.values(columnMap).includes("front_gross");
+            const hasBackGrossCol = Object.values(columnMap).includes("back_gross");
+
+            if (hasTotalGrossCol) {
+              console.log("[Cruze Import] Using TOTAL GROSS column directly (correct)");
+            } else if (hasFrontGrossCol && hasBackGrossCol) {
+              console.log("[Cruze Import] No Total Gross column — calculating from front + back gross");
+            } else if (hasFrontGrossCol) {
+              console.log("[Cruze Import] WARNING: Only Front Gross found — total gross will be understated");
+            }
+
             for (const row of parsed.rows) {
               const mapped = applyColumnMap(row, columnMap);
-              const gross = parseFloat(String(mapped.total_gross || mapped.front_gross || "0").replace(/[$,]/g, ""));
+              let gross = 0;
+
+              if (hasTotalGrossCol && mapped.total_gross != null) {
+                // Best: use the actual Total Gross column
+                gross = parseFloat(String(mapped.total_gross).replace(/[$,]/g, ""));
+              } else if (hasFrontGrossCol && hasBackGrossCol) {
+                // Good: front + back
+                const front = parseFloat(String(mapped.front_gross || "0").replace(/[$,]/g, ""));
+                const back = parseFloat(String(mapped.back_gross || "0").replace(/[$,]/g, ""));
+                gross = (isNaN(front) ? 0 : front) + (isNaN(back) ? 0 : back);
+              } else if (hasFrontGrossCol) {
+                // Fallback: front only (understated)
+                gross = parseFloat(String(mapped.front_gross || "0").replace(/[$,]/g, ""));
+              }
+
               if (!isNaN(gross)) totalGross += gross;
             }
             break;

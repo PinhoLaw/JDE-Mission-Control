@@ -1,7 +1,10 @@
-// CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026
+// CRUZE TOTAL GROSS FIX + FILE RELIABILITY — MARCH 2026
 // File upload endpoint for drag & drop chat attachments.
 // When an XLSX is detected, auto-scans for JDE standardized sheets
 // and returns a structured preview with import-ready metadata.
+//
+// RELIABILITY: Validates file buffer is non-empty before processing.
+// Returns base64Data for ALL binary files so the chat tool can re-read them.
 
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -26,7 +29,18 @@ export async function POST(req: NextRequest) {
     const conversationId = formData.get("conversationId") as string | null;
 
     if (!file) {
+      console.error("[Cruze Upload] No file in formData");
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    }
+
+    // CRUZE FILE RELIABILITY — MARCH 2026
+    // Validate file is actually readable and non-empty
+    if (file.size === 0) {
+      console.error("[Cruze Upload] File has zero bytes:", file.name);
+      return NextResponse.json(
+        { error: "File is empty (0 bytes). Please try again." },
+        { status: 400 },
+      );
     }
 
     if (file.size > MAX_FILE_SIZE) {
@@ -40,12 +54,37 @@ export async function POST(req: NextRequest) {
     const fileType = file.type;
     const fileSize = file.size;
 
+    console.log(`[Cruze Upload] Processing "${fileName}" (${fileSize} bytes, type: ${fileType})`);
+
     let analysis: Record<string, unknown> = {};
     let textContent = "";
     let base64Data: string | null = null;
 
-    // ── CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026 ──────────
-    // Detect XLSX files and auto-scan for JDE standardized sheets
+    // CRUZE FILE RELIABILITY — MARCH 2026
+    // Read the ArrayBuffer ONCE, early, and validate it's non-empty.
+    // This catches edge cases where the File reference is stale.
+    let arrayBuffer: ArrayBuffer;
+    try {
+      arrayBuffer = await file.arrayBuffer();
+    } catch (bufErr) {
+      console.error("[Cruze Upload] Failed to read file buffer:", bufErr);
+      return NextResponse.json(
+        { error: "Failed to read file. The file may have been removed. Please try again." },
+        { status: 400 },
+      );
+    }
+
+    if (arrayBuffer.byteLength === 0) {
+      console.error("[Cruze Upload] ArrayBuffer is empty for:", fileName);
+      return NextResponse.json(
+        { error: "File buffer is empty. Please try dropping the file again." },
+        { status: 400 },
+      );
+    }
+
+    console.log(`[Cruze Upload] Buffer OK: ${arrayBuffer.byteLength} bytes`);
+
+    // Detect file type
     const isExcel =
       fileType.includes("spreadsheet") ||
       fileType.includes("excel") ||
@@ -53,7 +92,6 @@ export async function POST(req: NextRequest) {
       fileName.endsWith(".xls");
 
     if (isExcel) {
-      const arrayBuffer = await file.arrayBuffer();
       base64Data = Buffer.from(arrayBuffer).toString("base64");
 
       // Scan for standardized JDE sheets
@@ -81,6 +119,8 @@ export async function POST(req: NextRequest) {
           totalRows: scanResult.totalRows,
           summary: scanResult.summary,
         };
+
+        console.log(`[Cruze Upload] XLSX scan: ${scanResult.sheets.length} sheets, ${scanResult.totalRows} rows, standardized: ${scanResult.isStandardized}`);
       } catch (scanErr) {
         console.warn("[Cruze Upload] XLSX scan failed, treating as generic:", scanErr);
         analysis = {
@@ -93,7 +133,7 @@ export async function POST(req: NextRequest) {
         };
       }
     } else if (fileType === "text/csv" || fileName.endsWith(".csv")) {
-      textContent = await file.text();
+      textContent = new TextDecoder().decode(arrayBuffer);
       const lines = textContent.split("\n").filter((l) => l.trim());
       const headers = lines[0]?.split(",").map((h) => h.trim().replace(/^"|"$/g, "")) || [];
       const rowCount = lines.length - 1;
@@ -107,8 +147,7 @@ export async function POST(req: NextRequest) {
         columnCount: headers.length,
       };
     } else if (fileType === "application/pdf" || fileName.endsWith(".pdf")) {
-      const buffer = await file.arrayBuffer();
-      base64Data = Buffer.from(buffer).toString("base64");
+      base64Data = Buffer.from(arrayBuffer).toString("base64");
 
       analysis = {
         type: "pdf",
@@ -117,8 +156,7 @@ export async function POST(req: NextRequest) {
         note: "PDF file received. Cruze will analyze using vision.",
       };
     } else if (fileType.startsWith("image/")) {
-      const buffer = await file.arrayBuffer();
-      base64Data = Buffer.from(buffer).toString("base64");
+      base64Data = Buffer.from(arrayBuffer).toString("base64");
 
       analysis = {
         type: "image",
@@ -131,6 +169,14 @@ export async function POST(req: NextRequest) {
         { error: `Unsupported file type: ${fileType || fileName.split(".").pop()}` },
         { status: 400 },
       );
+    }
+
+    // CRUZE FILE RELIABILITY — MARCH 2026
+    // Validate that base64Data was actually produced for binary files
+    if (isExcel && !base64Data) {
+      console.error("[Cruze Upload] CRITICAL: base64Data is null for Excel file after processing!");
+      // Emergency fallback: re-encode
+      base64Data = Buffer.from(arrayBuffer).toString("base64");
     }
 
     // Store file reference in cruze_file_uploads
@@ -154,7 +200,7 @@ export async function POST(req: NextRequest) {
       console.warn("[Cruze Upload] cruze_file_uploads table not available, skipping storage");
     }
 
-    return NextResponse.json({
+    const responsePayload = {
       success: true,
       fileId,
       fileName,
@@ -164,11 +210,15 @@ export async function POST(req: NextRequest) {
       textContent: textContent || null,
       base64Data: base64Data || null,
       mimeType: fileType,
-    });
+    };
+
+    console.log(`[Cruze Upload] Response: success=true, base64Data=${base64Data ? `${Math.round(base64Data.length / 1024)}KB` : "null"}, analysis.type=${analysis.type}`);
+
+    return NextResponse.json(responsePayload);
   } catch (err) {
-    console.error("[Cruze Upload] Error:", err);
+    console.error("[Cruze Upload] Unhandled error:", err);
     return NextResponse.json(
-      { error: "Failed to process file" },
+      { error: "Failed to process file. Please try again." },
       { status: 500 },
     );
   }

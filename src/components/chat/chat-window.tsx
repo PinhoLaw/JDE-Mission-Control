@@ -84,7 +84,18 @@ export function ChatWindow() {
 
   // CRUZE UPGRADE — Drag & drop state
   const [isDragOver, setIsDragOver] = useState(false);
-  const [attachment, setAttachment] = useState<FileAttachment | null>(null);
+  const [attachment, _setAttachment] = useState<FileAttachment | null>(null);
+
+  // CRUZE FILE RELIABILITY — MARCH 2026
+  // Wrapper that updates BOTH React state AND the ref synchronously,
+  // so the transport fetch() always sees the latest attachment data.
+  const setAttachmentSafe = useCallback((val: FileAttachment | null | ((prev: FileAttachment | null) => FileAttachment | null)) => {
+    _setAttachment((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      attachmentRef.current = next;
+      return next;
+    });
+  }, []);
 
   // ── Draggable ─────────────────────────────────────────────────────────────
   const { style: dragStyle, isDragged } = useDraggable({
@@ -99,11 +110,10 @@ export function ChatWindow() {
     contextRef.current = context;
   }, [context]);
 
-  // Keep attachment ref for transport injection
+  // CRUZE FILE RELIABILITY — MARCH 2026
+  // Keep attachment ref for transport injection.
+  // Updated SYNCHRONOUSLY in setAttachmentSafe() to avoid race conditions.
   const attachmentRef = useRef<FileAttachment | null>(null);
-  useEffect(() => {
-    attachmentRef.current = attachment;
-  }, [attachment]);
 
   const transport = useMemo(
     () =>
@@ -192,12 +202,19 @@ export function ChatWindow() {
     }
   }, [isOpen, clearUnread, scrollToBottom]);
 
-  // ── CRUZE UPGRADE — File handling ─────────────────────────────────────────
+  // ── CRUZE FILE RELIABILITY — MARCH 2026 ──────────────────────────────────
+  // Handles file selection, upload with retry, and buffer validation.
 
   async function handleFileSelect(file: File) {
     const validation = validateFile(file);
     if (!validation.valid || !validation.category) {
       setLocalError(validation.error || "Unsupported file");
+      return;
+    }
+
+    // Validate the file is actually readable (not a stale reference)
+    if (file.size === 0) {
+      setLocalError("File appears to be empty. Please try again.");
       return;
     }
 
@@ -212,63 +229,98 @@ export function ChatWindow() {
     if (validation.category === "image") {
       const reader = new FileReader();
       reader.onload = (e) => {
-        setAttachment((prev) =>
+        setAttachmentSafe((prev) =>
           prev ? { ...prev, preview: e.target?.result as string } : prev,
         );
       };
       reader.readAsDataURL(file);
     }
 
-    setAttachment(newAttachment);
+    setAttachmentSafe(newAttachment);
 
-    // Upload to server
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      if (context.eventId) formData.append("eventId", context.eventId);
+    // Upload with retry — up to 2 attempts
+    const MAX_UPLOAD_ATTEMPTS = 2;
+    for (let attempt = 1; attempt <= MAX_UPLOAD_ATTEMPTS; attempt++) {
+      try {
+        // Re-read the file each attempt to ensure a fresh ArrayBuffer
+        const fileBytes = await file.arrayBuffer();
+        if (fileBytes.byteLength === 0) {
+          throw new Error("File buffer is empty — the file may have been removed or is unreadable.");
+        }
 
-      const response = await fetch("/api/chat/upload", {
-        method: "POST",
-        body: formData,
-        credentials: "same-origin",
-      });
+        const freshBlob = new Blob([fileBytes], { type: file.type });
+        const freshFile = new File([freshBlob], file.name, { type: file.type });
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: "Upload failed" }));
-        throw new Error(err.error || "Upload failed");
+        const formData = new FormData();
+        formData.append("file", freshFile);
+        if (context.eventId) formData.append("eventId", context.eventId);
+
+        console.log(`[Cruze Upload] Attempt ${attempt}: uploading "${file.name}" (${file.size} bytes)`);
+
+        const response = await fetch("/api/chat/upload", {
+          method: "POST",
+          body: formData,
+          credentials: "same-origin",
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ error: "Upload failed" }));
+          throw new Error(err.error || `Upload failed (HTTP ${response.status})`);
+        }
+
+        const data = await response.json();
+
+        // Validate the server returned actual data
+        if (!data.success) {
+          throw new Error(data.error || "Server returned unsuccessful response");
+        }
+
+        // For Excel files, verify base64Data was returned
+        if (validation.category === "excel" && !data.base64Data) {
+          console.warn("[Cruze Upload] Server returned no base64Data for Excel file — retrying");
+          if (attempt < MAX_UPLOAD_ATTEMPTS) continue;
+          throw new Error("Server did not return file data. Please try dropping the file again.");
+        }
+
+        console.log(`[Cruze Upload] Success: "${file.name}" uploaded (fileId: ${data.fileId}, base64: ${data.base64Data ? `${Math.round(data.base64Data.length / 1024)}KB` : "null"})`);
+
+        setAttachmentSafe((prev) =>
+          prev
+            ? {
+                ...prev,
+                uploading: false,
+                uploaded: true,
+                fileId: data.fileId,
+                analysis: data.analysis,
+                textContent: data.textContent,
+                base64Data: data.base64Data,
+                mimeType: data.mimeType,
+              }
+            : prev,
+        );
+        return; // Success — exit retry loop
+      } catch (err) {
+        console.error(`[Cruze Upload] Attempt ${attempt} failed:`, err);
+        if (attempt >= MAX_UPLOAD_ATTEMPTS) {
+          setAttachmentSafe((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  uploading: false,
+                  error: err instanceof Error ? err.message : "Upload failed after retries",
+                }
+              : prev,
+          );
+        } else {
+          // Wait before retry
+          await new Promise((r) => setTimeout(r, 1000));
+        }
       }
-
-      const data = await response.json();
-
-      setAttachment((prev) =>
-        prev
-          ? {
-              ...prev,
-              uploading: false,
-              uploaded: true,
-              fileId: data.fileId,
-              analysis: data.analysis,
-              textContent: data.textContent,
-              base64Data: data.base64Data,
-              mimeType: data.mimeType,
-            }
-          : prev,
-      );
-    } catch (err) {
-      setAttachment((prev) =>
-        prev
-          ? {
-              ...prev,
-              uploading: false,
-              error: err instanceof Error ? err.message : "Upload failed",
-            }
-          : prev,
-      );
     }
   }
 
   function removeAttachment() {
-    setAttachment(null);
+    setAttachmentSafe(null);
   }
 
   // Drag & drop handlers
@@ -318,6 +370,23 @@ export function ChatWindow() {
       return;
     }
 
+    // CRUZE FILE RELIABILITY — MARCH 2026
+    // If attachment has an error, warn but don't block (user can still chat)
+    if (attachment?.error) {
+      console.warn("[Cruze] Sending with failed attachment:", attachment.error);
+    }
+
+    // Verify the ref is in sync with state (defensive)
+    if (attachment?.uploaded && !attachmentRef.current?.uploaded) {
+      console.warn("[Cruze] attachmentRef out of sync — forcing sync");
+      attachmentRef.current = attachment;
+    }
+
+    // Log what's being sent for debugging
+    if (attachment?.uploaded) {
+      console.log(`[Cruze] Sending message with attachment: "${attachment.file.name}" (base64: ${attachment.base64Data ? "present" : "MISSING"})`);
+    }
+
     setInput("");
     setLocalError(null);
     clearError?.();
@@ -327,7 +396,7 @@ export function ChatWindow() {
     try {
       await sendMessage({ text });
       // Clear attachment after sending
-      setAttachment(null);
+      setAttachmentSafe(null);
     } catch (err) {
       console.error("[Cruze] sendMessage failed:", err);
       const msg =
@@ -387,7 +456,7 @@ export function ChatWindow() {
     setLocalError(null);
     clearError?.();
     setRetryCount(0);
-    setAttachment(null);
+    setAttachmentSafe(null);
   }
 
   if (!isOpen) return null;

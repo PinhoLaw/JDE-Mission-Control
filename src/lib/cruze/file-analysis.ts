@@ -1,4 +1,4 @@
-// CRUZE UPGRADE — OMNISCIENT MODE
+// CRUZE TOTAL GROSS FIX + FILE RELIABILITY — MARCH 2026
 // File analysis utilities for drag & drop support
 // Handles CSV, Excel, PDF, and images
 
@@ -35,7 +35,18 @@ export const MAX_FILE_SIZES: Record<FileCategory, number> = {
 
 /** Validate a file for upload */
 export function validateFile(file: File): { valid: boolean; error?: string; category?: FileCategory } {
-  const category = getFileCategory(file.type);
+  let category = getFileCategory(file.type);
+
+  // CRUZE FILE RELIABILITY — MARCH 2026
+  // Fallback: detect by extension when MIME type is missing or wrong
+  // (common with drag & drop from some file managers / OS combinations)
+  if (!category) {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext === "xlsx" || ext === "xls") category = "excel";
+    else if (ext === "csv") category = "csv";
+    else if (ext === "pdf") category = "pdf";
+    else if (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp" || ext === "gif") category = "image";
+  }
 
   if (!category) {
     return {
