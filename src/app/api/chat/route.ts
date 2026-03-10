@@ -1843,8 +1843,9 @@ export async function POST(req: NextRequest) {
             };
           }
 
-          // ── SAFETY GATE 2: File must be present ──
-          if (!fileAttachment?.base64Data) {
+          // ── SAFETY GATE 2: File must be present (with Storage fallback) ──
+          // CRUZE FILE ATTACHMENT — FINAL BULLETPROOF VERSION WITH SUPABASE STORAGE FALLBACK
+          if (!fileAttachment) {
             return {
               success: false,
               error: "No file attachment found. Ask the user to drop the XLSX file again.",
@@ -1876,8 +1877,74 @@ export async function POST(req: NextRequest) {
           }
 
           try {
+            // ── 3-TIER FILE RESOLUTION ──
+            // Tier 1: base64Data (fast path — already in memory)
+            // Tier 2: storageUrl fetch (durable — Supabase Storage)
+            // Tier 3: DB + Storage recovery (last resort — lookup by fileId)
+            let resolvedBase64: string | null = fileAttachment.base64Data || null;
+
+            if (resolvedBase64) {
+              console.log(`[Cruze Import] Tier 1 OK: base64Data present (${Math.round(resolvedBase64.length / 1024)}KB)`);
+            }
+
+            // Tier 2: Fetch from Storage URL
+            if (!resolvedBase64 && fileAttachment.storageUrl) {
+              console.log(`[Cruze Import] Tier 1 MISS — fetching from Storage URL: ${fileAttachment.storageUrl}`);
+              try {
+                const storageResp = await fetch(fileAttachment.storageUrl);
+                if (!storageResp.ok) throw new Error(`HTTP ${storageResp.status}`);
+                const storageBuf = await storageResp.arrayBuffer();
+                if (storageBuf.byteLength === 0) throw new Error("Empty file from Storage");
+                resolvedBase64 = Buffer.from(storageBuf).toString("base64");
+                console.log(`[Cruze Import] Tier 2 OK: Storage fallback recovered ${Math.round(resolvedBase64.length / 1024)}KB`);
+              } catch (t2Err) {
+                console.error("[Cruze Import] Tier 2 FAILED:", t2Err);
+              }
+            }
+
+            // Tier 3: DB lookup + Storage download by fileId
+            if (!resolvedBase64 && fileAttachment.fileId) {
+              console.log(`[Cruze Import] Tier 2 MISS — attempting DB recovery via fileId: ${fileAttachment.fileId}`);
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { data: fileRec } = await (supabase.from as any)("cruze_file_uploads")
+                  .select("storage_path")
+                  .eq("id", fileAttachment.fileId)
+                  .single();
+
+                if (fileRec?.storage_path) {
+                  const sbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+                  const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+                  if (svcKey) {
+                    const { createClient: createSC } = await import("@supabase/supabase-js");
+                    const admin = createSC(sbUrl, svcKey);
+                    const { data: fileBlob, error: dlErr } = await admin.storage
+                      .from("cruze-temp-files")
+                      .download(fileRec.storage_path);
+
+                    if (!dlErr && fileBlob) {
+                      const buf = await fileBlob.arrayBuffer();
+                      resolvedBase64 = Buffer.from(buf).toString("base64");
+                      console.log(`[Cruze Import] Tier 3 OK: DB+Storage recovery got ${Math.round(resolvedBase64.length / 1024)}KB`);
+                    } else {
+                      console.error("[Cruze Import] Tier 3 download error:", dlErr?.message);
+                    }
+                  }
+                }
+              } catch (t3Err) {
+                console.error("[Cruze Import] Tier 3 FAILED:", t3Err);
+              }
+            }
+
+            if (!resolvedBase64) {
+              return {
+                success: false,
+                error: "File data was lost during the conversation. This can happen if the page refreshed or the chat was idle too long. Please drop the XLSX file into the chat again, or use the Import page (Dashboard → Import) for a direct upload.",
+              };
+            }
+
             // Convert base64 back to ArrayBuffer
-            const binaryString = atob(fileAttachment.base64Data);
+            const binaryString = atob(resolvedBase64);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
               bytes[i] = binaryString.charCodeAt(i);

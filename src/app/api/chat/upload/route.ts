@@ -1,12 +1,17 @@
-// CRUZE TOTAL GROSS FIX + FILE RELIABILITY — MARCH 2026
+// CRUZE FILE ATTACHMENT — FINAL BULLETPROOF VERSION WITH SUPABASE STORAGE FALLBACK
 // File upload endpoint for drag & drop chat attachments.
 // When an XLSX is detected, auto-scans for JDE standardized sheets
 // and returns a structured preview with import-ready metadata.
 //
-// RELIABILITY: Validates file buffer is non-empty before processing.
-// Returns base64Data for ALL binary files so the chat tool can re-read them.
+// RELIABILITY:
+// 1. Validates file buffer is non-empty before processing.
+// 2. Returns base64Data for ALL binary files so the chat tool can re-read them.
+// 3. Uploads EVERY file to Supabase Storage (cruze-temp-files bucket) as a
+//    durable fallback. The storageUrl is a tiny string (~120 chars) that can
+//    never be "lost" like an 80KB base64 blob across React state resets.
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { scanXLSXForCruze } from "@/lib/cruze/xlsx-import";
 
@@ -200,6 +205,50 @@ export async function POST(req: NextRequest) {
       console.warn("[Cruze Upload] cruze_file_uploads table not available, skipping storage");
     }
 
+    // CRUZE FILE ATTACHMENT — FINAL BULLETPROOF VERSION WITH SUPABASE STORAGE FALLBACK
+    // Upload file to Supabase Storage as a durable backup.
+    // base64Data can be lost across React state resets; storageUrl is permanent.
+    let storageUrl: string | null = null;
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+      if (serviceKey && fileId) {
+        const admin = createServiceClient(supabaseUrl, serviceKey);
+        const storagePath = `${user.id}/${fileId}/${fileName}`;
+
+        const { error: uploadErr } = await admin.storage
+          .from("cruze-temp-files")
+          .upload(storagePath, arrayBuffer, {
+            contentType: fileType || "application/octet-stream",
+            upsert: true,
+          });
+
+        if (uploadErr) {
+          console.warn("[Cruze Upload] Storage upload failed (non-blocking):", uploadErr.message);
+        } else {
+          const { data: { publicUrl } } = admin.storage
+            .from("cruze-temp-files")
+            .getPublicUrl(storagePath);
+
+          storageUrl = publicUrl;
+
+          // Update cruze_file_uploads with storage_path
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from as any)("cruze_file_uploads")
+            .update({ storage_path: storagePath })
+            .eq("id", fileId);
+
+          console.log(`[Cruze Upload] Storage backup OK: ${storagePath}`);
+        }
+      } else {
+        console.warn("[Cruze Upload] No service key or fileId — skipping storage backup");
+      }
+    } catch (storageErr) {
+      // Non-blocking: storage is a fallback, not a requirement
+      console.warn("[Cruze Upload] Storage backup failed (non-blocking):", storageErr);
+    }
+
     const responsePayload = {
       success: true,
       fileId,
@@ -209,10 +258,11 @@ export async function POST(req: NextRequest) {
       analysis,
       textContent: textContent || null,
       base64Data: base64Data || null,
+      storageUrl: storageUrl || null,
       mimeType: fileType,
     };
 
-    console.log(`[Cruze Upload] Response: success=true, base64Data=${base64Data ? `${Math.round(base64Data.length / 1024)}KB` : "null"}, analysis.type=${analysis.type}`);
+    console.log(`[Cruze Upload] Response: success=true, base64Data=${base64Data ? `${Math.round(base64Data.length / 1024)}KB` : "null"}, storageUrl=${storageUrl ? "present" : "null"}, analysis.type=${analysis.type}`);
 
     return NextResponse.json(responsePayload);
   } catch (err) {
