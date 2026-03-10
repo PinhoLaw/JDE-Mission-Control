@@ -65,12 +65,14 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
     const eventIds = memberships?.map((m) => m.event_id) ?? [];
     if (eventIds.length === 0) return empty;
 
-    // Fetch events, daily_metrics, and KPIs in parallel
+    // Fetch only COMPLETED events — active/in-progress events shouldn't
+    // dilute lifetime averages until they're finished.
     const [eventsRes, metricsRes, kpisRes] = await Promise.all([
       supabase
         .from("events")
         .select("id, start_date, end_date")
-        .in("id", eventIds),
+        .in("id", eventIds)
+        .eq("status", "completed"),
       supabase
         .from("daily_metrics")
         .select("event_id, total_ups, total_sold, total_gross")
@@ -82,8 +84,13 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
     ]);
 
     const events = eventsRes.data ?? [];
-    const metrics = metricsRes.data ?? [];
-    const kpis = kpisRes.data ?? [];
+    const completedIds = new Set(events.map((e) => e.id));
+    const metrics = (metricsRes.data ?? []).filter((m) =>
+      completedIds.has(m.event_id),
+    );
+    const kpis = (kpisRes.data ?? []).filter((k) =>
+      completedIds.has(k.event_id),
+    );
 
     if (events.length === 0) return empty;
 
