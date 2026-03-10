@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { getLifetimeStats } from "@/lib/actions/lifetime-stats";
-import { isPreviewMode } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,24 +20,6 @@ import {
    ═══════════════════════════════════════════════════════════ */
 
 export default async function DashboardPage() {
-  // ─────── TEMPORARY SERVER-RENDER PREVIEW MODE — DELETE AFTER GROK REVIEW ───────
-  // When ?preview=caveman2026 is set, render EVERYTHING inline (no Suspense).
-  // This ensures the full HTML is in the initial response so tools like Grok
-  // that cannot execute client-side JS can see the complete dashboard.
-  const preview = await isPreviewMode();
-
-  if (preview) {
-    return (
-      <div className="mx-auto max-w-7xl space-y-12 pb-16">
-        {/* No Suspense — blocks until data is ready, full HTML in response */}
-        <HeroSection />
-        <EventScoreCards />
-        <QuickStartRow />
-      </div>
-    );
-  }
-  // ─────── END TEMPORARY SERVER-RENDER PREVIEW MODE ───────
-
   return (
     <div className="mx-auto max-w-7xl space-y-12 pb-16">
       {/* HERO ROW — IMPROVEMENT 1 */}

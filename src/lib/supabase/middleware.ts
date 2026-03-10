@@ -34,15 +34,7 @@ export async function updateSession(request: NextRequest) {
   const isAuthRoute =
     request.nextUrl.pathname.startsWith("/auth");
 
-  // ─── TEMPORARY PREVIEW BYPASS — DELETE AFTER REVIEW ───
-  // Allows unauthenticated access to /dashboard when ?preview=caveman2026 is present.
-  // This is for external AI review only. Remove this entire block when done.
-  const isPreviewBypass =
-    request.nextUrl.pathname === "/dashboard" &&
-    request.nextUrl.searchParams.get("preview") === "caveman2026";
-  // ─── END TEMPORARY PREVIEW BYPASS ───
-
-  if (!user && !isAuthRoute && !isPreviewBypass) {
+  if (!user && !isAuthRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
     return NextResponse.redirect(url);
