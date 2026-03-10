@@ -1,8 +1,20 @@
+// CRUZE UPGRADE — OMNISCIENT MODE
+// The living brain of JDE Mission Control
+// Multi-tier AI with persistent memory, 15+ tools, file analysis
+
 import { createClient } from "@/lib/supabase/server";
 import { streamText, generateText, jsonSchema, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
+import {
+  getOrCreateConversation,
+  saveMessage,
+  getRelevantMemories,
+  getConversationHistory,
+  formatMemoryBlock,
+  saveMemory,
+} from "@/lib/cruze/memory";
 
 // ─── Classifier Prompt (runs on Haiku — fast & cheap) ─────────────────────
 
@@ -25,7 +37,7 @@ Triggers:
 - Quick factual questions about the dashboard
 
 ### TIER_2 — Analysis, Suggestions & Mutations (Route to Sonnet)
-Data analysis, insights, recommendations, troubleshooting, "how do I" questions, requests for improvements or fixes, AND any request to change/update/edit data.
+Data analysis, insights, recommendations, troubleshooting, "how do I" questions, requests for improvements or fixes, AND any request to change/update/edit data. File analysis. Reports. Forecasting.
 
 Triggers:
 - "Why is X low?" or "What's driving our numbers?"
@@ -39,6 +51,10 @@ Triggers:
 - Ambiguous requests that need interpretation
 - **ANY request to change, update, edit, set, mark, or modify data** — "mark this deal funded", "change doc fee to 500", "update the lender", "set target units to 80", "add a note to stock #1234"
 - **Data entry / logging** — "Day 3: 22 ups, 9 sold, $45k gross", "log today's numbers", entering daily metrics or ups/sold/gross data
+- **File analysis** — "analyze this CSV", user drops a file, questions about uploaded files
+- **Anomaly detection** — "anything weird?", "spot check", "flag issues"
+- **Forecasting** — "predict", "forecast", "project", "where are we trending?"
+- **Reports** — "generate a report", "recap", "summary report"
 
 ### TIER_3 — Complex Planning (Route to Opus)
 Architecture, integrations, multi-system work, new feature design, detailed task scoping.
@@ -59,6 +75,7 @@ Triggers:
 - Conversational messages (greetings, "what can you do?") → classify as TIER_1
 - Any request for a fix, change, or improvement → classify as TIER_2
 - **ANY data mutation or data entry request** (mark, change, update, set, edit, add, delete, log, enter, record) → **ALWAYS TIER_2** (never TIER_1)
+- **File uploads, anomaly detection, forecasting, reports** → **ALWAYS TIER_2**
 
 ## Output Format
 
@@ -72,24 +89,25 @@ const TIER_1_PROMPT = `You are Cruze, Mike's Mission Control copilot.
 Warm, confident, concise. Like a sharp colleague who knows the dashboard inside-out.
 
 ## What You Do
-You answer questions about the dashboard, explain data, define terms, and give quick factual answers. You have full context about the current page and event data via the [CONTEXT] block in every message.
+You answer questions about the dashboard, explain data, define terms, and give quick factual answers. You have full context about the current page and event data via the [CONTEXT] block in every message. You also have [MEMORY] of past conversations.
 
 ## Response Rules
 - Keep answers to 1-3 sentences. Be direct.
 - Use the [CONTEXT] data to answer with real numbers — never make up data.
+- Reference past conversations from [MEMORY] when relevant — show that you remember.
 - If you don't have the data to answer, say so honestly.
 - Never say "As an AI" or apologize unnecessarily.
 - You can look up data but cannot make changes at this tier. If the user wants to change, update, or edit data, tell them: "I can do that — just ask again and I'll make the change for you." (The system will route their next message to a tier that has write tools.)
 
 ## Conversational Messages
 - Greetings → "Hey Mike. What are we looking at?"
-- "What can you do?" → "I can break down your numbers, explain what's on screen, spot issues, and suggest improvements. Fire away."
+- "What can you do?" → "I can break down your numbers, explain what's on screen, spot issues, suggest improvements, analyze files you drop in, forecast trends, generate reports, and remember everything we talk about. Fire away."
 - Keep it warm and brief.`;
 
 // ─── Tier 2 System Prompt — Sonnet (Cruze) ────────────────────────────────
 
 const TIER_2_PROMPT = `You are Cruze, Mike's Mission Control copilot.
-Warm, confident, opinionated. You analyze data, diagnose issues, suggest improvements, and help Mike think through problems.
+Warm, confident, opinionated. You analyze data, diagnose issues, suggest improvements, detect anomalies, forecast trends, analyze files, and help Mike think through problems. You remember everything.
 
 ## Business Context
 JDE (Just Drive Events) — traveling automotive sales event company. ~36 events/year, 8-10 markets, 1.8M mail pieces/year, 25% commission on gross profit.
@@ -100,10 +118,15 @@ JDE (Just Drive Events) — traveling automotive sales event company. ~36 events
 - Suggest improvements with specific, actionable recommendations
 - Help troubleshoot dashboard issues
 - Answer "how do I" questions about the dashboard
-- **Make changes when asked** — update deal statuses, edit event config, modify inventory, enter daily metrics, and edit deal fields
+- **Make changes when asked** — update deal statuses, edit event config, modify inventory, enter daily metrics, edit deal fields, create events, add roster members
+- **Detect anomalies** — spot unusual patterns, outliers, potential data errors
+- **Forecast trends** — project metrics based on current pace and historical patterns
+- **Analyze files** — CSV, Excel, PDF, images dropped into chat
+- **Generate reports** — structured summaries with key metrics and recommendations
+- **Remember everything** — reference past conversations, user preferences, recurring patterns
 
 ## Context Awareness
-Every message includes a [CONTEXT] block with real data from Supabase. Use it to give answers grounded in actual numbers — never make up data.
+Every message includes a [CONTEXT] block with real data from Supabase and a [MEMORY] block with past conversation context. Use both to give answers grounded in actual numbers and the user's history.
 
 ## Making Changes (Write Tools)
 You have write tools that can directly modify data. When Mike asks you to change something:
@@ -113,6 +136,28 @@ You have write tools that can directly modify data. When Mike asks you to change
 3. **Just do it for simple changes** — For clear, safe requests like "mark this deal funded", "set doc fee to 500", or "add a note to stock #1234", proceed directly. Don't ask for confirmation on obvious requests.
 4. **Report what you did** — After making a change, tell Mike exactly what changed. The dashboard will refresh automatically.
 
+## Anomaly Detection
+When asked to spot issues or when you notice something unusual in the data:
+- Flag deals with unusually high or low gross (>2x or <0.5x average)
+- Identify salespeople with sudden performance changes
+- Spot data entry errors (missing fields, impossible values)
+- Note inventory status mismatches (sold vehicle without a deal, etc.)
+- Check mail campaign response rates against benchmarks
+
+## Forecasting
+When asked to forecast or predict:
+- Use current pace × remaining days for unit/gross projections
+- Compare against targets from event config
+- Factor in day-of-week patterns from daily metrics
+- Be honest about confidence levels
+
+## File Analysis
+When a file is attached:
+- CSV/Excel: Summarize structure, key columns, notable patterns, and suggest how the data relates to the current event
+- PDF: Describe contents, extract key numbers or tables
+- Images: Describe what you see, read any visible text/numbers
+- Always relate file contents back to the event context when possible
+
 ## Response Format
 
 ### For data questions / analysis:
@@ -121,6 +166,19 @@ Give a clear, concise answer using real numbers from [CONTEXT]. Use bullet point
 ### For change requests:
 Use your write tools to make the change directly. Then confirm:
 "Done — [what changed]. The dashboard will update automatically."
+
+### For anomaly detection:
+Use a clear format:
+**Issues Found:**
+- [Issue with specific data and severity]
+
+**Recommendations:**
+- [What to do about it]
+
+### For forecasting:
+**Current Pace:** [metrics]
+**Projected End-of-Event:** [projections]
+**vs. Targets:** [comparison]
 
 ### For suggestions / improvements:
 Be opinionated. Don't ask Mike what he wants — tell him what you'd recommend based on the data:
@@ -133,6 +191,7 @@ Want me to make this change?
 
 ## Rules
 - Use real data from [CONTEXT]. Never fabricate numbers.
+- Reference [MEMORY] when it adds value — show you remember past conversations.
 - Be direct and opinionated. Don't hedge. If the data says something, say it.
 - **You CAN make changes.** Use your write tools when asked. Don't tell Mike to do it himself.
 - If you need clarification, ask ONE question max.
@@ -142,7 +201,7 @@ Want me to make this change?
 // ─── Tier 3 System Prompt — Opus (Cruze) ──────────────────────────────────
 
 const TIER_3_PROMPT = `You are Cruze, Mike's Mission Control copilot.
-Warm, confident, strategic. You help Mike think through complex features, integrations, and architecture. You translate vision into clear, scoped plans.
+Warm, confident, strategic. You help Mike think through complex features, integrations, and architecture. You translate vision into clear, scoped plans. You remember everything from past conversations.
 
 ## Business Context
 JDE (Just Drive Events) — traveling automotive sales event company operated by Mike. ~36 events/year, 8-10 markets, 1.8M mail pieces/year, 25% commission on gross. Tech stack: Next.js (App Router), Supabase (Postgres + Auth), n8n, GoHighLevel CRM, Google Ads, Meta Ads, Google Sheets. Hosted on Vercel.
@@ -154,7 +213,7 @@ JDE (Just Drive Events) — traveling automotive sales event company operated by
 - Generate detailed Claude Code prompts for implementation
 
 ## Context Awareness
-Every message includes a [CONTEXT] block with dashboard data. Use it to ground your recommendations.
+Every message includes a [CONTEXT] block with dashboard data and [MEMORY] of past conversations. Use both to ground your recommendations and reference prior discussions.
 
 ## Response Format — Task Card
 
@@ -200,7 +259,7 @@ const SHARED_CONFIG = `
 You are part of this dashboard. When users ask "what is this?" or "what does X mean?" — you KNOW the answer because you ARE the dashboard. Never say you "don't have visibility" into the UI. You built it. Here's what exists:
 
 ### Deal Log Page (/dashboard/deals)
-**Table columns (left to right):** Select checkbox, Status, Stock #, Customer, Zip, N/U, Year, Make, Model, Cost, Tr Year, Tr Make, Tr Model, Miles, ACV, Payoff, Salesperson, 2nd SP, Front Gross, Lender, Rate, Reserve, Warranty, Aft 1, GAP, FI Total, Total Gross, Actions (⋯ menu)
+**Table columns (left to right):** Select checkbox, Status, Stock #, Customer, Zip, N/U, Year, Make, Model, Cost, Tr Year, Tr Make, Tr Model, Miles, ACV, Payoff, Salesperson, 2nd SP, Front Gross, Lender, Rate, Reserve, Warranty, Aft 1, GAP, FI Total, Total Gross, Actions (... menu)
 
 **Badges & Indicators:**
 - **TI** (orange badge next to Stock #) = **Trade-In Turn**. This means the vehicle being sold was originally a trade-in from another deal during this event — it was "turned and burned." The TI flag is a manual checkbox toggled when logging/editing a deal. It does NOT mean the deal simply has a trade-in; it means the vehicle itself was a trade-in that was resold.
@@ -217,7 +276,7 @@ You are part of this dashboard. When users ask "what is this?" or "what does X m
 **Stats cards Row 2 (insights):** Top Salespeople (ranked list), New vs Used (counts + avg front gross), Warranty Sold (count/total with %), GAP Penetration (count/total with %), Top Lenders (ranked list)
 **Footer bar:** Shows averages for Front Gross, top Lender, Rate, Reserve, Warranty, Aft 1, GAP, FI Total, plus total Total Gross
 
-**Actions:** Export CSV button, New Deal button, search bar, status filter dropdown, bulk select + delete, edit deal via ⋯ menu, column resizing by dragging borders
+**Actions:** Export CSV button, New Deal button, search bar, status filter dropdown, bulk select + delete, edit deal via ... menu, column resizing by dragging borders
 
 ### Sidebar Navigation
 The left sidebar has these sections:
@@ -231,8 +290,8 @@ The left sidebar has these sections:
 
 ### Pack & Doc Fee Commission (new)
 - **Pack** is a fixed cost added to the vehicle cost, deducted from front gross. It's split by New vs Used — each can have a different dollar amount. Pack is set per-event in Settings.
-- **Doc Fee in Commission toggle** — when OFF (default), salesperson commission = front gross × rate. When ON, commission = (front gross + doc fee) × rate. This is a per-event setting in the Event Configuration card.
-- Front gross on deal forms now shows the pack deduction: "Pack: −$1,200" below the front gross number.
+- **Doc Fee in Commission toggle** — when OFF (default), salesperson commission = front gross x rate. When ON, commission = (front gross + doc fee) x rate. This is a per-event setting in the Event Configuration card.
+- Front gross on deal forms now shows the pack deduction: "Pack: -$1,200" below the front gross number.
 - The Commissions page and Recap P&L both respect these settings.
 
 ### General Abbreviations (dealership terminology)
@@ -253,14 +312,21 @@ The left sidebar has these sections:
 - **searchInventory** — Search vehicles by stock #, make, model, or year
 - **getEventStats** — Get full event statistics (deals, gross, FI, lenders, inventory, roster)
 - **getSalespersonStats** — Get detailed performance for a specific salesperson
+- **getDailyMetrics** — Get day-by-day metrics (ups, sold, gross) for trend analysis
+- **getMailCampaignStats** — Get mail campaign data by zip code with response rates
+- **getCommissionSummary** — Get commission calculations for all salespeople
+- **detectAnomalies** — Scan for data issues, outliers, and potential errors
+- **getForecast** — Project event outcomes based on current pace vs targets
 
 ### Write Tools (Tier 2 & 3 only)
-- **updateDealStatus** — Change a deal's status (pending/funded/unwound/cancelled). Automatically syncs inventory (funded→vehicle marked sold, unwound→vehicle restored to available).
-- **updateEventConfig** — Edit event settings: doc fee, pack (new/used), commission %, targets, etc.
-- **updateVehicleField** — Edit a single field on a vehicle (notes, status, asking price, color, etc.)
-- **updateVehicleStatus** — Batch-change vehicle status (available/sold/hold/removed)
+- **updateDealStatus** — Change a deal's status (pending/funded/unwound/cancelled). Automatically syncs inventory.
+- **updateEventConfig** — Edit event settings: doc fee, pack, commission %, targets, etc.
+- **updateVehicleField** — Edit a single field on a vehicle
+- **updateVehicleStatus** — Batch-change vehicle status
 - **upsertDailyMetric** — Enter or update daily metrics (sale day, ups, sold, gross)
-- **updateDealField** — Edit a single field on a deal (lender, rate, salesperson, front gross, etc.)
+- **updateDealField** — Edit a single field on a deal
+- **addRosterMember** — Add a new team member to the event roster
+- **saveInsight** — Save an important insight to long-term memory for future reference
 
 ### Write Tool Rules
 1. **Look up first** — Always use lookupDeal or searchInventory to find the record ID before calling a write tool. Never guess IDs.
@@ -274,8 +340,16 @@ Always use tools when asked about specific people, vehicles, or deals. Don't gue
 - Cmd+/ or Ctrl+/ — Open/close chat
 - Esc — Close chat panel
 
-## Session Memory
-Maintain full conversation context within a session. Reference previous messages naturally.
+## Memory System
+You have persistent memory across sessions. The [MEMORY] block contains:
+- Long-term memories about the user (preferences, recurring patterns, key facts)
+- Recent conversation highlights from past sessions
+
+Use this to:
+- Reference past discussions naturally ("Last time you asked about warranty penetration...")
+- Remember user preferences without being asked
+- Build on prior analysis instead of starting fresh
+- Track patterns across multiple events
 
 ## Error Handling
 - Don't understand: "Let me make sure I've got this right — are you asking about [interpretation]?"
@@ -292,7 +366,7 @@ Maintain full conversation context within a session. Reference previous messages
 - Never say "I'm just an AI", "As an AI", or "I don't have the ability to."
 - When Mike asks for a data change, **use your write tools to make it happen**. Don't generate Claude Code prompts for simple data edits.
 - For complex feature requests (new pages, integrations, UI changes), provide a Claude Code prompt.
-- Your mission: Be genuinely useful. Answer with real data. Make changes when asked. Give actionable advice.
+- Your mission: Be genuinely useful. Answer with real data. Make changes when asked. Give actionable advice. Remember everything.
 
 ## Data Safety
 - Never expose API keys, credentials, or internal URLs in chat responses.
@@ -310,7 +384,7 @@ const TIER_CONFIG = {
   TIER_2: {
     model: "claude-sonnet-4-6",
     prompt: TIER_2_PROMPT,
-    maxOutputTokens: 2048,
+    maxOutputTokens: 4096,
     temperature: 0.5,
   },
   TIER_3: {
@@ -351,7 +425,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { messages, context } = body;
+  const { messages, context, fileAttachment } = body;
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return new Response(JSON.stringify({ error: "No messages provided" }), {
@@ -372,7 +446,32 @@ export async function POST(req: NextRequest) {
     else if (Array.isArray(lastMsg.parts)) lastMsg.parts = [{ type: "text", text: "What can you help me with, Cruze?" }];
   }
 
-  // 3. Build enriched context block with real data from Supabase
+  // 3. CRUZE UPGRADE — Load persistent memory
+  const activeEventId = context?.eventId || null;
+  const userId = user.id;
+  let memoryBlock = "";
+
+  try {
+    const [memories, recentHistory] = await Promise.all([
+      getRelevantMemories(supabase, userId, activeEventId, 10),
+      getConversationHistory(supabase, userId, activeEventId, 10),
+    ]);
+    memoryBlock = formatMemoryBlock(memories, recentHistory);
+  } catch (memErr) {
+    console.warn("[Cruze] Memory load failed (non-blocking):", memErr);
+    // Continue without memory — it's a nice-to-have
+  }
+
+  // 4. CRUZE UPGRADE — Save user message to conversation history
+  let conversationId: string | null = null;
+  try {
+    conversationId = await getOrCreateConversation(supabase, userId, activeEventId);
+    await saveMessage(supabase, conversationId, "user", lastMsgText);
+  } catch (convErr) {
+    console.warn("[Cruze] Conversation save failed (non-blocking):", convErr);
+  }
+
+  // 5. Build enriched context block with real data from Supabase
   let contextBlock = "";
   if (context) {
     const page = context.page || "unknown";
@@ -395,7 +494,6 @@ export async function POST(req: NextRequest) {
         }
 
         // Fetch event config for financial settings context
-        // Try full column set first, fall back to safe columns if migration hasn't run
         let eventCfg: Record<string, unknown> | null = null;
         try {
           const { data, error: cfgErr } = await supabase
@@ -404,7 +502,6 @@ export async function POST(req: NextRequest) {
             .eq("event_id", eventId)
             .maybeSingle();
           if (cfgErr) {
-            // Columns may not exist yet — fall back to safe columns
             console.warn("[ChatBot] event_config full query failed, trying safe columns:", cfgErr.message);
             const { data: safeData } = await supabase
               .from("event_config")
@@ -448,30 +545,24 @@ export async function POST(req: NextRequest) {
             const frontGross = deals.reduce((sum, d) => sum + (d.front_gross || 0), 0);
             const backGross = deals.reduce((sum, d) => sum + (d.back_gross || 0), 0);
 
-            // Trade-In Turn stats (vehicles that were traded in and resold)
             const tradeTurnDeals = deals.filter((d) => d.is_trade_turn);
             const tradeTurnCount = tradeTurnDeals.length;
 
-            // Trade-in stats (deals that have a customer trade-in)
             const dealsWithTradeIn = deals.filter((d) => d.trade_year || d.trade_make || d.trade_model || d.trade_acv);
             const tradeInCount = dealsWithTradeIn.length;
             const totalTradeAcv = dealsWithTradeIn.reduce((sum, d) => sum + (d.trade_acv || 0), 0);
             const totalTradePayoff = dealsWithTradeIn.reduce((sum, d) => sum + (d.trade_payoff || 0), 0);
 
-            // New vs Used breakdown with avg front gross
             const newDealsList = deals.filter((d) => d.new_used === "New");
             const usedDealsList = deals.filter((d) => d.new_used === "Used");
             const cpoDealsList = deals.filter((d) => d.new_used === "Certified");
             const newAvgFront = newDealsList.length > 0 ? Math.round(newDealsList.reduce((s, d) => s + (d.front_gross || 0), 0) / newDealsList.length) : 0;
             const usedAvgFront = usedDealsList.length > 0 ? Math.round(usedDealsList.reduce((s, d) => s + (d.front_gross || 0), 0) / usedDealsList.length) : 0;
 
-            // Status breakdown
             const statusCounts = deals.reduce((acc, d) => { acc[d.status || "unknown"] = (acc[d.status || "unknown"] || 0) + 1; return acc; }, {} as Record<string, number>);
 
-            // FI averages
             const avgFiTotal = totalDeals > 0 ? Math.round(deals.reduce((s, d) => s + (d.fi_total || 0), 0) / totalDeals) : 0;
 
-            // Top salespeople by volume
             const spMap = new Map<string, { deals: number; gross: number }>();
             deals.forEach((d) => {
               const sp = d.salesperson || "Unknown";
@@ -482,14 +573,11 @@ export async function POST(req: NextRequest) {
             });
             const topSalespeople = [...spMap.entries()].sort((a, b) => b[1].deals - a[1].deals).slice(0, 5);
 
-            // Highest single deal
             const highestDeal = deals.reduce((best, d) => (d.total_gross || 0) > (best?.total_gross || 0) ? d : best, deals[0]);
 
-            // Warranty & GAP penetration
             const warrantyCount = deals.filter((d) => (d.warranty || 0) > 0).length;
             const gapCount = deals.filter((d) => (d.gap || 0) > 0).length;
 
-            // Lender breakdown
             const lenderMap = new Map<string, number>();
             deals.forEach((d) => { if (d.lender) lenderMap.set(d.lender, (lenderMap.get(d.lender) || 0) + 1); });
             const topLenders = [...lenderMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -620,13 +708,29 @@ export async function POST(req: NextRequest) {
       }
     } catch (err) {
       console.error("[ChatBot] Context enrichment error:", err);
-      // Continue without enriched data — basic context is still available
     }
 
     contextBlock = `\n\n[CONTEXT]\nPage: ${page}\nEvent: ${context.eventName || "none selected"} (id: ${eventId || "n/a"})\nUser: ${userName}\nTime: ${new Date().toISOString()}${dataBlock}\n[/CONTEXT]`;
   }
 
-  // 4. Classify the message tier using Haiku (fast, ~$0.001/call)
+  // CRUZE UPGRADE — File attachment context
+  let fileBlock = "";
+  if (fileAttachment) {
+    fileBlock = `\n\n[FILE ATTACHMENT]\nFile: ${fileAttachment.fileName} (${fileAttachment.fileType})\nSize: ${fileAttachment.fileSize} bytes`;
+    if (fileAttachment.analysis) {
+      fileBlock += `\nAnalysis: ${JSON.stringify(fileAttachment.analysis)}`;
+    }
+    if (fileAttachment.textContent) {
+      // For CSV, include the actual content (truncated)
+      const truncated = fileAttachment.textContent.length > 5000
+        ? fileAttachment.textContent.slice(0, 5000) + "\n... [truncated]"
+        : fileAttachment.textContent;
+      fileBlock += `\nContent:\n${truncated}`;
+    }
+    fileBlock += `\n[/FILE ATTACHMENT]`;
+  }
+
+  // 6. Classify the message tier using Haiku (fast, ~$0.001/call)
   const lastMessage = messages[messages.length - 1];
   const userText =
     typeof lastMessage?.content === "string"
@@ -640,51 +744,73 @@ export async function POST(req: NextRequest) {
 
   let tier: Tier = "TIER_2"; // default to Sonnet if classification fails
 
-  try {
-    // Race classifier against a timeout — never let classification block the response
-    const classifyPromise = generateText({
-      model: anthropic("claude-haiku-4-5-20251001"),
-      system: CLASSIFIER_PROMPT,
-      prompt: `Classify this user message:\n\n"${userText}"`,
-      maxOutputTokens: 200,
-      temperature: 0,
-    });
+  // CRUZE UPGRADE — File attachments always route to TIER_2
+  if (fileAttachment) {
+    tier = "TIER_2";
+  } else {
+    try {
+      const classifyPromise = generateText({
+        model: anthropic("claude-haiku-4-5-20251001"),
+        system: CLASSIFIER_PROMPT,
+        prompt: `Classify this user message:\n\n"${userText}"`,
+        maxOutputTokens: 200,
+        temperature: 0,
+      });
 
-    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
-    const classification = await Promise.race([classifyPromise, timeoutPromise]);
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+      const classification = await Promise.race([classifyPromise, timeoutPromise]);
 
-    if (classification && "text" in classification) {
-      const parsed = JSON.parse(classification.text.trim());
-      if (parsed.tier && parsed.tier in TIER_CONFIG) {
-        tier = parsed.tier as Tier;
+      if (classification && "text" in classification) {
+        const parsed = JSON.parse(classification.text.trim());
+        if (parsed.tier && parsed.tier in TIER_CONFIG) {
+          tier = parsed.tier as Tier;
+        }
+      } else {
+        console.warn("[ChatBot] Classifier timed out after 5s, defaulting to TIER_2");
       }
-    } else {
-      console.warn("[ChatBot] Classifier timed out after 5s, defaulting to TIER_2");
+    } catch (classifyErr) {
+      console.warn("[ChatBot] Classification failed, defaulting to TIER_2:", classifyErr);
     }
-  } catch (classifyErr) {
-    console.warn("[ChatBot] Classification failed, defaulting to TIER_2:", classifyErr);
-    // Classification failed — fall through to TIER_2 default
   }
 
-  // 5. Convert v6 UIMessage format (parts) → streamText format (content string)
-  const formattedMessages = messages.map(
-    (m: { role: string; content?: string; parts?: Array<{ type: string; text?: string }> }) => {
-      let content = "";
+  // 7. Convert v6 UIMessage format (parts) → streamText format (content string)
+  // CRUZE UPGRADE — Handle image attachments via Claude vision
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const formattedMessages: any[] = messages.map(
+    (m: { role: string; content?: string; parts?: Array<{ type: string; text?: string }> }, idx: number) => {
+      let textContent = "";
       if (Array.isArray(m.parts)) {
-        content = m.parts
+        textContent = m.parts
           .filter((p) => p.type === "text" && p.text)
           .map((p) => p.text)
           .join("");
       } else if (typeof m.content === "string") {
-        content = m.content;
+        textContent = m.content;
       }
-      return { role: m.role as "user" | "assistant" | "system", content };
+
+      // For the last user message, attach image for vision if present
+      if (idx === messages.length - 1 && m.role === "user" && fileAttachment?.base64Data) {
+        const mimeType = fileAttachment.mimeType || "image/png";
+        if (mimeType.startsWith("image/")) {
+          // Use Vercel AI SDK multimodal content format
+          return {
+            role: "user" as const,
+            content: [
+              { type: "text" as const, text: textContent || `Analyze this image: ${fileAttachment.fileName}` },
+              {
+                type: "image" as const,
+                image: `data:${mimeType};base64,${fileAttachment.base64Data}`,
+              },
+            ],
+          };
+        }
+      }
+
+      return { role: m.role as "user" | "assistant" | "system", content: textContent };
     },
   );
 
-  // 6. Build tools — Cruze can query and write to Supabase
-  const activeEventId = context?.eventId || null;
-  const userId = user.id;
+  // 8. Build tools — CRUZE UPGRADE: expanded omniscient tool set
 
   // ── Read Tools (all tiers) ────────────────────────────────────────────────
   function buildCruzeReadTools(eid: string) {
@@ -730,7 +856,7 @@ export async function POST(req: NextRequest) {
           const { data } = await supabase
             .from("vehicle_inventory")
             .select(
-              "id, stock_number, year, make, model, trim, color, mileage, status, acquisition_cost, asking_price",
+              "id, stock_number, year, make, model, trim, color, mileage, status, acquisition_cost, asking_price_115, asking_price_120, asking_price_125, asking_price_130, notes",
             )
             .eq("event_id", eid)
             .or(
@@ -770,20 +896,10 @@ export async function POST(req: NextRequest) {
           const vehicles = inventoryRes.data || [];
           const roster = rosterRes.data || [];
 
-          const totalGross = deals.reduce(
-            (s, d) => s + (d.total_gross || 0),
-            0,
-          );
-          const frontGross = deals.reduce(
-            (s, d) => s + (d.front_gross || 0),
-            0,
-          );
-          const backGross = deals.reduce(
-            (s, d) => s + (d.back_gross || 0),
-            0,
-          );
-          const avgPvr =
-            deals.length > 0 ? Math.round(totalGross / deals.length) : 0;
+          const totalGross = deals.reduce((s, d) => s + (d.total_gross || 0), 0);
+          const frontGross = deals.reduce((s, d) => s + (d.front_gross || 0), 0);
+          const backGross = deals.reduce((s, d) => s + (d.back_gross || 0), 0);
+          const avgPvr = deals.length > 0 ? Math.round(totalGross / deals.length) : 0;
 
           const spMap: Record<string, { deals: number; gross: number }> = {};
           deals.forEach((d) => {
@@ -793,15 +909,12 @@ export async function POST(req: NextRequest) {
             spMap[sp].gross += d.total_gross || 0;
           });
 
-          const warrantyCount = deals.filter(
-            (d) => (d.warranty || 0) > 0,
-          ).length;
+          const warrantyCount = deals.filter((d) => (d.warranty || 0) > 0).length;
           const gapCount = deals.filter((d) => (d.gap || 0) > 0).length;
 
           const lenderMap: Record<string, number> = {};
           deals.forEach((d) => {
-            if (d.lender)
-              lenderMap[d.lender] = (lenderMap[d.lender] || 0) + 1;
+            if (d.lender) lenderMap[d.lender] = (lenderMap[d.lender] || 0) + 1;
           });
 
           return {
@@ -824,8 +937,7 @@ export async function POST(req: NextRequest) {
               .map(([name, count]) => ({ name, count })),
             inventory: {
               total: vehicles.length,
-              available: vehicles.filter((v) => v.status === "available")
-                .length,
+              available: vehicles.filter((v) => v.status === "available").length,
               sold: vehicles.filter((v) => v.status === "sold").length,
             },
             roster: {
@@ -859,14 +971,9 @@ export async function POST(req: NextRequest) {
           if (deals.length === 0)
             return { found: false, message: `No deals found for "${name}"` };
 
-          const totalGross = deals.reduce(
-            (s, d) => s + (d.total_gross || 0),
-            0,
-          );
+          const totalGross = deals.reduce((s, d) => s + (d.total_gross || 0), 0);
           const avgPvr = Math.round(totalGross / deals.length);
-          const warrantyCount = deals.filter(
-            (d) => (d.warranty || 0) > 0,
-          ).length;
+          const warrantyCount = deals.filter((d) => (d.warranty || 0) > 0).length;
           const gapCount = deals.filter((d) => (d.gap || 0) > 0).length;
 
           return {
@@ -875,12 +982,10 @@ export async function POST(req: NextRequest) {
             totalGross,
             avgPvr,
             avgFrontGross: Math.round(
-              deals.reduce((s, d) => s + (d.front_gross || 0), 0) /
-                deals.length,
+              deals.reduce((s, d) => s + (d.front_gross || 0), 0) / deals.length,
             ),
             avgBackGross: Math.round(
-              deals.reduce((s, d) => s + (d.back_gross || 0), 0) /
-                deals.length,
+              deals.reduce((s, d) => s + (d.back_gross || 0), 0) / deals.length,
             ),
             warrantyPenetration: `${warrantyCount}/${deals.length}`,
             gapPenetration: `${gapCount}/${deals.length}`,
@@ -889,6 +994,331 @@ export async function POST(req: NextRequest) {
               vehicle: `${d.vehicle_year} ${d.vehicle_make} ${d.vehicle_model}`,
               totalGross: d.total_gross,
               status: d.status,
+            })),
+          };
+        },
+      },
+
+      // CRUZE UPGRADE — New read tools
+
+      getDailyMetrics: {
+        description:
+          "Get day-by-day metrics (ups, sold, gross) for the current event. Use for trend analysis, pace calculations, and forecasting.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {},
+        }),
+        execute: async () => {
+          const { data } = await supabase
+            .from("daily_metrics")
+            .select("sale_day, sale_date, total_ups, total_sold, total_gross, total_front, total_back, notes")
+            .eq("event_id", eid)
+            .order("sale_day", { ascending: true });
+
+          const metrics = data || [];
+          if (metrics.length === 0) return { found: false, message: "No daily metrics recorded yet." };
+
+          const totalUps = metrics.reduce((s, m) => s + (m.total_ups || 0), 0);
+          const totalSold = metrics.reduce((s, m) => s + (m.total_sold || 0), 0);
+          const totalGross = metrics.reduce((s, m) => s + (m.total_gross || 0), 0);
+          const closeRate = totalUps > 0 ? ((totalSold / totalUps) * 100).toFixed(1) : "0";
+          const avgPvr = totalSold > 0 ? Math.round(totalGross / totalSold) : 0;
+
+          return {
+            found: true,
+            daysRecorded: metrics.length,
+            totalUps,
+            totalSold,
+            totalGross,
+            closeRate: `${closeRate}%`,
+            avgPvr,
+            avgUpsPerDay: Math.round(totalUps / metrics.length),
+            avgSoldPerDay: (totalSold / metrics.length).toFixed(1),
+            dailyBreakdown: metrics,
+          };
+        },
+      },
+
+      getMailCampaignStats: {
+        description:
+          "Get mail campaign data by zip code with response rates, daily response breakdown, and sold-from-mail counts.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {},
+        }),
+        execute: async () => {
+          const { data } = await supabase
+            .from("mail_tracking")
+            .select("zip_code, town, pieces_sent, total_responses, response_rate, sold_from_mail, day_1, day_2, day_3, day_4, day_5, day_6")
+            .eq("event_id", eid)
+            .order("total_responses", { ascending: false });
+
+          const mail = data || [];
+          if (mail.length === 0) return { found: false, message: "No mail campaign data recorded." };
+
+          const totalPieces = mail.reduce((s, m) => s + (m.pieces_sent || 0), 0);
+          const totalResponses = mail.reduce((s, m) => s + (m.total_responses || 0), 0);
+          const totalSoldFromMail = mail.reduce((s, m) => s + (m.sold_from_mail || 0), 0);
+          const overallRate = totalPieces > 0 ? ((totalResponses / totalPieces) * 100).toFixed(2) : "0";
+
+          // Best and worst performing zips
+          const sorted = [...mail].sort((a, b) => (b.response_rate || 0) - (a.response_rate || 0));
+
+          return {
+            found: true,
+            zipCodesTargeted: mail.length,
+            totalPieces,
+            totalResponses,
+            overallResponseRate: `${overallRate}%`,
+            totalSoldFromMail,
+            costPerResponse: totalPieces > 0 ? `$${((totalPieces * 0.50) / Math.max(totalResponses, 1)).toFixed(2)}` : "N/A",
+            topZips: sorted.slice(0, 5).map((m) => ({
+              zip: m.zip_code,
+              town: m.town,
+              sent: m.pieces_sent,
+              responses: m.total_responses,
+              rate: `${((m.response_rate || 0) * 100).toFixed(2)}%`,
+              sold: m.sold_from_mail,
+            })),
+            bottomZips: sorted.slice(-3).reverse().map((m) => ({
+              zip: m.zip_code,
+              town: m.town,
+              sent: m.pieces_sent,
+              responses: m.total_responses,
+              rate: `${((m.response_rate || 0) * 100).toFixed(2)}%`,
+            })),
+          };
+        },
+      },
+
+      getCommissionSummary: {
+        description:
+          "Get commission calculations for all salespeople in the current event. Shows deals, gross, commission earned, and net pay.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {},
+        }),
+        execute: async () => {
+          const [dealsRes, rosterRes, configRes] = await Promise.all([
+            supabase
+              .from("sales_deals")
+              .select("salesperson, salesperson_id, salesperson_pct, front_gross, back_gross, total_gross, status, new_used, doc_fee")
+              .eq("event_id", eid)
+              .not("status", "in", '("cancelled","unwound")'),
+            supabase
+              .from("roster")
+              .select("id, name, role, commission_pct")
+              .eq("event_id", eid)
+              .eq("active", true),
+            supabase
+              .from("event_config")
+              .select("doc_fee, pack_new, pack_used, pack, include_doc_fee_in_commission, rep_commission_pct, jde_commission_pct")
+              .eq("event_id", eid)
+              .maybeSingle(),
+          ]);
+
+          const deals = dealsRes.data || [];
+          const roster = rosterRes.data || [];
+          const config = configRes.data;
+
+          const commPct = config?.rep_commission_pct || 0.25;
+
+          // Group deals by salesperson
+          const byPerson: Record<string, { deals: number; frontGross: number; backGross: number; totalGross: number }> = {};
+          deals.forEach((d) => {
+            const sp = d.salesperson || "Unknown";
+            if (!byPerson[sp]) byPerson[sp] = { deals: 0, frontGross: 0, backGross: 0, totalGross: 0 };
+            byPerson[sp].deals++;
+            byPerson[sp].frontGross += (d.front_gross || 0) * (d.salesperson_pct || 1);
+            byPerson[sp].backGross += d.back_gross || 0;
+            byPerson[sp].totalGross += d.total_gross || 0;
+          });
+
+          const summary = Object.entries(byPerson)
+            .sort((a, b) => b[1].totalGross - a[1].totalGross)
+            .map(([name, stats]) => {
+              const rosterMember = roster.find((r) => r.name === name);
+              const pct = rosterMember?.commission_pct || commPct;
+              const commissionEarned = Math.round(stats.frontGross * Number(pct));
+              return {
+                name,
+                role: rosterMember?.role || "sales",
+                deals: stats.deals,
+                frontGross: stats.frontGross,
+                backGross: stats.backGross,
+                totalGross: stats.totalGross,
+                commissionRate: `${(Number(pct) * 100).toFixed(0)}%`,
+                commissionEarned,
+              };
+            });
+
+          return {
+            salespeople: summary,
+            totalCommissionPayable: summary.reduce((s, p) => s + p.commissionEarned, 0),
+            totalDeals: deals.length,
+            eventCommissionRate: `${(Number(commPct) * 100).toFixed(0)}%`,
+          };
+        },
+      },
+
+      detectAnomalies: {
+        description:
+          "Scan the current event for data anomalies, outliers, potential errors, and issues that need attention. Proactively identifies problems.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {},
+        }),
+        execute: async () => {
+          const [dealsRes, inventoryRes, metricsRes] = await Promise.all([
+            supabase
+              .from("sales_deals")
+              .select("id, stock_number, customer_name, salesperson, front_gross, back_gross, total_gross, status, lender, rate, warranty, gap, fi_total, new_used, vehicle_id")
+              .eq("event_id", eid),
+            supabase
+              .from("vehicle_inventory")
+              .select("id, stock_number, status, acquisition_cost, year, make, model")
+              .eq("event_id", eid),
+            supabase
+              .from("daily_metrics")
+              .select("sale_day, total_ups, total_sold, total_gross")
+              .eq("event_id", eid)
+              .order("sale_day", { ascending: true }),
+          ]);
+
+          const deals = dealsRes.data || [];
+          const vehicles = inventoryRes.data || [];
+          const metrics = metricsRes.data || [];
+          const anomalies: { severity: string; type: string; description: string }[] = [];
+
+          if (deals.length === 0) return { anomalies: [], message: "No deals to analyze." };
+
+          // Avg PVR for outlier detection
+          const avgGross = deals.reduce((s, d) => s + (d.total_gross || 0), 0) / deals.length;
+
+          // 1. Gross outliers
+          deals.forEach((d) => {
+            if ((d.total_gross || 0) > avgGross * 3) {
+              anomalies.push({ severity: "info", type: "high_gross", description: `${d.customer_name} (${d.stock_number}) has unusually high gross: $${d.total_gross?.toLocaleString()} (3x+ avg)` });
+            }
+            if ((d.front_gross || 0) < -500) {
+              anomalies.push({ severity: "warning", type: "negative_front", description: `${d.customer_name} (${d.stock_number}) has deeply negative front gross: $${d.front_gross?.toLocaleString()}` });
+            }
+          });
+
+          // 2. Missing data
+          const noLender = deals.filter((d) => !d.lender && d.status !== "cancelled");
+          if (noLender.length > 0) {
+            anomalies.push({ severity: "warning", type: "missing_lender", description: `${noLender.length} deal(s) missing lender info` });
+          }
+
+          const noSalesperson = deals.filter((d) => !d.salesperson);
+          if (noSalesperson.length > 0) {
+            anomalies.push({ severity: "warning", type: "missing_salesperson", description: `${noSalesperson.length} deal(s) missing salesperson` });
+          }
+
+          // 3. Inventory mismatches
+          const soldVehicleIds = new Set(deals.filter((d) => d.status === "funded" || d.status === "pending").map((d) => d.vehicle_id).filter(Boolean));
+          const availableButSold = vehicles.filter((v) => soldVehicleIds.has(v.id) && v.status === "available");
+          if (availableButSold.length > 0) {
+            anomalies.push({ severity: "error", type: "inventory_mismatch", description: `${availableButSold.length} vehicle(s) show as "available" in inventory but have active deals: ${availableButSold.map((v) => v.stock_number).join(", ")}` });
+          }
+
+          // 4. Zero FI deals (potential data entry issue)
+          const zeroFI = deals.filter((d) => (d.fi_total || 0) === 0 && d.status !== "cancelled");
+          if (zeroFI.length > deals.length * 0.3 && deals.length > 5) {
+            anomalies.push({ severity: "info", type: "low_fi", description: `${zeroFI.length} of ${deals.length} deals have $0 FI total — FI data may be incomplete` });
+          }
+
+          // 5. Daily metrics anomalies
+          if (metrics.length > 2) {
+            const avgUps = metrics.reduce((s, m) => s + (m.total_ups || 0), 0) / metrics.length;
+            metrics.forEach((m) => {
+              if ((m.total_ups || 0) > avgUps * 2.5) {
+                anomalies.push({ severity: "info", type: "high_traffic", description: `Day ${m.sale_day} had unusually high traffic: ${m.total_ups} ups (avg: ${Math.round(avgUps)})` });
+              }
+              if ((m.total_sold || 0) > 0 && (m.total_ups || 0) === 0) {
+                anomalies.push({ severity: "error", type: "data_error", description: `Day ${m.sale_day} shows ${m.total_sold} sold but 0 ups — likely data entry error` });
+              }
+            });
+          }
+
+          return {
+            anomalies,
+            totalIssues: anomalies.length,
+            errors: anomalies.filter((a) => a.severity === "error").length,
+            warnings: anomalies.filter((a) => a.severity === "warning").length,
+            info: anomalies.filter((a) => a.severity === "info").length,
+          };
+        },
+      },
+
+      getForecast: {
+        description:
+          "Project event outcomes based on current pace vs targets. Calculates projected units, gross, and PVR at end of event.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {},
+        }),
+        execute: async () => {
+          const [dealsRes, metricsRes, eventRes, configRes] = await Promise.all([
+            supabase.from("sales_deals").select("total_gross, status, sale_day").eq("event_id", eid).not("status", "in", '("cancelled","unwound")'),
+            supabase.from("daily_metrics").select("sale_day, total_ups, total_sold, total_gross").eq("event_id", eid).order("sale_day", { ascending: true }),
+            supabase.from("events").select("sale_days, start_date, end_date, status").eq("id", eid).single(),
+            supabase.from("event_config").select("target_units, target_gross, target_pvr").eq("event_id", eid).maybeSingle(),
+          ]);
+
+          const deals = dealsRes.data || [];
+          const metrics = metricsRes.data || [];
+          const event = eventRes.data;
+          const config = configRes.data;
+
+          const totalSaleDays = event?.sale_days || 6;
+          const daysCompleted = metrics.length || 1;
+          const daysRemaining = Math.max(totalSaleDays - daysCompleted, 0);
+
+          const currentUnits = deals.length;
+          const currentGross = deals.reduce((s, d) => s + (d.total_gross || 0), 0);
+          const currentPvr = currentUnits > 0 ? Math.round(currentGross / currentUnits) : 0;
+
+          const unitsPerDay = daysCompleted > 0 ? currentUnits / daysCompleted : 0;
+          const grossPerDay = daysCompleted > 0 ? currentGross / daysCompleted : 0;
+
+          const projectedUnits = Math.round(currentUnits + unitsPerDay * daysRemaining);
+          const projectedGross = Math.round(currentGross + grossPerDay * daysRemaining);
+          const projectedPvr = projectedUnits > 0 ? Math.round(projectedGross / projectedUnits) : 0;
+
+          const targetUnits = config?.target_units || null;
+          const targetGross = config?.target_gross || null;
+
+          return {
+            currentPace: {
+              daysCompleted,
+              daysRemaining,
+              totalSaleDays,
+              currentUnits,
+              currentGross,
+              currentPvr,
+              unitsPerDay: unitsPerDay.toFixed(1),
+              grossPerDay: Math.round(grossPerDay),
+            },
+            projections: {
+              projectedUnits,
+              projectedGross,
+              projectedPvr,
+            },
+            vsTargets: {
+              targetUnits,
+              targetGross,
+              unitsPacing: targetUnits ? `${Math.round((projectedUnits / targetUnits) * 100)}% of target` : "No target set",
+              grossPacing: targetGross ? `${Math.round((projectedGross / Number(targetGross)) * 100)}% of target` : "No target set",
+              unitsNeededPerDay: targetUnits && daysRemaining > 0 ? Math.ceil((targetUnits - currentUnits) / daysRemaining) : null,
+              grossNeededPerDay: targetGross && daysRemaining > 0 ? Math.round((Number(targetGross) - currentGross) / daysRemaining) : null,
+            },
+            dailyTrend: metrics.map((m) => ({
+              day: m.sale_day,
+              ups: m.total_ups,
+              sold: m.total_sold,
+              gross: m.total_gross,
             })),
           };
         },
@@ -935,7 +1365,6 @@ export async function POST(req: NextRequest) {
 
           const typedStatus = status as "pending" | "funded" | "unwound" | "cancelled";
 
-          // Update deal status
           const { error } = await supabase
             .from("sales_deals")
             .update({ status: typedStatus })
@@ -944,7 +1373,6 @@ export async function POST(req: NextRequest) {
 
           if (error) return { success: false, error: error.message };
 
-          // Sync inventory based on status change
           const { data: deal } = await supabase
             .from("sales_deals")
             .select("vehicle_id, stock_number, customer_name, selling_price, sale_date")
@@ -953,7 +1381,6 @@ export async function POST(req: NextRequest) {
 
           if (deal) {
             if (status === "cancelled" || status === "unwound") {
-              // Restore vehicle to available
               const inventoryUpdate = { status: "available" as const, sold_to: null, sold_price: null, sold_date: null };
               if (deal.vehicle_id) {
                 await supabase.from("vehicle_inventory").update(inventoryUpdate).eq("id", deal.vehicle_id).eq("event_id", eid);
@@ -961,7 +1388,6 @@ export async function POST(req: NextRequest) {
                 await supabase.from("vehicle_inventory").update(inventoryUpdate).eq("event_id", eid).ilike("stock_number", deal.stock_number);
               }
             } else if (status === "funded" || status === "pending") {
-              // Mark vehicle as sold
               const inventoryUpdate = { status: "sold" as const, sold_to: deal.customer_name, sold_price: deal.selling_price, sold_date: deal.sale_date };
               if (deal.vehicle_id) {
                 await supabase.from("vehicle_inventory").update(inventoryUpdate).eq("id", deal.vehicle_id).eq("event_id", eid);
@@ -971,7 +1397,6 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Audit log
           await supabase.from("audit_logs").insert({
             event_id: eid,
             user_id: userId,
@@ -1011,7 +1436,6 @@ export async function POST(req: NextRequest) {
           },
         }),
         execute: async (updates: Record<string, unknown>) => {
-          // Filter to only allowed config fields
           const ALLOWED = new Set([
             "doc_fee", "tax_rate", "pack_new", "pack_used", "include_doc_fee_in_commission",
             "jde_commission_pct", "rep_commission_pct", "target_units", "target_gross",
@@ -1026,7 +1450,6 @@ export async function POST(req: NextRequest) {
             return { success: false, error: "No valid fields to update" };
           }
 
-          // Upsert pattern: create config if it doesn't exist
           const { data: existing } = await supabase
             .from("event_config")
             .select("id")
@@ -1041,7 +1464,6 @@ export async function POST(req: NextRequest) {
             if (error) return { success: false, error: error.message };
           }
 
-          // Audit log
           await supabase.from("audit_logs").insert({
             event_id: eid,
             user_id: userId,
@@ -1165,7 +1587,6 @@ export async function POST(req: NextRequest) {
           sale_day: number; sale_date?: string; total_ups: number; total_sold: number;
           total_gross?: number; total_front?: number; total_back?: number; notes?: string;
         }) => {
-          // Check if row exists for this sale day
           const { data: existing } = await supabase
             .from("daily_metrics")
             .select("id")
@@ -1250,10 +1671,86 @@ export async function POST(req: NextRequest) {
           return { success: true, message: `Deal ${field} updated to "${value}".` };
         },
       },
+
+      // CRUZE UPGRADE — New write tools
+
+      addRosterMember: {
+        description:
+          "Add a new team member to the event roster. Requires name and role. Optional: phone, email, commission_pct, team.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            name: { type: "string", description: "Full name of the team member" },
+            role: { type: "string", enum: ["sales", "team_leader", "fi_manager", "closer", "manager"], description: "Role on the team" },
+            phone: { type: "string", description: "Phone number (optional)" },
+            email: { type: "string", description: "Email address (optional)" },
+            commission_pct: { type: "number", description: "Commission percentage as decimal, e.g. 0.25 for 25% (optional)" },
+            team: { type: "string", description: "Team assignment (optional)" },
+          },
+          required: ["name", "role"],
+        }),
+        execute: async (input: { name: string; role: string; phone?: string; email?: string; commission_pct?: number; team?: string }) => {
+          const typedRole = input.role as "sales" | "team_leader" | "fi_manager" | "closer" | "manager";
+          const { error } = await supabase.from("roster").insert({
+            event_id: eid,
+            name: input.name,
+            role: typedRole,
+            phone: input.phone || null,
+            email: input.email || null,
+            commission_pct: input.commission_pct || null,
+            team: input.team || null,
+            active: true,
+            confirmed: false,
+          });
+
+          if (error) return { success: false, error: error.message };
+
+          await supabase.from("audit_logs").insert({
+            event_id: eid,
+            user_id: userId,
+            action: "add_roster_member",
+            entity_type: "roster",
+            entity_id: eid,
+            new_values: { name: input.name, role: input.role, via: "cruze" },
+          }).then(() => {}, () => {});
+
+          revalidatePath("/dashboard/roster");
+          return { success: true, message: `Added ${input.name} as ${input.role} to the roster.` };
+        },
+      },
+
+      saveInsight: {
+        description:
+          "Save an important insight or fact to Cruze's long-term memory. Use this when you discover something worth remembering about the user, their events, or their preferences.",
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            content: { type: "string", description: "The insight or fact to remember" },
+            category: { type: "string", enum: ["preference", "insight", "question", "fact"], description: "Category of the memory" },
+            importance: { type: "number", description: "Importance 1-10 (10 = critical)" },
+          },
+          required: ["content", "category"],
+        }),
+        execute: async ({ content, category, importance }: { content: string; category: string; importance?: number }) => {
+          try {
+            await saveMemory(
+              supabase,
+              userId,
+              eid,
+              content,
+              category as "preference" | "insight" | "question" | "fact",
+              importance || 5,
+            );
+            return { success: true, message: `Memory saved: "${content}"` };
+          } catch (err) {
+            return { success: false, error: `Failed to save memory: ${err}` };
+          }
+        },
+      },
     };
   }
 
-  // 7. Stream response from the appropriate model
+  // 9. Stream response from the appropriate model
   const config = TIER_CONFIG[tier];
   const readTools = activeEventId ? buildCruzeReadTools(activeEventId) : undefined;
   const writeTools = activeEventId ? buildCruzeWriteTools(activeEventId) : undefined;
@@ -1270,12 +1767,65 @@ export async function POST(req: NextRequest) {
 
     const result = streamText({
       model: anthropic(config.model),
-      system: config.prompt + SHARED_CONFIG + contextBlock,
+      system: config.prompt + SHARED_CONFIG + contextBlock + memoryBlock + fileBlock,
       messages: formattedMessages,
       tools: cruzeTools,
       stopWhen: stepCountIs(maxSteps),
       maxOutputTokens: config.maxOutputTokens,
       temperature: config.temperature,
+      async onFinish({ text }) {
+        // CRUZE UPGRADE — Save assistant response to conversation history
+        if (conversationId && text) {
+          try {
+            await saveMessage(supabase, conversationId, "assistant", text, { tier });
+
+            // Extract and save memories (non-blocking, only for meaningful exchanges)
+            if (userText.length > 20 && text.length > 50) {
+              try {
+                // Use Haiku for fast memory extraction
+                const extraction = await generateText({
+                  model: anthropic("claude-haiku-4-5-20251001"),
+                  prompt: `Analyze this exchange and extract any facts worth remembering about the user for future conversations. Return a JSON array of memories, or an empty array if nothing is notable.
+
+Each memory should have:
+- "content": A concise statement (1 sentence)
+- "category": One of "preference", "insight", "question", "fact"
+- "importance": 1-10 (10 = critical business fact, 1 = minor detail)
+
+Only extract things that would be useful in future conversations. If nothing notable, return: []
+
+User: ${userText.slice(0, 500)}
+Assistant: ${text.slice(0, 500)}
+
+Return ONLY a JSON array, no markdown.`,
+                  maxOutputTokens: 300,
+                  temperature: 0,
+                });
+
+                const parsed = JSON.parse(extraction.text.trim());
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  for (const mem of parsed.slice(0, 3)) {
+                    if (mem.content && mem.category) {
+                      await saveMemory(
+                        supabase,
+                        userId,
+                        activeEventId,
+                        mem.content,
+                        mem.category,
+                        mem.importance || 5,
+                      );
+                    }
+                  }
+                }
+              } catch {
+                // Memory extraction is best-effort
+              }
+            }
+          } catch (saveErr) {
+            console.warn("[Cruze] Failed to save response to memory:", saveErr);
+          }
+        }
+      },
     });
 
     return result.toUIMessageStreamResponse();
@@ -1288,7 +1838,6 @@ export async function POST(req: NextRequest) {
   }
 
   } catch (fatalErr) {
-    // Outermost catch — nothing should reach here, but if it does, return a clean error
     console.error("[ChatBot] FATAL unhandled error:", fatalErr);
     return new Response(
       JSON.stringify({ error: "An unexpected error occurred. Please refresh and try again." }),

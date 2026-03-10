@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -9,17 +8,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
 import {
-  ArrowLeft,
   CalendarDays,
   DollarSign,
   MapPin,
@@ -27,14 +17,15 @@ import {
   TrendingUp,
   Users,
   Package,
-  ClipboardList,
   FileSpreadsheet,
-  ExternalLink,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { eventStatusColor } from "@/lib/constants/status-colors";
 import { OpenGoogleSheetButton } from "@/components/events/open-google-sheet-button";
 import { LegacyUploadButton } from "@/components/events/legacy-spreadsheet-upload";
 import { DeleteEventButton } from "@/components/events/delete-event-button";
+import { EventSubNav } from "@/components/events/event-sub-nav";
+import { StatCard } from "@/components/ui/stat-card";
 import type { Database } from "@/types/database";
 
 type Event = Database["public"]["Tables"]["events"]["Row"];
@@ -60,7 +51,7 @@ export default async function EventOverviewPage({
   const event: Event = data;
 
   // Fetch all data in parallel
-  const [inventoryRes, dealsRes, metricsRes, rosterRes] = await Promise.all([
+  const [inventoryRes, dealsRes, rosterRes] = await Promise.all([
     supabase
       .from("vehicle_inventory")
       .select("*")
@@ -72,11 +63,6 @@ export default async function EventOverviewPage({
       .eq("event_id", eventId)
       .order("deal_number", { ascending: true }),
     supabase
-      .from("daily_metrics")
-      .select("*")
-      .eq("event_id", eventId)
-      .order("sale_day", { ascending: true }),
-    supabase
       .from("roster")
       .select("*")
       .eq("event_id", eventId),
@@ -84,7 +70,6 @@ export default async function EventOverviewPage({
 
   const vehicles = inventoryRes.data ?? [];
   const deals = dealsRes.data ?? [];
-  const metrics = metricsRes.data ?? [];
   const roster = rosterRes.data ?? [];
 
   // Compute KPIs
@@ -111,13 +96,6 @@ export default async function EventOverviewPage({
   const avgPvr =
     totalDeals > 0 ? totalGross / totalDeals : 0;
 
-  const statusColor: Record<string, string> = {
-    draft: "bg-yellow-100 text-yellow-800",
-    active: "bg-green-100 text-green-800",
-    completed: "bg-blue-100 text-blue-800",
-    cancelled: "bg-red-100 text-red-800",
-  };
-
   const locationParts = [
     event.dealer_name,
     event.address,
@@ -130,20 +108,7 @@ export default async function EventOverviewPage({
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <div className="flex items-center gap-2 mb-2">
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/dashboard/events">
-              <ArrowLeft className="h-4 w-4" />
-              Back to Events
-            </Link>
-          </Button>
-          <Button variant="outline" size="sm" asChild>
-            <Link href={`/dashboard/events/${eventId}/recap`}>
-              <ClipboardList className="h-4 w-4" />
-              Event Recap
-            </Link>
-          </Button>
-        </div>
+        <EventSubNav eventId={eventId} current="overview" />
         <div className="flex items-start justify-between">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
@@ -152,7 +117,7 @@ export default async function EventOverviewPage({
               </h1>
               <Badge
                 variant="secondary"
-                className={statusColor[event.status]}
+                className={eventStatusColor(event.status)}
               >
                 {event.status}
               </Badge>
@@ -234,190 +199,69 @@ export default async function EventOverviewPage({
 
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Deals</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{totalDeals}</p>
-            <p className="text-xs text-muted-foreground">
-              {fundedDeals} funded
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Gross</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{formatCurrency(totalGross)}</p>
-            <p className="text-xs text-muted-foreground">
-              Front: {formatCurrency(totalFrontGross)} · Back:{" "}
-              {formatCurrency(totalBackGross)}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Avg PVR</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{formatCurrency(avgPvr)}</p>
-            <p className="text-xs text-muted-foreground">per vehicle retailed</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Inventory</CardTitle>
-            <Car className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{totalVehicles}</p>
-            <p className="text-xs text-muted-foreground">
-              {availableVehicles} available · {soldVehicles} sold
-            </p>
-          </CardContent>
-        </Card>
+        <StatCard
+          label="Total Deals"
+          value={totalDeals}
+          icon={TrendingUp}
+          subtitle={`${fundedDeals} funded`}
+        />
+        <StatCard
+          label="Total Gross"
+          value={formatCurrency(totalGross)}
+          icon={DollarSign}
+          subtitle={`Front: ${formatCurrency(totalFrontGross)} · Back: ${formatCurrency(totalBackGross)}`}
+        />
+        <StatCard
+          label="Avg PVR"
+          value={formatCurrency(avgPvr)}
+          icon={DollarSign}
+          subtitle="per vehicle retailed"
+        />
+        <StatCard
+          label="Inventory"
+          value={totalVehicles}
+          icon={Car}
+          subtitle={`${availableVehicles} available · ${soldVehicles} sold`}
+        />
       </div>
 
-      {/* Recent Deals */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5" />
-            Recent Deals
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {deals.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No deals logged yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>#</TableHead>
-                  <TableHead>Vehicle</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Salesperson</TableHead>
-                  <TableHead className="text-right">Front</TableHead>
-                  <TableHead className="text-right">Back</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {deals.slice(0, 10).map((deal) => (
-                  <TableRow key={deal.id}>
-                    <TableCell className="font-medium">
-                      {deal.deal_number ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      {deal.vehicle_year} {deal.vehicle_make}{" "}
-                      {deal.vehicle_model}
-                    </TableCell>
-                    <TableCell>{deal.customer_name ?? "—"}</TableCell>
-                    <TableCell>{deal.salesperson ?? "—"}</TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(deal.front_gross ?? 0)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(deal.back_gross ?? 0)}
-                    </TableCell>
-                    <TableCell className="text-right font-bold">
-                      {formatCurrency(deal.total_gross ?? 0)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="secondary"
-                        className={
-                          deal.status === "funded"
-                            ? "bg-green-100 text-green-800"
-                            : deal.status === "pending"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-red-100 text-red-800"
-                        }
-                      >
-                        {deal.status}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Inventory Summary */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <Package className="h-5 w-5" />
-            Inventory ({totalVehicles})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {vehicles.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No vehicles in inventory yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Hat#</TableHead>
-                  <TableHead>Stock#</TableHead>
-                  <TableHead>Vehicle</TableHead>
-                  <TableHead>Color</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead className="text-right">Ask 120%</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {vehicles.slice(0, 15).map((v) => (
-                  <TableRow key={v.id}>
-                    <TableCell className="font-medium">
-                      {v.hat_number ?? "—"}
-                    </TableCell>
-                    <TableCell>{v.stock_number ?? "—"}</TableCell>
-                    <TableCell>
-                      {v.year} {v.make} {v.model}
-                      {v.trim ? ` ${v.trim}` : ""}
-                    </TableCell>
-                    <TableCell>{v.color ?? "—"}</TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(v.acquisition_cost ?? 0)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatCurrency(v.asking_price_120 ?? 0)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="secondary"
-                        className={
-                          v.status === "available"
-                            ? "bg-green-100 text-green-800"
-                            : v.status === "sold"
-                              ? "bg-blue-100 text-blue-800"
-                              : v.status === "hold"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-gray-100 text-gray-800"
-                        }
-                      >
-                        {v.status}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      {/* Quick-access link cards (replaces static preview tables) */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Link href={`/dashboard/deals`}>
+          <Card className="group cursor-pointer transition-colors hover:border-primary/50">
+            <CardContent className="flex items-center gap-4 p-6">
+              <div className="rounded-lg bg-primary/10 p-3">
+                <TrendingUp className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <p className="text-lg font-semibold group-hover:text-primary transition-colors">
+                  Deal Log
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {totalDeals} deals · {fundedDeals} funded · {formatCurrency(totalGross)} gross
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href={`/dashboard/inventory`}>
+          <Card className="group cursor-pointer transition-colors hover:border-primary/50">
+            <CardContent className="flex items-center gap-4 p-6">
+              <div className="rounded-lg bg-primary/10 p-3">
+                <Package className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <p className="text-lg font-semibold group-hover:text-primary transition-colors">
+                  Inventory
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {totalVehicles} vehicles · {availableVehicles} available · {soldVehicles} sold
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      </div>
 
       {/* Team */}
       {roster.length > 0 && (

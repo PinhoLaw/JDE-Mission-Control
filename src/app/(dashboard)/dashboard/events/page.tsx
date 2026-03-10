@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays, MapPin, Plus, FileSpreadsheet, ExternalLink } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { eventStatusColor } from "@/lib/constants/status-colors";
 import { CreateFromTemplateDialog } from "@/components/events/create-from-template-dialog";
 
 export default async function EventsPage() {
@@ -26,13 +27,6 @@ export default async function EventsPage() {
     const dateB = b.end_date || b.start_date || "";
     return dateB.localeCompare(dateA);
   });
-
-  const statusColor: Record<string, string> = {
-    draft: "bg-yellow-100 text-yellow-800",
-    active: "bg-green-100 text-green-800",
-    completed: "bg-blue-100 text-blue-800",
-    cancelled: "bg-red-100 text-red-800",
-  };
 
   return (
     <div className="space-y-6">
@@ -80,7 +74,7 @@ export default async function EventsPage() {
                     <CardTitle className="text-lg">{event.name}</CardTitle>
                     <Badge
                       variant="secondary"
-                      className={statusColor[event.status]}
+                      className={eventStatusColor(event.status)}
                     >
                       {event.status}
                     </Badge>

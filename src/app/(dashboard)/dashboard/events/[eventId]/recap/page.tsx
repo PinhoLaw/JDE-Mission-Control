@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEvent } from "@/providers/event-provider";
 import { createClient } from "@/lib/supabase/client";
@@ -28,11 +27,10 @@ import {
   FileSpreadsheet,
   FileText,
   Save,
-  ArrowLeft,
-  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
+import { EventSubNav } from "@/components/events/event-sub-nav";
 
 // ─── Types ───────────────────────────────────────────────
 interface SpSummary {
@@ -42,19 +40,6 @@ interface SpSummary {
   closePct: number;
   gross: number;
   commission: number;
-}
-
-// ─── Helpers ─────────────────────────────────────────────
-function fmtCurrency(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(n);
-}
-
-function fmtPct(n: number): string {
-  return `${(n * 100).toFixed(0)}%`;
 }
 
 // ═════════════════════════════════════════════════════════
@@ -407,20 +392,7 @@ export default function RecapPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/dashboard/events">
-                <ArrowLeft className="h-4 w-4" />
-                Events
-              </Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/dashboard/events/${eventId}/overview`}>
-                <BarChart3 className="h-4 w-4" />
-                Overview
-              </Link>
-            </Button>
-          </div>
+          <EventSubNav eventId={eventId} current="recap" />
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
             Event Recap
           </h1>
@@ -488,7 +460,7 @@ export default function RecapPage() {
                         TOTAL COMMISSIONABLE GROSS
                       </TableCell>
                       <TableCell className="text-right font-mono font-bold text-base">
-                        {fmtCurrency(pnl.totalCommissionableGross)}
+                        {formatCurrency(pnl.totalCommissionableGross)}
                       </TableCell>
                     </TableRow>
 
@@ -512,7 +484,7 @@ export default function RecapPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-mono text-red-600 dark:text-red-400">
-                        - {fmtCurrency(pnl.jdeCommission)}
+                        - {formatCurrency(pnl.jdeCommission)}
                       </TableCell>
                     </TableRow>
 
@@ -576,7 +548,7 @@ export default function RecapPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono text-green-600 dark:text-green-400">
-                        + {fmtCurrency(pnl.nonCommGross)}
+                        + {formatCurrency(pnl.nonCommGross)}
                       </TableCell>
                     </TableRow>
 
@@ -586,7 +558,7 @@ export default function RecapPage() {
                         TOTAL SALE GROSS
                       </TableCell>
                       <TableCell className="text-right font-mono font-bold text-base">
-                        {fmtCurrency(pnl.totalSaleGross)}
+                        {formatCurrency(pnl.totalSaleGross)}
                       </TableCell>
                     </TableRow>
 
@@ -594,7 +566,7 @@ export default function RecapPage() {
                     <TableRow>
                       <TableCell className="font-medium">REPS COMMISSIONS</TableCell>
                       <TableCell className="text-right font-mono text-red-600 dark:text-red-400">
-                        - {fmtCurrency(pnl.repsCommissions)}
+                        - {formatCurrency(pnl.repsCommissions)}
                       </TableCell>
                     </TableRow>
 
@@ -602,7 +574,7 @@ export default function RecapPage() {
                     <TableRow className={greenRow}>
                       <TableCell className="font-bold text-base">VARIABLE NET</TableCell>
                       <TableCell className="text-right font-mono font-bold text-base">
-                        {fmtCurrency(pnl.variableNet)}
+                        {formatCurrency(pnl.variableNet)}
                       </TableCell>
                     </TableRow>
 
@@ -610,7 +582,7 @@ export default function RecapPage() {
                     <TableRow className={greenRow}>
                       <TableCell className="font-bold text-base">TOTAL NET</TableCell>
                       <TableCell className="text-right font-mono font-bold text-base">
-                        {fmtCurrency(pnl.totalNet)}
+                        {formatCurrency(pnl.totalNet)}
                       </TableCell>
                     </TableRow>
                   </TableBody>
@@ -712,10 +684,10 @@ export default function RecapPage() {
                           )}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm">
-                          {fmtCurrency(sp.gross)}
+                          {formatCurrency(sp.gross)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm text-green-700 dark:text-green-400">
-                          {fmtCurrency(sp.commission)}
+                          {formatCurrency(sp.commission)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -737,10 +709,10 @@ export default function RecapPage() {
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono font-bold">
-                        {fmtCurrency(spTotals.gross)}
+                        {formatCurrency(spTotals.gross)}
                       </TableCell>
                       <TableCell className="text-right font-mono font-bold text-green-700 dark:text-green-400">
-                        {fmtCurrency(spTotals.commission)}
+                        {formatCurrency(spTotals.commission)}
                       </TableCell>
                     </TableRow>
                   </TableBody>

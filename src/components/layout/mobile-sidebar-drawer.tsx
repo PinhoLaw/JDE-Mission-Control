@@ -12,37 +12,9 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import {
-  Gauge,
-  CalendarDays,
-  Package,
-  Handshake,
-  Megaphone,
-  Users,
-  Settings,
-  BarChart3,
-  DollarSign,
-  ScrollText,
-  Activity,
-  Menu,
-} from "lucide-react";
+import { Gauge, Menu } from "lucide-react";
 import { useState } from "react";
-
-const navigation = [
-  { name: "Dashboard", href: "/dashboard", icon: Gauge },
-  { name: "Events", href: "/dashboard/events", icon: CalendarDays },
-];
-
-const moduleNav = [
-  { name: "Inventory", href: "/dashboard/inventory", icon: Package },
-  { name: "Deal Log", href: "/dashboard/deals", icon: Handshake },
-  { name: "Roster", href: "/dashboard/roster", icon: Users },
-  { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
-  { name: "Commissions", href: "/dashboard/commissions", icon: DollarSign },
-  { name: "Performance", href: "/dashboard/performance", icon: BarChart3 },
-  { name: "Audit Log", href: "/dashboard/audit", icon: ScrollText },
-  { name: "Monitoring", href: "/dashboard/monitoring", icon: Activity },
-];
+import { GENERAL_NAV, MODULE_NAV, SETTINGS_NAV } from "@/lib/constants/navigation";
 
 export function MobileSidebarDrawer() {
   const pathname = usePathname();
@@ -72,7 +44,7 @@ export function MobileSidebarDrawer() {
           <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             General
           </p>
-          {navigation.map((item) => {
+          {GENERAL_NAV.map((item) => {
             const isActive =
               item.href === "/dashboard"
                 ? pathname === item.href
@@ -100,7 +72,7 @@ export function MobileSidebarDrawer() {
           <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Modules
           </p>
-          {moduleNav.map((item) => {
+          {MODULE_NAV.map((item) => {
             const isActive = pathname.startsWith(item.href);
             return (
               <Link
@@ -123,17 +95,17 @@ export function MobileSidebarDrawer() {
 
         <div className="border-t px-3 py-4">
           <Link
-            href="/dashboard/settings"
+            href={SETTINGS_NAV.href}
             onClick={() => setOpen(false)}
             className={cn(
               "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              pathname === "/dashboard/settings"
+              pathname === SETTINGS_NAV.href
                 ? "bg-accent text-accent-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
             )}
           >
-            <Settings className="h-4 w-4" />
-            Settings
+            <SETTINGS_NAV.icon className="h-4 w-4" />
+            {SETTINGS_NAV.name}
           </Link>
         </div>
       </SheetContent>

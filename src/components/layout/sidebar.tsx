@@ -3,40 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  Gauge,
-  CalendarDays,
-  Package,
-  Handshake,
-  Megaphone,
-  Users,
-  Settings,
-  BarChart3,
-  DollarSign,
-  ScrollText,
-  Activity,
-  ClipboardList,
-  Trophy,
-} from "lucide-react";
+import { Gauge } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-
-const navigation = [
-  { name: "Dashboard", href: "/dashboard", icon: Gauge },
-  { name: "Events", href: "/dashboard/events", icon: CalendarDays },
-];
-
-const moduleNav = [
-  { name: "Inventory", href: "/dashboard/inventory", icon: Package },
-  { name: "Deal Log", href: "/dashboard/deals", icon: Handshake },
-  { name: "Roster", href: "/dashboard/roster", icon: Users },
-  { name: "Daily Metrics", href: "/dashboard/daily-metrics", icon: ClipboardList },
-  { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
-  { name: "Commissions", href: "/dashboard/commissions", icon: DollarSign },
-  { name: "Performance", href: "/dashboard/performance", icon: BarChart3 },
-  { name: "Achievements", href: "/dashboard/achievements", icon: Trophy },
-  { name: "Audit Log", href: "/dashboard/audit", icon: ScrollText },
-  { name: "Monitoring", href: "/dashboard/monitoring", icon: Activity },
-];
+import { GENERAL_NAV, MODULE_NAV, SETTINGS_NAV } from "@/lib/constants/navigation";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -60,7 +29,7 @@ export function Sidebar() {
         <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           General
         </p>
-        {navigation.map((item) => {
+        {GENERAL_NAV.map((item) => {
           const isActive =
             item.href === "/dashboard"
               ? pathname === item.href
@@ -87,7 +56,7 @@ export function Sidebar() {
         <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Modules
         </p>
-        {moduleNav.map((item) => {
+        {MODULE_NAV.map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
             <Link
@@ -110,16 +79,16 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t px-3 py-4">
         <Link
-          href="/dashboard/settings"
+          href={SETTINGS_NAV.href}
           className={cn(
             "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-            pathname === "/dashboard/settings"
+            pathname === SETTINGS_NAV.href
               ? "bg-sidebar-accent text-sidebar-foreground"
               : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
           )}
         >
-          <Settings className="h-4 w-4" />
-          Settings
+          <SETTINGS_NAV.icon className="h-4 w-4" />
+          {SETTINGS_NAV.name}
         </Link>
       </div>
     </aside>

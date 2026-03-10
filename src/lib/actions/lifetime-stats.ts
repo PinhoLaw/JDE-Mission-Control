@@ -80,7 +80,7 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
         .in("event_id", eventIds),
       supabase
         .from("v_event_kpis")
-        .select("event_id, total_deals, total_gross, avg_pvr")
+        .select("event_id, total_deals, total_gross")
         .in("event_id", eventIds),
     ]);
 
@@ -185,14 +185,9 @@ export async function getLifetimeStats(): Promise<LifetimeStats> {
     const totalGross = dmGross + importedGross;
     const totalUps = dmUps + upsOnlyTotal; // Ups from both real daily data + computed rows
 
-    // PVR: average of per-event avg_pvr values (all events, not per-day)
-    const pvrValues = kpis
-      .map((k) => (k.avg_pvr as number) ?? 0)
-      .filter((v) => v > 0);
-    const avgPvr =
-      pvrValues.length > 0
-        ? pvrValues.reduce((s, v) => s + v, 0) / pvrValues.length
-        : 0;
+    // PVR: weighted average across all deals (totalGross / totalUnits).
+    // Previously this was average-of-averages which over-weights small events.
+    const avgPvr = totalUnits > 0 ? totalGross / totalUnits : 0;
 
     return {
       avgUpsPerDay: upsDays > 0 ? Math.round(totalUps / upsDays) : 0,

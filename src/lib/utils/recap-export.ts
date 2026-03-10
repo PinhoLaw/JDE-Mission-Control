@@ -8,6 +8,7 @@ import {
   pdf,
 } from "@react-pdf/renderer";
 import { createElement } from "react";
+import { formatCurrency, formatPercent } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -45,18 +46,6 @@ export interface RecapExportData {
 }
 
 // ─── Helpers ─────────────────────────────────────────────
-
-function fmt(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(n);
-}
-
-function fmtPct(n: number): string {
-  return `${(n * 100).toFixed(0)}%`;
-}
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -110,7 +99,7 @@ export async function generateRecapExcel(data: RecapExportData) {
 
   const pnlRows: [string, number, boolean?][] = [
     ["TOTAL COMMISSIONABLE GROSS", data.pnl.totalCommissionableGross],
-    [`JDE COMMISSION [${fmtPct(data.pnl.jdePct)}]`, -data.pnl.jdeCommission],
+    [`JDE COMMISSION [${formatPercent(data.pnl.jdePct)}]`, -data.pnl.jdeCommission],
     ["MARKETING COST", -data.marketingCost],
     ["NON COMM GROSS", data.pnl.nonCommGross],
     ["TOTAL SALE GROSS", data.pnl.totalSaleGross, true],
@@ -253,18 +242,18 @@ const s = StyleSheet.create({
 
 function RecapPDFDocument({ data }: { data: RecapExportData }) {
   const pnlLines: { label: string; value: string; type: "normal" | "red" | "green" | "greenRow" | "sep" }[] = [
-    { label: "TOTAL COMMISSIONABLE GROSS", value: fmt(data.pnl.totalCommissionableGross), type: "normal" },
-    { label: `JDE COMMISSION [${fmtPct(data.pnl.jdePct)}]`, value: `- ${fmt(data.pnl.jdeCommission)}`, type: "red" },
-    { label: "MARKETING COST", value: `- ${fmt(data.marketingCost)}`, type: "red" },
-    { label: "NON COMM GROSS", value: `+ ${fmt(data.pnl.nonCommGross)}`, type: "green" },
-    { label: "TOTAL SALE GROSS", value: fmt(data.pnl.totalSaleGross), type: "greenRow" },
-    { label: "REPS COMMISSIONS", value: `- ${fmt(data.pnl.repsCommissions)}`, type: "red" },
-    { label: "VARIABLE NET", value: fmt(data.pnl.variableNet), type: "greenRow" },
-    { label: "TOTAL NET", value: fmt(data.pnl.totalNet), type: "greenRow" },
+    { label: "TOTAL COMMISSIONABLE GROSS", value: formatCurrency(data.pnl.totalCommissionableGross), type: "normal" },
+    { label: `JDE COMMISSION [${formatPercent(data.pnl.jdePct)}]`, value: `- ${formatCurrency(data.pnl.jdeCommission)}`, type: "red" },
+    { label: "MARKETING COST", value: `- ${formatCurrency(data.marketingCost)}`, type: "red" },
+    { label: "NON COMM GROSS", value: `+ ${formatCurrency(data.pnl.nonCommGross)}`, type: "green" },
+    { label: "TOTAL SALE GROSS", value: formatCurrency(data.pnl.totalSaleGross), type: "greenRow" },
+    { label: "REPS COMMISSIONS", value: `- ${formatCurrency(data.pnl.repsCommissions)}`, type: "red" },
+    { label: "VARIABLE NET", value: formatCurrency(data.pnl.variableNet), type: "greenRow" },
+    { label: "TOTAL NET", value: formatCurrency(data.pnl.totalNet), type: "greenRow" },
     { label: "", value: "", type: "sep" },
-    { label: "MIS EXPENSES", value: fmt(data.miscExpenses), type: "normal" },
-    { label: "HELIUM / PRIZE GIVEAWAYS ETC", value: fmt(data.prizeGiveaways), type: "normal" },
-    { label: "JDE COMMISSION", value: fmt(data.pnl.jdeCommission), type: "normal" },
+    { label: "MIS EXPENSES", value: formatCurrency(data.miscExpenses), type: "normal" },
+    { label: "HELIUM / PRIZE GIVEAWAYS ETC", value: formatCurrency(data.prizeGiveaways), type: "normal" },
+    { label: "JDE COMMISSION", value: formatCurrency(data.pnl.jdeCommission), type: "normal" },
   ];
 
   return createElement(
@@ -346,8 +335,8 @@ function RecapPDFDocument({ data }: { data: RecapExportData }) {
               { key: sp.name, style: s.spRow },
               createElement(Text, { style: { ...s.cell, ...s.spName } }, sp.name),
               createElement(Text, { style: { ...s.cell, ...s.spUnits } }, sp.units % 1 === 0 ? String(sp.units) : sp.units.toFixed(1)),
-              createElement(Text, { style: { ...s.cell, ...s.spGross } }, fmt(sp.gross)),
-              createElement(Text, { style: { ...s.cell, ...s.spComm, color: "#16a34a" } }, fmt(sp.commission)),
+              createElement(Text, { style: { ...s.cell, ...s.spGross } }, formatCurrency(sp.gross)),
+              createElement(Text, { style: { ...s.cell, ...s.spComm, color: "#16a34a" } }, formatCurrency(sp.commission)),
             ),
           ),
           // Total
@@ -356,8 +345,8 @@ function RecapPDFDocument({ data }: { data: RecapExportData }) {
             { style: s.spTotalRow },
             createElement(Text, { style: { ...s.cellBold, ...s.spName } }, "TOTAL REPS"),
             createElement(Text, { style: { ...s.cellBold, ...s.spUnits } }, data.spTotals.units % 1 === 0 ? String(data.spTotals.units) : data.spTotals.units.toFixed(1)),
-            createElement(Text, { style: { ...s.cellBold, ...s.spGross } }, fmt(data.spTotals.gross)),
-            createElement(Text, { style: { ...s.cellBold, ...s.spComm, color: "#16a34a" } }, fmt(data.spTotals.commission)),
+            createElement(Text, { style: { ...s.cellBold, ...s.spGross } }, formatCurrency(data.spTotals.gross)),
+            createElement(Text, { style: { ...s.cellBold, ...s.spComm, color: "#16a34a" } }, formatCurrency(data.spTotals.commission)),
           ),
         ),
       ),

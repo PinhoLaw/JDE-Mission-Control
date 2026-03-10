@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { eventStatusColor } from "@/lib/constants/status-colors";
 
 export function EventSelector() {
   const { currentEvent, availableEvents, isLoading, setCurrentEvent } =
@@ -28,13 +29,6 @@ export function EventSelector() {
       </div>
     );
   }
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-    draft: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-    completed: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-    cancelled: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-  };
 
   return (
     <Select
@@ -59,7 +53,7 @@ export function EventSelector() {
               )}
               <Badge
                 variant="secondary"
-                className={`ml-auto text-[10px] px-1.5 py-0 ${statusColors[event.status]}`}
+                className={`ml-auto text-[10px] px-1.5 py-0 ${eventStatusColor(event.status)}`}
               >
                 {event.status}
               </Badge>

@@ -21,6 +21,20 @@ export function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
+/** Currency with no cents — clean hero/summary display */
+export function formatCurrencyNoCents(amount: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+/** Decimal ratio → display percentage, e.g. 0.25 → "25%" */
+export function formatPercent(ratio: number): string {
+  return `${(ratio * 100).toFixed(0)}%`;
+}
+
 /**
  * Get the base URL for the current environment.
  * Handles: local dev, Vercel preview, Vercel production.

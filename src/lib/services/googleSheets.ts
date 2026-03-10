@@ -976,17 +976,21 @@ function parseSheetDate(raw: string): string | null {
 // account (mstopperich@gmail.com). This avoids service account storage
 // quota limits — the script runs as the user and creates sheets in
 // their personal Drive.
-//
-// See scripts/google-apps-script.js for the Apps Script source code.
+// ─────────────────────────────────────────────────────────────
+// Create event sheet — calls Apps Script web app running as mstopperich@gmail.com
+// The Apps Script copies the master template into "JDE Mission Control Events"
+// folder in the user's personal Drive (31 TB), shares it publicly, and shares
+// with the service account so it can read/write.
 // ─────────────────────────────────────────────────────────────
 
 /**
  * Create a new Google Sheet for an event by calling the Apps Script web app.
  *
- * The Apps Script copies the master template, renames it, shares it
- * publicly, and returns the new sheet ID + URL.
+ * The Apps Script runs as mstopperich@gmail.com, copies the master template,
+ * moves it to the "JDE Mission Control Events" folder, shares it publicly,
+ * and shares with the service account.
  *
- * Requires env var: GOOGLE_APPS_SCRIPT_URL (the deployed web app URL)
+ * Requires env var: GOOGLE_APPS_SCRIPT_URL
  *
  * @param eventName — used to title the new sheet: "${eventName} - JDE Mission Control"
  * @returns { sheetId, sheetUrl }
@@ -1014,8 +1018,6 @@ export async function createEventSheetFromTemplate(
       action: "createSheet",
       eventName,
     }),
-    // Apps Script redirects from the script URL to the execution URL;
-    // Node fetch follows redirects by default but needs to re-POST
     redirect: "follow",
   });
 

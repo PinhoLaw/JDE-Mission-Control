@@ -1,3 +1,6 @@
+// CRUZE UPGRADE — OMNISCIENT MODE
+// Enhanced floating chat bubble with pulse indicator
+
 "use client";
 
 import { MessageCircle, X } from "lucide-react";
@@ -17,6 +20,8 @@ export function ChatBubble() {
         isOpen
           ? "bg-muted text-muted-foreground hover:bg-muted/80"
           : "bg-primary text-primary-foreground hover:bg-primary/90",
+        // CRUZE UPGRADE — subtle glow when closed
+        !isOpen && "shadow-primary/20 shadow-xl",
       )}
       aria-label={isOpen ? "Close chat" : "Open chat"}
     >

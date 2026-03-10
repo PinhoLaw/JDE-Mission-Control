@@ -8,6 +8,7 @@ import {
   pdf,
 } from "@react-pdf/renderer";
 import { createElement } from "react";
+import { formatCurrency, formatPercent } from "@/lib/utils";
 
 // ─── Shared types ────────────────────────────────────────
 
@@ -32,18 +33,6 @@ interface ExportMeta {
 }
 
 // ─── Helpers ─────────────────────────────────────────────
-
-function fmtCurrency(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(n);
-}
-
-function fmtPct(n: number): string {
-  return `${(n * 100).toFixed(0)}%`;
-}
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -77,7 +66,7 @@ export async function generateCommissionExcel(
     ? `Date range: ${meta.dateFrom ?? "—"} to ${meta.dateTo ?? "—"}`
     : "All dates";
   const subRow = ws.addRow([
-    `Generated ${new Date().toLocaleDateString("en-US")} | ${dateStr} | Default rate: ${fmtPct(meta.defaultRate)}`,
+    `Generated ${new Date().toLocaleDateString("en-US")} | ${dateStr} | Default rate: ${formatPercent(meta.defaultRate)}`,
   ]);
   subRow.font = { italic: true, size: 10, color: { argb: "FF666666" } };
   ws.mergeCells("A2:J2");
@@ -115,7 +104,7 @@ export async function generateCommissionExcel(
   for (const c of data) {
     const row = ws.addRow([
       c.name,
-      fmtPct(c.commissionRate),
+      formatPercent(c.commissionRate),
       c.fullDeals,
       c.splitDeals,
       c.weightedFrontGross,
@@ -399,7 +388,7 @@ function CommissionPDFDocument({
         createElement(
           Text,
           { style: pdfStyles.subtitle },
-          `${meta.eventName} | ${dateRange} | Default rate: ${fmtPct(meta.defaultRate)} | Generated ${new Date().toLocaleDateString("en-US")}`,
+          `${meta.eventName} | ${dateRange} | Default rate: ${formatPercent(meta.defaultRate)} | Generated ${new Date().toLocaleDateString("en-US")}`,
         ),
       ),
       // Summary boxes
@@ -413,7 +402,7 @@ function CommissionPDFDocument({
           createElement(
             Text,
             { style: { ...pdfStyles.summaryValue, color: "#16a34a" } },
-            fmtCurrency(totals.commission),
+            formatCurrency(totals.commission),
           ),
         ),
         createElement(
@@ -430,7 +419,7 @@ function CommissionPDFDocument({
             Text,
             { style: pdfStyles.summaryValue },
             data.length > 0
-              ? fmtCurrency(totals.commission / data.length)
+              ? formatCurrency(totals.commission / data.length)
               : "$0.00",
           ),
         ),
@@ -465,14 +454,14 @@ function CommissionPDFDocument({
         ...data.map((c, rowIdx) => {
           const cells = [
             c.name,
-            fmtPct(c.commissionRate),
+            formatPercent(c.commissionRate),
             String(c.fullDeals),
             String(c.splitDeals),
-            fmtCurrency(c.weightedFrontGross),
-            fmtCurrency(c.totalBackGross),
-            fmtCurrency(c.totalGross),
-            fmtCurrency(c.avgPVR),
-            fmtCurrency(c.commission),
+            formatCurrency(c.weightedFrontGross),
+            formatCurrency(c.totalBackGross),
+            formatCurrency(c.totalGross),
+            formatCurrency(c.avgPVR),
+            formatCurrency(c.commission),
             String(c.washouts),
           ];
           return createElement(
@@ -510,11 +499,11 @@ function CommissionPDFDocument({
             "—",
             String(totals.fullDeals),
             String(totals.splitDeals),
-            fmtCurrency(totals.weightedFrontGross),
-            fmtCurrency(totals.totalBackGross),
-            fmtCurrency(totals.totalGross),
+            formatCurrency(totals.weightedFrontGross),
+            formatCurrency(totals.totalBackGross),
+            formatCurrency(totals.totalGross),
             "—",
-            fmtCurrency(totals.commission),
+            formatCurrency(totals.commission),
             String(totals.washouts),
           ].map((val, i) =>
             createElement(

@@ -44,14 +44,7 @@ export default async function DashboardPage() {
    generous breathing room, and instant scannability.
    ═══════════════════════════════════════════════════════════ */
 
-/** Currency without cents — clean hero display */
-function heroMoney(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(n);
-}
+import { formatCurrencyNoCents } from "@/lib/utils";
 
 async function HeroSection() {
   const stats = await getLifetimeStats();
@@ -67,7 +60,7 @@ async function HeroSection() {
     },
     {
       label: "Gross / Day",
-      value: heroMoney(stats.avgGrossPerDay),
+      value: formatCurrencyNoCents(stats.avgGrossPerDay),
       icon: DollarSign,
       iconBg: "bg-emerald-500/20",
       iconColor: "text-emerald-400",
@@ -76,7 +69,7 @@ async function HeroSection() {
     },
     {
       label: "Avg PVR",
-      value: heroMoney(stats.avgPvr),
+      value: formatCurrencyNoCents(stats.avgPvr),
       icon: Target,
       iconBg: "bg-emerald-500/20",
       iconColor: "text-emerald-400",
