@@ -1,0 +1,638 @@
+suite_name: "Cruze Import v1"
+version: "1.1"
+date: "2026-03-10"
+confirmation_phrase: "CONFIRM IMPORT"
+import_mode: "new_event_only"
+required_sections:
+  - deals
+  - inventory
+  - roster
+  - campaigns
+  - lenders
+total_tests: 40
+blocking_tests: 24
+non_blocking_tests: 16
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Happy Path
+# ─────────────────────────────────────────────────────────────────────────────
+
+tests:
+
+  - id: IMP-001
+    category: happy_path
+    title: Valid standardized XLSX upload
+    severity: critical
+    blocking: true
+    setup: >
+      Prepare a valid JDE standardized .xlsx with all 5 required sheets
+      (Deals, Inventory, Roster, Campaigns, Lenders), each with correct
+      headers and at least 1 data row.
+    action: >
+      Drag and drop the file into the Cruze chat window.
+    expected_result: >
+      Upload succeeds. Response includes importReady: true,
+      validationPassed: true, missingSections: [], fileHash (64-char hex).
+      All 5 sheets in analysis.sheets have autoReady: true and
+      confidenceScore >= 80.
+    notes: ""
+
+  - id: IMP-002
+    category: happy_path
+    title: Valid standardized CSV upload
+    severity: medium
+    blocking: false
+    setup: >
+      Prepare a .csv with headers matching one of the 5 section types.
+    action: >
+      Drag and drop the CSV into the chat window.
+    expected_result: >
+      Upload succeeds with analysis.type: "csv". Headers and rowCount
+      returned. CSV does NOT trigger XLSX scan pipeline, so importReady
+      and validationPassed are not set. CSV import via chat tool is not
+      supported in v1.
+    notes: "CSV is upload-supported but not import-supported in v1."
+
+  - id: IMP-003
+    category: happy_path
+    title: Event name collection
+    severity: critical
+    blocking: true
+    setup: >
+      Upload a valid standardized XLSX. Chat with Cruze about importing it.
+    action: >
+      When Cruze asks for an event name, provide "Lilliston CDJR March 2026".
+    expected_result: >
+      Cruze accepts the name, includes it in the preview, and proceeds
+      to ask for CONFIRM IMPORT.
+    notes: ""
+
+  - id: IMP-004
+    category: happy_path
+    title: Preview generation
+    severity: critical
+    blocking: true
+    setup: >
+      Upload a valid standardized XLSX. Begin import flow.
+    action: >
+      Observe the preview Cruze generates before asking for confirmation.
+    expected_result: >
+      Preview includes a table/list showing each section (name, type,
+      rows, confidence), proposed event name, total row count, and the
+      exact prompt to type CONFIRM IMPORT. Tool response contains
+      structured preview object with sections[], validationPassed,
+      missingSections, headerIssues, totalRows, summary.
+    notes: ""
+
+  - id: IMP-005
+    category: happy_path
+    title: Hard confirmation works
+    severity: critical
+    blocking: true
+    setup: >
+      Complete preview step with a valid file and valid event name.
+    action: >
+      Type exactly "CONFIRM IMPORT" in the chat.
+    expected_result: >
+      New event created in Supabase. Data imported into all 5 tables.
+      Cruze reports event name, event ID, section counts. verified.allMatch
+      is true. cruze_file_uploads record updated with importedAt,
+      importedEventId, importedEventName. Dashboard paths revalidated.
+    notes: ""
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Invalid File Handling
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-006
+    category: invalid_file
+    title: Random XLSX rejected
+    severity: high
+    blocking: true
+    setup: >
+      Prepare a .xlsx that is NOT a JDE standardized sheet (e.g., a generic
+      budget spreadsheet with unrelated columns).
+    action: >
+      Upload via chat. Ask Cruze to import it.
+    expected_result: >
+      validationPassed: false because not all 5 required section types are
+      detected. Import tool rejects with missing sections error listing
+      which sections are absent.
+    notes: ""
+
+  - id: IMP-007
+    category: invalid_file
+    title: Random CSV rejected
+    severity: medium
+    blocking: false
+    setup: >
+      Prepare a generic .csv (e.g., expense report) with no JDE headers.
+    action: >
+      Upload via chat. Ask Cruze to import it.
+    expected_result: >
+      Upload succeeds with type: "csv". Import tool rejects at importReady
+      gate: "doesn't appear to be a standardized JDE sales sheet."
+    notes: ""
+
+  - id: IMP-008
+    category: invalid_file
+    title: Missing required sheet
+    severity: critical
+    blocking: true
+    setup: >
+      Prepare a .xlsx with only 3 of 5 required sheets (e.g., Deals,
+      Inventory, Roster — missing Campaigns and Lenders).
+    action: >
+      Upload and attempt import.
+    expected_result: >
+      validationPassed: false. missingSections: ["campaigns", "lenders"].
+      Import tool blocks with: "This file is missing required sections:
+      campaigns, lenders."
+    notes: ""
+
+  - id: IMP-009
+    category: invalid_file
+    title: Header mismatch
+    severity: high
+    blocking: true
+    setup: >
+      Prepare a .xlsx with all 5 sheets present by name, but one sheet
+      has scrambled/incorrect column headers.
+    action: >
+      Upload and attempt import.
+    expected_result: >
+      Mismatched sheet gets autoReady: false, confidenceScore < 80.
+      headerIssues contains entry for that section. validationPassed: false.
+      Import blocked.
+    notes: ""
+
+  - id: IMP-010
+    category: invalid_file
+    title: Corrupted workbook
+    severity: medium
+    blocking: false
+    setup: >
+      Take a valid .xlsx and corrupt it (truncate file, rename .txt to .xlsx).
+    action: >
+      Upload via chat.
+    expected_result: >
+      scanXLSXForCruze() fails. Upload falls back to isStandardizedSheet:
+      false, importReady: false. File stored but cannot be imported.
+    notes: ""
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Event Name Validation
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-011
+    category: event_name
+    title: Blank event name
+    severity: high
+    blocking: true
+    setup: >
+      Upload valid standardized XLSX. Proceed to confirmation.
+    action: >
+      Call import tool with eventName: "".
+    expected_result: >
+      validateEventName("") returns {valid: false, error: "Event name
+      cannot be empty."}. Tool returns error.
+    notes: ""
+
+  - id: IMP-012
+    category: event_name
+    title: Whitespace-only event name
+    severity: high
+    blocking: true
+    setup: >
+      Same as IMP-011.
+    action: >
+      Call import tool with eventName: "   " (spaces only).
+    expected_result: >
+      Trimmed to "", same rejection as blank. Returns: "Invalid event
+      name: Event name cannot be empty."
+    notes: ""
+
+  - id: IMP-013
+    category: event_name
+    title: Too-long event name (>100 chars)
+    severity: medium
+    blocking: false
+    setup: >
+      Same as IMP-011.
+    action: >
+      Call import tool with 150-character eventName.
+    expected_result: >
+      Returns: "Invalid event name: Event name too long (max 100 chars)."
+    notes: ""
+
+  - id: IMP-014
+    category: event_name
+    title: Invalid characters in event name
+    severity: medium
+    blocking: false
+    setup: >
+      Same as IMP-011.
+    action: >
+      Call import tool with eventName containing <, >, {, }, |, \, ^, or `.
+    expected_result: >
+      Regex /[<>{}|\\^`]/ matches. Returns: "Invalid event name: Event
+      name contains invalid characters."
+    notes: "Test each invalid character individually for coverage."
+
+  - id: IMP-015
+    category: event_name
+    title: Valid historical event name
+    severity: low
+    blocking: false
+    setup: >
+      Same as IMP-011.
+    action: >
+      Call import tool with eventName: "Lilliston CDJR March 2026".
+    expected_result: >
+      Passes validation. Trimmed name stored in Supabase events table.
+      Event created successfully.
+    notes: ""
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Confirmation Enforcement
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-016
+    category: confirmation
+    title: Loose confirmation rejected ("yes")
+    severity: critical
+    blocking: true
+    setup: >
+      Complete preview with valid file and event name.
+    action: >
+      Type "yes" in chat (tool called with confirmed: "yes").
+    expected_result: >
+      Tool returns needsConfirmation: true with structured preview.
+      Import does NOT execute. No event created.
+    notes: ""
+
+  - id: IMP-017
+    category: confirmation
+    title: Partial confirmation rejected ("confirm")
+    severity: critical
+    blocking: true
+    setup: >
+      Same as IMP-016.
+    action: >
+      Type "confirm" (tool called with confirmed: "confirm").
+    expected_result: >
+      Rejected with needsConfirmation: true. No event created.
+    notes: ""
+
+  - id: IMP-018
+    category: confirmation
+    title: Wrong-case confirmation rejected ("confirm import")
+    severity: critical
+    blocking: true
+    setup: >
+      Same as IMP-016.
+    action: >
+      Type "confirm import" (lowercase).
+    expected_result: >
+      Case-sensitive comparison fails. Returns needsConfirmation: true.
+      No event created.
+    notes: ""
+
+  - id: IMP-019
+    category: confirmation
+    title: Exact confirmation accepted
+    severity: critical
+    blocking: true
+    setup: >
+      Same as IMP-016.
+    action: >
+      Type exactly "CONFIRM IMPORT".
+    expected_result: >
+      Tool proceeds past Gate 1. Import executes. New event created.
+    notes: ""
+
+  - id: IMP-020
+    category: confirmation
+    title: Confirmation without active file attachment
+    severity: high
+    blocking: true
+    setup: >
+      Open fresh chat session with NO file uploaded.
+    action: >
+      Type "CONFIRM IMPORT" directly or Cruze calls tool without file.
+    expected_result: >
+      Tool hits Gate 3: "No file attachment found." No event created.
+    notes: ""
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Duplicate / Replay Protection
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-021
+    category: duplicate_replay
+    title: Same-upload double confirmation
+    severity: critical
+    blocking: true
+    setup: >
+      Complete a full successful import (IMP-005). Keep same chat session
+      with same file attachment.
+    action: >
+      Type "CONFIRM IMPORT" again in same session.
+    expected_result: >
+      Tool queries cruze_file_uploads by fileId, finds importedAt set.
+      Returns: "This file was already imported as '[name]' (event [id])."
+      No second event created.
+    notes: ""
+
+  - id: IMP-022
+    category: duplicate_replay
+    title: Same file re-uploaded then confirmed
+    severity: high
+    blocking: true
+    setup: >
+      After IMP-021, drag and drop the exact same .xlsx into chat again
+      (creates new fileId, same fileHash).
+    action: >
+      Proceed through import flow and type "CONFIRM IMPORT".
+    expected_result: >
+      Hash-based dedup finds matching fileHash with importedAt set on a
+      different upload record. Returns: "This exact file was already
+      imported as '[name]'." No duplicate event created.
+    notes: ""
+
+  - id: IMP-023
+    category: duplicate_replay
+    title: Similar but not identical file accepted
+    severity: medium
+    blocking: false
+    setup: >
+      After successful import, modify original .xlsx (change one cell)
+      and save as new file.
+    action: >
+      Upload modified file and complete import flow.
+    expected_result: >
+      SHA-256 hash differs. Both dedup checks pass. Import proceeds
+      normally, creating a new event.
+    notes: ""
+
+  - id: IMP-024
+    category: duplicate_replay
+    title: Dedup storage unavailable (graceful degradation)
+    severity: low
+    blocking: false
+    setup: >
+      Simulate cruze_file_uploads table being unreachable (RLS block or
+      table missing).
+    action: >
+      Upload a file and attempt import.
+    expected_result: >
+      Both dedup checks silently skipped (try/catch with empty catch).
+      Import proceeds normally. No crash.
+    notes: "Dedup is best-effort, not a hard dependency."
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Execution / Data Integrity
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-025
+    category: execution
+    title: New event only — no existing-event path
+    severity: critical
+    blocking: true
+    setup: >
+      Review import tool schema and /api/chat/import endpoint code.
+    action: >
+      (1) Verify tool schema has no mode or existingEventId parameter.
+      (2) POST to /api/chat/import with mode=into_existing.
+    expected_result: >
+      (1) Tool schema only: confirmed, eventName, dealerName, status,
+      city, state. (2) REST endpoint returns 400: "Cruze Import v1 only
+      supports new event creation." (3) executeXLSXImport() type
+      signature only accepts mode: "new_event".
+    notes: ""
+
+  - id: IMP-026
+    category: execution
+    title: Required sections imported to correct tables
+    severity: critical
+    blocking: true
+    setup: >
+      Complete a successful import with valid standardized XLSX.
+    action: >
+      Query Supabase: sales_deals, vehicle_inventory, roster,
+      mail_tracking, lenders for new event ID.
+    expected_result: >
+      Each table has rows matching counts in import result. Counts match
+      verified object. allMatch: true.
+    notes: ""
+
+  - id: IMP-027
+    category: execution
+    title: Event config defaults initialized
+    severity: high
+    blocking: true
+    setup: >
+      Complete a successful import (new event).
+    action: >
+      Query event_config for the new event ID.
+    expected_result: >
+      Row exists with: doc_fee=0, pack_new=0, pack_used=0, tax_rate=0,
+      include_doc_fee_in_commission=false, rep_commission_pct=0.25,
+      jde_commission_pct=0.25.
+    notes: ""
+
+  - id: IMP-028
+    category: execution
+    title: Zero-row section behavior
+    severity: medium
+    blocking: false
+    setup: >
+      Prepare standardized XLSX where one section (e.g., Lenders) has
+      correct headers but zero data rows.
+    action: >
+      Upload and import.
+    expected_result: >
+      Sheet detected and passes confidence check if headers are correct.
+      0 rows imported for that section. verified count is 0.
+      allMatch: true (0 === 0). Import succeeds.
+    notes: ""
+
+  - id: IMP-029
+    category: execution
+    title: Import failure mid-run triggers cleanup
+    severity: high
+    blocking: true
+    setup: >
+      Simulate fatal error during import (e.g., missing service key,
+      network failure during executeImport).
+    action: >
+      Trigger the fatal error path.
+    expected_result: >
+      Catch block deletes newly created event via cascade delete. No
+      orphaned event. Tool returns: "Import failed: [error]".
+    notes: ""
+
+  - id: IMP-030
+    category: execution
+    title: Verification mismatch detected and reported
+    severity: medium
+    blocking: false
+    setup: >
+      Simulate count mismatch (e.g., DB trigger inserting extra rows,
+      or mock verification query).
+    action: >
+      Complete import where verified counts != expected.
+    expected_result: >
+      verified.allMatch: false. Errors include: "Verification: expected
+      counts differ from DB." Success message includes mismatch warning.
+      success field is false if any errors exist.
+    notes: ""
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Authentication / Permissions
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-031
+    category: auth
+    title: Unauthenticated upload blocked
+    severity: critical
+    blocking: true
+    setup: >
+      No valid auth session.
+    action: >
+      POST file to /api/chat/upload without authentication.
+    expected_result: >
+      401: {error: "Not authenticated"}. No file stored.
+    notes: ""
+
+  - id: IMP-032
+    category: auth
+    title: Unauthenticated import confirm blocked
+    severity: critical
+    blocking: true
+    setup: >
+      No valid auth session.
+    action: >
+      POST to /api/chat/import without authentication.
+    expected_result: >
+      401: {error: "Not authenticated"}. No event created.
+    notes: ""
+
+  - id: IMP-033
+    category: auth
+    title: Authenticated user import allowed
+    severity: critical
+    blocking: true
+    setup: >
+      Log in as valid user via Supabase Auth.
+    action: >
+      Complete full upload -> preview -> confirm -> import flow.
+    expected_result: >
+      All endpoints accept session. Import creates new event. User added
+      as owner via event_members.
+    notes: ""
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # UX / Messaging
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-034
+    category: ux
+    title: Invalid file guidance is actionable
+    severity: medium
+    blocking: false
+    setup: >
+      Upload non-standardized XLSX (missing sheets).
+    action: >
+      Attempt import and observe error message.
+    expected_result: >
+      Error lists specific missing sections by name. Explains all 5
+      are required. User knows exactly what to fix.
+    notes: ""
+
+  - id: IMP-035
+    category: ux
+    title: Preview is readable and complete
+    severity: medium
+    blocking: false
+    setup: >
+      Upload valid standardized XLSX, begin import flow.
+    action: >
+      Review preview.
+    expected_result: >
+      Shows each section with name, type, rows, confidence. Shows total
+      rows, event name, clear CONFIRM IMPORT instruction.
+    notes: ""
+
+  - id: IMP-036
+    category: ux
+    title: Success response is actionable
+    severity: medium
+    blocking: false
+    setup: >
+      Complete successful import.
+    action: >
+      Review success message.
+    expected_result: >
+      Includes new event name, section counts, total gross, guidance to
+      navigate to new event. Verification status is clear.
+    notes: ""
+
+  - id: IMP-037
+    category: ux
+    title: Duplicate block is understandable
+    severity: medium
+    blocking: false
+    setup: >
+      Complete import, then attempt same file again.
+    action: >
+      Observe duplicate-block error.
+    expected_result: >
+      Names the event file was already imported into. Explains how to
+      re-import if intentional (re-drop file). Not cryptic.
+    notes: ""
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Operational Checks
+  # ───────────────────────────────────────────────────────────────────────────
+
+  - id: IMP-038
+    category: operational
+    title: Build and type safety
+    severity: critical
+    blocking: true
+    setup: >
+      Clean working directory.
+    action: >
+      Run npx tsc --noEmit and npx next build.
+    expected_result: >
+      Both pass with 0 errors. No type regressions.
+    notes: ""
+
+  - id: IMP-039
+    category: operational
+    title: Large valid workbook performance
+    severity: medium
+    blocking: false
+    setup: >
+      Prepare valid standardized XLSX with 500+ rows per section (2500+ total).
+    action: >
+      Complete full import flow.
+    expected_result: >
+      Upload < 30s, import < 60s. File under 20MB. All rows imported.
+      Verified counts match. No timeout.
+    notes: ""
+
+  - id: IMP-040
+    category: operational
+    title: Service dependency failure
+    severity: medium
+    blocking: false
+    setup: >
+      Remove or invalidate SUPABASE_SERVICE_ROLE_KEY.
+    action: >
+      Attempt full import.
+    expected_result: >
+      createEventForImport() throws "Missing service role key". Fails
+      cleanly. No partial data. No orphaned state.
+    notes: ""
