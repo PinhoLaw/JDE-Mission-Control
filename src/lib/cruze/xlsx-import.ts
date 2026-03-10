@@ -32,6 +32,13 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 
+// ─── Cruze Import v1 — Capability Matrix Contract ───────────────────────────
+// CI-004/005: Required standardized sheets for a valid import
+const REQUIRED_SECTION_TYPES: TabType[] = ["deals", "inventory", "roster", "campaigns", "lenders"];
+
+// CI-009: Event name validation
+const EVENT_NAME_MAX_LENGTH = 100;
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface SheetPreview {
@@ -49,8 +56,14 @@ export interface XLSXScanResult {
   fileName: string;
   sheets: SheetPreview[];
   totalRows: number;
-  isStandardized: boolean; // true if we auto-detected known JDE sheet types
-  summary: string; // "47 deals, 120 vehicles, 8 roster members detected"
+  isStandardized: boolean;
+  /** CI-004: Did the file pass standardized structure validation? */
+  validationPassed: boolean;
+  /** CI-005: Which required sections are missing? */
+  missingSections: TabType[];
+  /** CI-006: Which required sections have critical header mismatches? */
+  headerIssues: { section: TabType; issue: string }[];
+  summary: string;
 }
 
 /** Dry-run preview — shows what WOULD be imported, without touching the DB. */
@@ -76,6 +89,29 @@ export interface XLSXImportResult {
   totalGross: number;
   errors: string[];
   summary: string;
+  /** CI-027: Post-import verified counts (re-queried from DB) */
+  verified?: {
+    deals: number;
+    inventory: number;
+    roster: number;
+    campaigns: number;
+    lenders: number;
+    allMatch: boolean;
+  };
+}
+
+// ─── CI-009: Event Name Validation ──────────────────────────────────────────
+
+export async function validateEventName(name: string): Promise<{ valid: boolean; error?: string }> {
+  const trimmed = name.trim();
+  if (!trimmed) return { valid: false, error: "Event name cannot be empty." };
+  if (trimmed.length > EVENT_NAME_MAX_LENGTH) {
+    return { valid: false, error: `Event name too long (max ${EVENT_NAME_MAX_LENGTH} chars).` };
+  }
+  if (/[<>{}|\\^`]/.test(trimmed)) {
+    return { valid: false, error: "Event name contains invalid characters." };
+  }
+  return { valid: true };
 }
 
 // ─── Scan ───────────────────────────────────────────────────────────────────
@@ -165,11 +201,35 @@ export async function scanXLSXForCruze(fileBuffer: ArrayBuffer, fileName: string
 
   const isStandardized = sheets.length >= 2 && sheets.every((s) => s.autoReady);
 
+  // CI-005: Check which required sections are present
+  const detectedTypes = new Set(sheets.map((s) => s.detectedType));
+  const missingSections = REQUIRED_SECTION_TYPES.filter((t) => !detectedTypes.has(t));
+
+  // CI-006: Check for critical header mismatches (sheets detected but not autoReady)
+  const headerIssues: { section: TabType; issue: string }[] = [];
+  for (const sheet of sheets) {
+    if (!sheet.autoReady && sheet.detectedType !== "unknown") {
+      headerIssues.push({
+        section: sheet.detectedType,
+        issue: `"${sheet.name}" detected as ${sheet.detectedType} but confidence too low (${sheet.confidenceScore}%) — critical headers may be missing`,
+      });
+    }
+  }
+
+  // CI-004: Validation passes only if ALL required sections present with adequate confidence
+  const validationPassed =
+    missingSections.length === 0 &&
+    headerIssues.length === 0 &&
+    sheets.filter((s) => s.autoReady).length >= REQUIRED_SECTION_TYPES.length;
+
   return {
     fileName,
     sheets,
     totalRows,
     isStandardized,
+    validationPassed,
+    missingSections,
+    headerIssues,
     summary: summaryParts.length > 0
       ? `Detected: ${summaryParts.join(", ")}`
       : "No importable data detected",
@@ -259,13 +319,8 @@ export async function createEventForImport(opts: {
 }
 
 // ─── Safe Import Execution ──────────────────────────────────────────────────
-// ⚠️  SAFETY RULES:
-// 1. When mode is "new_event", a NEW event is created first. All data goes
-//    into the new event only. No existing event is ever touched.
-// 2. When mode is "into_existing", the caller must provide an eventId AND
-//    the user must have explicitly said "merge into [exact event name]".
-//    Even then, only APPEND operations are used — no deletes.
-// 3. If ANY step fails, and we created a new event, we delete it (cascade).
+// ⚠️  Cruze Import v1: ALWAYS creates a new event. No merge/overwrite.
+// If ANY step fails, the new event is cleaned up (cascade delete).
 
 export async function executeXLSXImport(
   fileBuffer: ArrayBuffer,
@@ -280,51 +335,23 @@ export async function executeXLSXImport(
     startDate?: string;
     endDate?: string;
     saleDays?: number;
-  } | {
-    mode: "into_existing";
-    eventId: string;
-    eventName: string;
   },
   sheetsToImport?: number[],
 ): Promise<XLSXImportResult> {
-  // ── Step 1: Resolve event ID ──────────────────────────────────────────
-  let eventId: string;
-  let eventName: string;
-  let isNewEvent: boolean;
-
-  if (opts.mode === "new_event") {
-    // SAFETY: Always create a fresh event. Never reuse.
-    const created = await createEventForImport({
-      name: opts.eventName,
-      dealerName: opts.dealerName,
-      status: opts.status,
-      city: opts.city,
-      state: opts.state,
-      startDate: opts.startDate,
-      endDate: opts.endDate,
-      saleDays: opts.saleDays,
-    });
-    eventId = created.eventId;
-    eventName = opts.eventName;
-    isNewEvent = true;
-  } else {
-    // SAFETY: Caller explicitly chose to merge into an existing event.
-    // Verify the event actually exists before proceeding.
-    const supabase = await createClient();
-    const { data: existing } = await supabase
-      .from("events")
-      .select("id, name")
-      .eq("id", opts.eventId)
-      .single();
-
-    if (!existing) {
-      throw new Error(`Event ${opts.eventId} not found. Cannot import into non-existent event.`);
-    }
-
-    eventId = opts.eventId;
-    eventName = existing.name;
-    isNewEvent = false;
-  }
+  // ── Step 1: Create a fresh event ──────────────────────────────────────
+  const created = await createEventForImport({
+    name: opts.eventName,
+    dealerName: opts.dealerName,
+    status: opts.status,
+    city: opts.city,
+    state: opts.state,
+    startDate: opts.startDate,
+    endDate: opts.endDate,
+    saleDays: opts.saleDays,
+  });
+  const eventId = created.eventId;
+  const eventName = opts.eventName;
+  const isNewEvent = true;
 
   // ── Step 2: Scan the file ─────────────────────────────────────────────
   const scan = await scanXLSXForCruze(fileBuffer, fileName);
@@ -398,11 +425,8 @@ export async function executeXLSXImport(
           }
 
           case "deals": {
-            // NOTE: bulkImportDeals always does a delete-then-insert for the
-            // given eventId. This is SAFE here because:
-            //   - For new_event: the event is brand new, so there's nothing to delete.
-            //   - For into_existing: the user explicitly requested a merge.
-            //     In a future version, we could add an append-only deals import.
+            // NOTE: bulkImportDeals does delete-then-insert for the event.
+            // This is SAFE because the event is always brand new (v1).
             const result = await bulkImportDeals(
               parsed.rows as Record<string, string>[],
               columnMap,
@@ -500,6 +524,114 @@ export async function executeXLSXImport(
     throw fatalErr;
   }
 
+  // CI-018: Initialize event config defaults for new events
+  if (isNewEvent) {
+    try {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (serviceKey) {
+        const admin = createServiceClient(url, serviceKey);
+        const { error: cfgErr } = await admin.from("event_config").insert({
+          event_id: eventId,
+          doc_fee: 0,
+          pack_new: 0,
+          pack_used: 0,
+          tax_rate: 0,
+          include_doc_fee_in_commission: false,
+          rep_commission_pct: 0.25,
+          jde_commission_pct: 0.25,
+        });
+        if (cfgErr) console.warn("[Cruze Import] Event config init failed:", cfgErr.message);
+      }
+    } catch (cfgError) {
+      console.warn("[Cruze Import] Event config init error:", cfgError);
+    }
+  }
+
+  // CI-027: Post-import verification — re-query each table and compare counts
+  let verified: XLSXImportResult["verified"] = undefined;
+  try {
+    const supabase = await createClient();
+    const [vDeals, vInventory, vRoster, vCampaigns, vLenders] = await Promise.all([
+      supabase.from("sales_deals").select("id", { count: "exact", head: true }).eq("event_id", eventId),
+      supabase.from("vehicle_inventory").select("id", { count: "exact", head: true }).eq("event_id", eventId),
+      supabase.from("roster").select("id", { count: "exact", head: true }).eq("event_id", eventId),
+      supabase.from("mail_tracking").select("id", { count: "exact", head: true }).eq("event_id", eventId),
+      supabase.from("lenders").select("id", { count: "exact", head: true }).eq("event_id", eventId),
+    ]);
+
+    const vCounts = {
+      deals: vDeals.count ?? 0,
+      inventory: vInventory.count ?? 0,
+      roster: vRoster.count ?? 0,
+      campaigns: vCampaigns.count ?? 0,
+      lenders: vLenders.count ?? 0,
+    };
+
+    const allMatch =
+      vCounts.deals === dealCount &&
+      vCounts.inventory === inventoryCount &&
+      vCounts.roster === rosterCount &&
+      vCounts.campaigns === campaignCount &&
+      vCounts.lenders === lenderCount;
+
+    verified = { ...vCounts, allMatch };
+
+    if (!allMatch) {
+      console.warn("[Cruze Import] Post-import verification MISMATCH:", {
+        expected: { deals: dealCount, inventory: inventoryCount, roster: rosterCount, campaigns: campaignCount, lenders: lenderCount },
+        actual: vCounts,
+      });
+      errors.push(`Verification: expected counts differ from DB — imported ${dealCount} deals but found ${vCounts.deals}`);
+    } else {
+      console.log("[Cruze Import] Post-import verification PASSED:", vCounts);
+    }
+  } catch (verifyErr) {
+    console.warn("[Cruze Import] Post-import verification failed:", verifyErr);
+    errors.push("Post-import verification could not be completed");
+  }
+
+  // CI-028: Audit logging — awaited, not fire-and-forget
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (serviceKey) {
+        const admin = createServiceClient(url, serviceKey);
+        const { error: auditErr } = await admin.from("audit_logs").insert({
+          event_id: eventId,
+          user_id: user.id,
+          action: "cruze_import_xlsx",
+          entity_type: "event",
+          entity_id: eventId,
+          new_values: {
+            fileName,
+            mode: opts.mode,
+            isNewEvent,
+            deals: dealCount,
+            inventory: inventoryCount,
+            roster: rosterCount,
+            campaigns: campaignCount,
+            lenders: lenderCount,
+            totalGross: Math.round(totalGross),
+            errors,
+            verified: verified?.allMatch ?? null,
+            via: "cruze",
+          },
+        });
+        if (auditErr) {
+          console.error("[Cruze Import] AUDIT LOG FAILED:", auditErr.message);
+          errors.push("Audit log could not be saved — import data is intact but unlogged");
+        }
+      }
+    }
+  } catch (auditError) {
+    console.error("[Cruze Import] Audit logging error:", auditError);
+    errors.push("Audit logging failed");
+  }
+
   // Revalidate all dashboard pages
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/deals");
@@ -519,7 +651,7 @@ export async function executeXLSXImport(
 
   const total = dealCount + inventoryCount + rosterCount + campaignCount + lenderCount;
   const grossStr = totalGross > 0 ? `. Total gross: $${Math.round(totalGross).toLocaleString()}` : "";
-  const targetLabel = isNewEvent ? `new event "${eventName}"` : `existing event "${eventName}"`;
+  const targetLabel = `new event "${eventName}"`;
   const summary = total > 0
     ? `Imported ${parts.join(", ")} into ${targetLabel}${grossStr}. Dashboard updated.`
     : "No records imported — check the file format.";
@@ -537,6 +669,7 @@ export async function executeXLSXImport(
     totalGross: Math.round(totalGross),
     errors,
     summary,
+    verified,
   };
 }
 

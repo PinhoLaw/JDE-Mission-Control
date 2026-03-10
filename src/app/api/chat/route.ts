@@ -154,20 +154,34 @@ When asked to forecast or predict:
 
 ## File Analysis & XLSX Import
 When a file is attached:
-- **XLSX with importReady: true** (standardized JDE sales sheet): This is an import-ready file! Tell the user what was detected (e.g. "I see 47 deals, 120 vehicles, 8 roster members"). Then show a DRY-RUN PREVIEW:
+- **XLSX with importReady: true** (standardized JDE sales sheet): Follow the Cruze Import v1 flow:
 
-  **⚠️ Import Preview (dry run — nothing written yet):**
-  - Event name: [extracted from file or ask user]
-  - Sheets: [list each with type and row count]
-  - Total records: [count]
-  - Target: **NEW event** "[name]"
+  **Step 1 — Validate structure.** Check that all 5 required sections are present (deals, inventory, roster, campaigns, lenders). If any are missing, tell the user: "This file is missing: [sections]. A standardized JDE sheet requires all 5 sections."
 
-  Then ask: **"Type YES, IMPORT NOW to confirm, or tell me to change the event name/status."**
+  **Step 2 — Collect event name.** Ask the user what to name this event, or suggest one based on the file/context. Validate: max 100 chars, no special characters.
+
+  **Step 3 — Show dry-run preview:**
+
+  **📋 Import Preview (nothing written yet):**
+  | Section | Rows | Confidence |
+  |---------|------|------------|
+  | Inventory | X | Y% |
+  | Deals | X | Y% |
+  | Roster | X | Y% |
+  | Campaigns | X | Y% |
+  | Lenders | X | Y% |
+
+  **Event name:** "[name]"
+  **Mode:** New event (always)
+
+  Then ask: **"Type CONFIRM IMPORT to proceed, or tell me to change the event name."**
+
+  **Step 4 — Execute.** Only when the user types "CONFIRM IMPORT". After import, report the verified counts and the new event name/ID so they can navigate to it.
 
   CRITICAL SAFETY RULES:
-  1. **NEVER import into the currently viewed event.** Always create a NEW event unless the user says "merge into [exact name]".
-  2. When user says "import as a new event", "import this", or similar — ALWAYS use mode "new_event" with importStandardizedSalesSheet.
-  3. Only use mode "into_existing" if the user says "merge into [exact event name]" — NEVER by default.
+  1. **ALWAYS create a NEW event.** Merging into existing events is not supported in v1.
+  2. **Require "CONFIRM IMPORT"** — not "yes", "do it", or any variation. Exact phrase only.
+  3. **Never skip the preview** — always show counts before asking for confirmation.
   4. After import, tell the user the new event name and ID so they can navigate to it.
 
 - **XLSX without importReady**: Summarize structure and suggest the data may need manual column mapping via the Import page.
@@ -345,7 +359,7 @@ The left sidebar has these sections:
 - **updateDealField** — Edit a single field on a deal
 - **addRosterMember** — Add a new team member to the event roster
 - **saveInsight** — Save an important insight to long-term memory for future reference
-- **importStandardizedSalesSheet** — Import a JDE standardized XLSX file. ⚠️ ALWAYS creates a NEW event by default. NEVER imports into the currently viewed event unless user explicitly says "merge into [exact name]". Requires explicit "YES, IMPORT NOW" confirmation after showing dry-run preview.
+- **importStandardizedSalesSheet** — Import a JDE standardized XLSX file. ALWAYS creates a NEW event. Merging into existing events is NOT supported. Requires all 5 sections (deals, inventory, roster, campaigns, lenders) and exact "CONFIRM IMPORT" phrase after showing dry-run preview.
 
 ### Write Tool Rules
 1. **Look up first** — Always use lookupDeal or searchInventory to find the record ID before calling a write tool. Never guess IDs.
@@ -353,12 +367,13 @@ The left sidebar has these sections:
 3. **Just do it for safe changes** — Marking funded, updating doc fee, adding notes, changing lender: proceed directly.
 4. **Report results** — After a write, tell Mike what changed. The UI refreshes automatically via revalidatePath.
 
-### ⚠️ XLSX Import Safety Rules (CRITICAL — data loss prevention)
-1. **ALWAYS create a new event** — When importing XLSX data, ALWAYS use mode "new_event". NEVER import into the currently viewed event.
-2. **NEVER merge by default** — Only use mode "into_existing" if the user explicitly says "merge into [exact event name]".
-3. **Show dry-run preview first** — Before any import, show the user exactly what will be imported: sheet names, row counts, target event name.
-4. **Require explicit confirmation** — The user must type "YES, IMPORT NOW" (or similar clear confirmation). A simple "yes" or "do it" after seeing the preview counts.
-5. **Report the new event** — After import, tell the user the new event name and that they can switch to it from the events page.
+### ⚠️ XLSX Import Safety Rules (CRITICAL — Cruze Import v1)
+1. **ALWAYS create a new event** — Merging into existing events is NOT supported in v1. Always use mode "new_event".
+2. **Validate structure first** — All 5 required sections must be present: deals, inventory, roster, campaigns, lenders.
+3. **Validate event name** — Max 100 chars, no special characters. Collect from user if not obvious.
+4. **Show dry-run preview first** — Before any import, show a table with section names, row counts, and confidence scores.
+5. **Require exact confirmation** — The user must type exactly "CONFIRM IMPORT". Not "yes", "do it", or any variation.
+6. **Report verified counts** — After import, show the verified row counts and the new event name/ID.
 
 Always use tools when asked about specific people, vehicles, or deals. Don't guess — look it up.
 
@@ -1784,31 +1799,26 @@ export async function POST(req: NextRequest) {
         },
       },
 
-      // ⚠️  SAFE IMPORT — MARCH 2026
+      // ⚠️  SAFE IMPORT — MARCH 2026 (Cruze Import v1 Capability Matrix)
       // NEVER overwrites existing events. Creates a NEW event by default.
-      // Only merges into an existing event if the user explicitly says so.
+      // CI-034: Merge/overwrite into existing events is NOT supported in v1.
       importStandardizedSalesSheet: {
         description:
-          `Import a standardized JDE sales spreadsheet (XLSX). ⚠️ SAFETY: By default this ALWAYS creates a brand-new event. It will NEVER touch the currently viewed event unless the user explicitly says "merge into [exact event name]". Flow: (1) Show dry-run preview with exact counts. (2) Wait for user to type "YES, IMPORT NOW". (3) Execute with mode "new_event" (default) or "into_existing" (only if user explicitly requested merge).`,
+          `Import a standardized JDE sales spreadsheet (XLSX). ⚠️ SAFETY: This ALWAYS creates a brand-new event. Merging into existing events is NOT supported. Flow: (1) Validate file structure (all 5 required sections). (2) Collect and validate event name. (3) Show dry-run preview with exact counts. (4) Wait for user to type "CONFIRM IMPORT". (5) Execute import into new event.`,
         inputSchema: jsonSchema({
           type: "object" as const,
           properties: {
             confirmed: {
               type: "string" as const,
-              description: "Must be exactly 'YES, IMPORT NOW' to proceed. Any other value = abort.",
-            },
-            mode: {
-              type: "string" as const,
-              enum: ["new_event", "into_existing"],
-              description: "MUST be 'new_event' unless user explicitly said 'merge into [name]'. Default: new_event.",
+              description: "Must be exactly 'CONFIRM IMPORT' to proceed. Any other value = abort.",
             },
             eventName: {
               type: "string" as const,
-              description: "Name for the new event (required for new_event mode). E.g. 'Lilliston CDJR March 2026'.",
+              description: "Name for the new event. E.g. 'Lilliston CDJR March 2026'. Max 100 chars, no special characters (<>{}|\\^`).",
             },
             dealerName: {
               type: "string" as const,
-              description: "Dealer name (optional, for new_event mode).",
+              description: "Dealer name (optional).",
             },
             status: {
               type: "string" as const,
@@ -1817,34 +1827,57 @@ export async function POST(req: NextRequest) {
             },
             city: { type: "string" as const, description: "City (optional)." },
             state: { type: "string" as const, description: "State (optional)." },
-            existingEventId: {
-              type: "string" as const,
-              description: "Only for into_existing mode. The exact event UUID to merge into.",
-            },
           },
-          required: ["confirmed", "mode", "eventName"],
+          required: ["confirmed", "eventName"],
         }),
         execute: async (args: {
           confirmed: string;
-          mode: "new_event" | "into_existing";
           eventName: string;
           dealerName?: string;
           status?: "draft" | "active" | "completed" | "cancelled";
           city?: string;
           state?: string;
-          existingEventId?: string;
         }) => {
-          // ── SAFETY GATE 1: Require exact confirmation phrase ──
-          if (args.confirmed !== "YES, IMPORT NOW") {
+          // ── SAFETY GATE 1: Require exact confirmation phrase (CI-013/014) ──
+          if (args.confirmed !== "CONFIRM IMPORT") {
+            // v1.1: Return structured preview data so the AI has guaranteed data to render
+            const previewSheets = (fileAttachment?.analysis?.sheets as Array<{
+              name: string; detectedType: string; rowCount: number;
+              confidenceScore: number; autoReady: boolean;
+            }>) || [];
             return {
               success: false,
               needsConfirmation: true,
-              message: "Import not confirmed. The user must type exactly 'YES, IMPORT NOW' before I can proceed. Show them the dry-run preview first.",
+              message: "Import not confirmed. The user must type exactly 'CONFIRM IMPORT' before I can proceed. Show them the dry-run preview first.",
+              preview: {
+                fileName: fileAttachment?.fileName || "unknown",
+                validationPassed: fileAttachment?.analysis?.validationPassed ?? false,
+                missingSections: fileAttachment?.analysis?.missingSections || [],
+                headerIssues: fileAttachment?.analysis?.headerIssues || [],
+                totalRows: fileAttachment?.analysis?.totalRows || 0,
+                sections: previewSheets.map((s) => ({
+                  name: s.name,
+                  type: s.detectedType,
+                  rows: s.rowCount,
+                  confidence: s.confidenceScore,
+                  ready: s.autoReady,
+                })),
+                summary: fileAttachment?.analysis?.summary || "No data detected",
+              },
+            };
+          }
+
+          // ── SAFETY GATE: Event name validation (CI-009) ──
+          const { validateEventName } = await import("@/lib/cruze/xlsx-import");
+          const nameCheck = await validateEventName(args.eventName);
+          if (!nameCheck.valid) {
+            return {
+              success: false,
+              error: `Invalid event name: ${nameCheck.error}`,
             };
           }
 
           // ── SAFETY GATE 2: File must be present (with Storage fallback) ──
-          // CRUZE FILE ATTACHMENT — FINAL BULLETPROOF VERSION WITH SUPABASE STORAGE FALLBACK
           if (!fileAttachment) {
             return {
               success: false,
@@ -1859,21 +1892,63 @@ export async function POST(req: NextRequest) {
             };
           }
 
-          // ── SAFETY GATE 3: into_existing requires explicit event ID ──
-          if (args.mode === "into_existing" && !args.existingEventId) {
+          // ── SAFETY GATE 3: Standardized structure validation (CI-004/005) ──
+          if (fileAttachment.analysis?.validationPassed === false) {
+            const missing = fileAttachment.analysis?.missingSections as string[] | undefined;
+            const missingList = missing?.length ? missing.join(", ") : "unknown";
             return {
               success: false,
-              error: "into_existing mode requires an existingEventId. Ask the user which event to merge into.",
+              error: `This file is missing required sections: ${missingList}. A standardized JDE sheet must contain all 5 sections: deals, inventory, roster, campaigns, and lenders. Please re-export the file with all sections included.`,
             };
           }
 
-          // ── SAFETY GATE 4: into_existing must NOT be the currently viewed event ──
-          // unless user explicitly named it
-          if (args.mode === "into_existing" && args.existingEventId === eid) {
-            return {
-              success: false,
-              error: `BLOCKED: You are trying to merge into the currently viewed event (${eid}). This would overwrite existing data. The user must explicitly confirm they want to merge into this specific event by name. If they want a new event, use mode 'new_event' instead.`,
-            };
+          // ── v1.1: Duplicate/replay protection ──
+          // Check if this specific file upload was already imported
+          if (fileAttachment.fileId) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: uploadRec } = await (supabase.from as any)("cruze_file_uploads")
+                .select("metadata")
+                .eq("id", fileAttachment.fileId)
+                .single();
+
+              if (uploadRec?.metadata?.importedAt) {
+                const importedEventName = uploadRec.metadata.importedEventName || "unknown";
+                const importedEventId = uploadRec.metadata.importedEventId || "unknown";
+                return {
+                  success: false,
+                  error: `This file was already imported as "${importedEventName}" (event ${importedEventId}). To re-import, please drop the file into the chat again to create a fresh upload. This prevents accidental duplicate events.`,
+                };
+              }
+            } catch {
+              // cruze_file_uploads may not exist — non-blocking
+            }
+          }
+
+          // Also check by file hash for cross-upload dedup (same file re-uploaded)
+          const fileHash = fileAttachment.analysis?.fileHash as string | undefined;
+          if (fileHash) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: recentDupes } = await (supabase.from as any)("cruze_file_uploads")
+                .select("id, metadata")
+                .neq("id", fileAttachment.fileId || "")
+                .filter("metadata->>fileHash", "eq", fileHash)
+                .order("created_at", { ascending: false })
+                .limit(1);
+
+              if (recentDupes?.[0]?.metadata?.importedAt) {
+                const dupeName = recentDupes[0].metadata.importedEventName || "unknown";
+                const dupeId = recentDupes[0].metadata.importedEventId || "unknown";
+                return {
+                  success: false,
+                  error: `This exact file was already imported as "${dupeName}" (event ${dupeId}). If you need to re-import, please confirm this is intentional by re-uploading the file.`,
+                  duplicateOf: { eventName: dupeName, eventId: dupeId },
+                };
+              }
+            } catch {
+              // Non-blocking — hash dedup is best-effort
+            }
           }
 
           try {
@@ -1953,26 +2028,46 @@ export async function POST(req: NextRequest) {
 
             const { executeXLSXImport } = await import("@/lib/cruze/xlsx-import");
 
-            // Build import options based on mode
-            const importOpts = args.mode === "new_event"
-              ? {
-                  mode: "new_event" as const,
-                  eventName: args.eventName,
-                  dealerName: args.dealerName,
-                  status: args.status || "completed",
-                  city: args.city,
-                  state: args.state,
-                }
-              : {
-                  mode: "into_existing" as const,
-                  eventId: args.existingEventId!,
-                  eventName: args.eventName,
-                };
+            // CI-034: v1 only supports new_event mode
+            const importOpts = {
+              mode: "new_event" as const,
+              eventName: args.eventName.trim(),
+              dealerName: args.dealerName,
+              status: args.status || "completed",
+              city: args.city,
+              state: args.state,
+            };
 
             const result = await executeXLSXImport(arrayBuffer, fileAttachment.fileName, importOpts);
 
+            // v1.1: Mark file upload as imported to prevent duplicate imports
+            if (result.success && fileAttachment.fileId) {
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { data: existingRec } = await (supabase.from as any)("cruze_file_uploads")
+                  .select("metadata")
+                  .eq("id", fileAttachment.fileId)
+                  .single();
+
+                const updatedMetadata = {
+                  ...(existingRec?.metadata || {}),
+                  importedAt: new Date().toISOString(),
+                  importedEventId: result.eventId,
+                  importedEventName: result.eventName,
+                };
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from as any)("cruze_file_uploads")
+                  .update({ metadata: updatedMetadata })
+                  .eq("id", fileAttachment.fileId);
+              } catch {
+                // Non-blocking — dedup marking is best-effort
+                console.warn("[Cruze Import] Failed to mark file as imported (non-blocking)");
+              }
+            }
+
             // Save import summary to long-term memory (scoped to NEW event)
-            const memoryContent = `Imported ${fileAttachment.fileName} into ${result.isNewEvent ? "new" : "existing"} event "${result.eventName}" (${result.eventId}): ${result.summary}`;
+            const memoryContent = `Imported ${fileAttachment.fileName} into new event "${result.eventName}" (${result.eventId}): ${result.summary}`;
             await saveMemory(supabase, userId, result.eventId, memoryContent, "fact", 8);
 
             if (result.deals > 0 && result.totalGross > 0) {
@@ -2000,12 +2095,14 @@ export async function POST(req: NextRequest) {
                 campaigns: result.campaigns,
                 lenders: result.lenders,
               },
+              // CI-027: Post-import verified counts
+              verified: result.verified,
               totalGross: result.totalGross,
               errors: result.errors,
               summary: result.summary,
               message: result.success
-                ? `✅ Import complete into ${result.isNewEvent ? "NEW" : "existing"} event "${result.eventName}": ${result.summary}`
-                : `Import finished with issues: ${result.summary}. Errors: ${result.errors.join("; ")}`,
+                ? `✅ Import complete! New event "${result.eventName}" created: ${result.summary}${result.verified && !result.verified.allMatch ? " ⚠️ Verification mismatch detected — check counts." : ""}`
+                : `Import failed: ${result.summary}. Errors: ${result.errors.join("; ")}`,
             };
           } catch (err) {
             return {

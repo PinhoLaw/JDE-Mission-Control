@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { scanXLSXForCruze } from "@/lib/cruze/xlsx-import";
+import { createHash } from "crypto";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
@@ -89,6 +90,9 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Cruze Upload] Buffer OK: ${arrayBuffer.byteLength} bytes`);
 
+    // CI-029: Compute SHA-256 hash for duplicate detection
+    const fileHash = createHash("sha256").update(Buffer.from(arrayBuffer)).digest("hex");
+
     // Detect file type
     const isExcel =
       fileType.includes("spreadsheet") ||
@@ -108,11 +112,17 @@ export async function POST(req: NextRequest) {
           fileName,
           fileSize,
           // ⚠️  SAFE IMPORT — scan results are READ-ONLY preview data.
-          // Actual import requires explicit user confirmation ("YES, IMPORT NOW")
-          // and ALWAYS creates a new event by default.
+          // Actual import requires explicit user confirmation ("CONFIRM IMPORT")
+          // and ALWAYS creates a new event.
           isStandardizedSheet: scanResult.isStandardized,
           importReady: scanResult.sheets.length > 0,
           importSafety: "ALWAYS_NEW_EVENT",
+          // CI-029: File hash for duplicate detection
+          fileHash,
+          // CI-004/005/006: Standardized validation fields
+          validationPassed: scanResult.validationPassed,
+          missingSections: scanResult.missingSections,
+          headerIssues: scanResult.headerIssues,
           sheets: scanResult.sheets.map((s) => ({
             name: s.name,
             index: s.index,

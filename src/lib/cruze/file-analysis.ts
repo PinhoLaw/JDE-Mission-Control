@@ -122,15 +122,13 @@ export function formatFileSize(bytes: number): string {
 // ⚠️  These types enforce the safe import flow:
 // 1. Scan (read-only) → 2. Preview (dry-run) → 3. Confirm → 4. Execute
 
-export type ImportMode = "new_event" | "into_existing";
+export type ImportMode = "new_event";
 
 export interface ImportSafetyCheck {
   mode: ImportMode;
-  /** For new_event: the name the user chose. For into_existing: the exact event name. */
+  /** The name the user chose for the new event. */
   targetEventName: string;
-  /** For into_existing only: the UUID of the event to merge into. */
-  targetEventId?: string;
-  /** True only when user typed "YES, IMPORT NOW" */
+  /** True only when user typed "CONFIRM IMPORT" */
   userConfirmed: boolean;
   /** Dry-run preview was shown to user */
   previewShown: boolean;
