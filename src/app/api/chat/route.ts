@@ -15,6 +15,7 @@ import {
   formatMemoryBlock,
   saveMemory,
 } from "@/lib/cruze/memory";
+import { hasBackfillRun, backfillCruzeMemories } from "@/lib/cruze/backfill";
 
 // ─── Classifier Prompt (runs on Haiku — fast & cheap) ─────────────────────
 
@@ -151,9 +152,11 @@ When asked to forecast or predict:
 - Factor in day-of-week patterns from daily metrics
 - Be honest about confidence levels
 
-## File Analysis
+## File Analysis & XLSX Import
 When a file is attached:
-- CSV/Excel: Summarize structure, key columns, notable patterns, and suggest how the data relates to the current event
+- **XLSX with importReady: true** (standardized JDE sales sheet): This is an import-ready file! Tell the user what was detected (e.g. "I see 47 deals, 120 vehicles, 8 roster members"). Ask for confirmation: "Want me to import this into [event name]?" When they confirm, call importStandardizedSalesSheet with confirmed: true. After import, summarize what was added and reference the new numbers.
+- **XLSX without importReady**: Summarize structure and suggest the data may need manual column mapping via the Import page.
+- CSV: Summarize structure, key columns, notable patterns
 - PDF: Describe contents, extract key numbers or tables
 - Images: Describe what you see, read any visible text/numbers
 - Always relate file contents back to the event context when possible
@@ -327,6 +330,7 @@ The left sidebar has these sections:
 - **updateDealField** — Edit a single field on a deal
 - **addRosterMember** — Add a new team member to the event roster
 - **saveInsight** — Save an important insight to long-term memory for future reference
+- **importStandardizedSalesSheet** — Import a JDE standardized XLSX file into the current event (deals, inventory, roster, campaigns, lenders). ALWAYS confirm with the user first.
 
 ### Write Tool Rules
 1. **Look up first** — Always use lookupDeal or searchInventory to find the record ID before calling a write tool. Never guess IDs.
@@ -452,6 +456,17 @@ export async function POST(req: NextRequest) {
   let memoryBlock = "";
 
   try {
+    // CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026
+    // One-time backfill: extract insights from all existing events on first chat
+    const backfilled = await hasBackfillRun(supabase, userId);
+    if (!backfilled) {
+      // Run backfill in background — don't block the response
+      backfillCruzeMemories(supabase, userId).then(
+        (result) => console.log(`[Cruze Backfill] Done: ${result.memoriesCreated} memories from ${result.eventsScanned} events`),
+        (err) => console.warn("[Cruze Backfill] Failed (non-blocking):", err),
+      );
+    }
+
     const [memories, recentHistory] = await Promise.all([
       getRelevantMemories(supabase, userId, activeEventId, 10),
       getConversationHistory(supabase, userId, activeEventId, 10),
@@ -459,7 +474,6 @@ export async function POST(req: NextRequest) {
     memoryBlock = formatMemoryBlock(memories, recentHistory);
   } catch (memErr) {
     console.warn("[Cruze] Memory load failed (non-blocking):", memErr);
-    // Continue without memory — it's a nice-to-have
   }
 
   // 4. CRUZE UPGRADE — Save user message to conversation history
@@ -1744,6 +1758,100 @@ export async function POST(req: NextRequest) {
             return { success: true, message: `Memory saved: "${content}"` };
           } catch (err) {
             return { success: false, error: `Failed to save memory: ${err}` };
+          }
+        },
+      },
+
+      // CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026
+      importStandardizedSalesSheet: {
+        description:
+          `Import a standardized JDE sales spreadsheet (XLSX) into the current event. This tool is available when the user has dropped/attached an XLSX file that was detected as a JDE standardized sheet (the [FILE ATTACHMENT] block will show isStandardizedSheet: true and importReady: true with sheet details). ALWAYS ask the user to confirm before importing — show them the detected sheets and row counts. After confirmation, execute the import. The file data is already uploaded and available via the attachment.`,
+        inputSchema: jsonSchema({
+          type: "object" as const,
+          properties: {
+            confirmed: {
+              type: "boolean",
+              description: "Whether the user has confirmed the import. Set to true only after explicit confirmation.",
+            },
+          },
+          required: ["confirmed"],
+        }),
+        execute: async ({ confirmed }: { confirmed: boolean }) => {
+          if (!confirmed) {
+            return {
+              success: false,
+              needsConfirmation: true,
+              message: "Import not confirmed. Ask the user to confirm before proceeding.",
+            };
+          }
+
+          // Get file data from the attachment context
+          if (!fileAttachment?.base64Data) {
+            return {
+              success: false,
+              error: "No file attachment found. Ask the user to drop the XLSX file again.",
+            };
+          }
+
+          if (!fileAttachment.analysis?.importReady) {
+            return {
+              success: false,
+              error: "This file doesn't appear to be a standardized JDE sales sheet. The column headers don't match the expected format.",
+            };
+          }
+
+          try {
+            // Convert base64 back to ArrayBuffer
+            const binaryString = atob(fileAttachment.base64Data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const arrayBuffer = bytes.buffer;
+
+            // Execute the import using the existing pipeline
+            const { executeXLSXImport } = await import("@/lib/cruze/xlsx-import");
+            const result = await executeXLSXImport(arrayBuffer, fileAttachment.fileName, eid);
+
+            // Save import summary to long-term memory
+            const memoryContent = `Imported ${fileAttachment.fileName}: ${result.summary}`;
+            await saveMemory(supabase, userId, eid, memoryContent, "fact", 8);
+
+            // Save per-category insights
+            if (result.deals > 0 && result.totalGross > 0) {
+              await saveMemory(
+                supabase, userId, eid,
+                `Event has ${result.deals} deals with $${result.totalGross.toLocaleString()} total gross (from ${fileAttachment.fileName})`,
+                "insight", 9,
+              );
+            }
+
+            revalidatePath("/dashboard");
+            revalidatePath("/dashboard/deals");
+            revalidatePath("/dashboard/inventory");
+            revalidatePath("/dashboard/roster");
+
+            return {
+              success: result.success,
+              imported: {
+                deals: result.deals,
+                inventory: result.inventory,
+                roster: result.roster,
+                campaigns: result.campaigns,
+                lenders: result.lenders,
+              },
+              totalGross: result.totalGross,
+              errors: result.errors,
+              summary: result.summary,
+              message: result.success
+                ? `Import complete: ${result.summary}`
+                : `Import finished with issues: ${result.summary}. Errors: ${result.errors.join("; ")}`,
+            };
+          } catch (err) {
+            return {
+              success: false,
+              error: `Import failed: ${err instanceof Error ? err.message : "unknown error"}`,
+            };
           }
         },
       },

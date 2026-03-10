@@ -544,12 +544,21 @@ export function ChatWindow() {
       </div>
 
       {/* ── CRUZE UPGRADE — File attachment preview ──────────── */}
+      {/* CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026 */}
       {attachment && (
         <div className="shrink-0 border-t bg-muted/10 px-3 py-2">
-          <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2">
+          <div className={cn(
+            "flex items-center gap-2 rounded-lg border bg-background px-3 py-2",
+            // Highlight import-ready XLSX files with emerald border
+            !!(attachment.analysis as Record<string, unknown>)?.importReady && "border-primary/50",
+          )}>
             <div className={cn(
               "flex h-8 w-8 items-center justify-center rounded-lg",
-              attachment.error ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary",
+              attachment.error
+                ? "bg-destructive/10 text-destructive"
+                : attachment.analysis?.importReady
+                  ? "bg-emerald-500/10 text-emerald-500"
+                  : "bg-primary/10 text-primary",
             )}>
               {attachment.preview ? (
                 <img
@@ -565,10 +574,12 @@ export function ChatWindow() {
               <p className="text-xs font-medium truncate">{attachment.file.name}</p>
               <p className="text-[10px] text-muted-foreground">
                 {attachment.uploading
-                  ? "Uploading..."
+                  ? "Scanning sheets..."
                   : attachment.error
                     ? attachment.error
-                    : `${formatFileSize(attachment.file.size)} — Ready`}
+                    : attachment.analysis?.importReady
+                      ? String(attachment.analysis.summary || "Import ready")
+                      : `${formatFileSize(attachment.file.size)} — Ready`}
               </p>
             </div>
             {attachment.uploading && (
@@ -620,9 +631,11 @@ export function ChatWindow() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            attachment
-              ? "Ask about this file..."
-              : "Ask anything... (Enter to send)"
+            attachment?.analysis?.importReady
+              ? 'Say "import this" to load into your event...'
+              : attachment
+                ? "Ask about this file..."
+                : "Ask anything... (Enter to send)"
           }
           className="min-h-[40px] max-h-[120px] resize-none border-0 bg-transparent p-2 text-sm shadow-none focus-visible:ring-0"
           rows={1}

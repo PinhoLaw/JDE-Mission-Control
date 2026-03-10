@@ -32,12 +32,6 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { BulkActionsToolbar } from "@/components/ui/data-table-bulk-actions";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-} from "@/components/ui/card";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -73,6 +67,9 @@ import {
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import { EditDealForm } from "@/components/deals/edit-deal-form";
+import { DealsStatsOverview } from "@/components/deals/deals-stats-overview";
+import { DealsInsightsRow } from "@/components/deals/deals-insights-row";
+import { DealsFooterBar } from "@/components/deals/deals-footer-bar";
 import { LastSyncedIndicator } from "@/components/ui/last-synced-indicator";
 import { bulkDeleteDeals, updateDealStatus } from "@/lib/actions/deals";
 import { useRosterMembers } from "@/hooks/useRosterMembers";
@@ -685,135 +682,26 @@ export default function DealsPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-5">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Total Deals</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{stats.count}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Total Gross</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-green-700">
-              {formatCurrency(stats.totalGross)}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Front Gross</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{formatCurrency(stats.totalFront)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Back Gross</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-blue-700">
-              {formatCurrency(stats.totalBack)}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Avg PVR</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{formatCurrency(stats.avgPVR)}</p>
-          </CardContent>
-        </Card>
-      </div>
+      <DealsStatsOverview
+        count={stats.count}
+        totalGross={stats.totalGross}
+        totalFront={stats.totalFront}
+        totalBack={stats.totalBack}
+        avgPVR={stats.avgPVR}
+      />
 
       {/* Stats Row 2 — Insights */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Top Salespeople</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1">
-              {stats.topSalespeople.slice(0, 3).map((sp, i) => (
-                <div key={sp.name} className="flex justify-between text-sm">
-                  <span className="truncate">{i + 1}. {sp.name}</span>
-                  <span className="font-semibold">{sp.deals} deals</span>
-                </div>
-              ))}
-              {stats.topSalespeople.length === 0 && (
-                <p className="text-sm text-muted-foreground">No data</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>New vs Used</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1 text-sm">
-              <div className="flex justify-between">
-                <span>New: {stats.newCount}</span>
-                <span className="text-muted-foreground">Avg {formatCurrency(stats.newAvgPvr)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Used: {stats.usedCount}</span>
-                <span className="text-muted-foreground">Avg {formatCurrency(stats.usedAvgPvr)}</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Warranty Sold</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">
-              {stats.warrantyCount}
-              <span className="text-sm font-normal text-muted-foreground ml-1">
-                / {stats.count} ({stats.count > 0 ? Math.round((stats.warrantyCount / stats.count) * 100) : 0}%)
-              </span>
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>GAP Penetration</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">
-              {stats.gapCount}
-              <span className="text-sm font-normal text-muted-foreground ml-1">
-                / {stats.count} ({stats.count > 0 ? Math.round((stats.gapCount / stats.count) * 100) : 0}%)
-              </span>
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Top Lenders</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1">
-              {stats.topLenders.slice(0, 3).map((l, i) => (
-                <div key={l.name} className="flex justify-between text-sm">
-                  <span className="truncate">{i + 1}. {l.name}</span>
-                  <span className="font-semibold">{l.count}</span>
-                </div>
-              ))}
-              {stats.topLenders.length === 0 && (
-                <p className="text-sm text-muted-foreground">No data</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <DealsInsightsRow
+        topSalespeople={stats.topSalespeople}
+        newCount={stats.newCount}
+        newAvgPvr={stats.newAvgPvr}
+        usedCount={stats.usedCount}
+        usedAvgPvr={stats.usedAvgPvr}
+        warrantyCount={stats.warrantyCount}
+        gapCount={stats.gapCount}
+        count={stats.count}
+        topLenders={stats.topLenders}
+      />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -971,55 +859,7 @@ export default function DealsPage() {
           </div>
 
           {/* Averages / Totals footer bar */}
-          {footerStats && (
-            <div className="rounded-md border bg-muted/80 px-4 py-2">
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">
-                  Averages
-                </span>
-                <span>
-                  Front Gross:{" "}
-                  <span className="font-semibold">{formatCurrency(footerStats.avgFrontGross)}</span>
-                </span>
-                <span>
-                  Lender:{" "}
-                  <span className="font-semibold">{footerStats.topLender}</span>
-                </span>
-                <span>
-                  Rate:{" "}
-                  <span className="font-semibold">{footerStats.avgRate.toFixed(1)}%</span>
-                </span>
-                <span>
-                  Reserve:{" "}
-                  <span className="font-semibold">{formatCurrency(footerStats.avgReserve)}</span>
-                </span>
-                <span>
-                  Warranty:{" "}
-                  <span className="font-semibold">{formatCurrency(footerStats.avgWarranty)}</span>
-                </span>
-                <span>
-                  Aft 1:{" "}
-                  <span className="font-semibold">{formatCurrency(footerStats.avgAft1)}</span>
-                </span>
-                <span>
-                  GAP:{" "}
-                  <span className="font-semibold">{formatCurrency(footerStats.avgGap)}</span>
-                </span>
-                <span>
-                  FI Total:{" "}
-                  <span className="font-semibold text-blue-700 dark:text-blue-400">
-                    {formatCurrency(footerStats.avgFiTotal)}
-                  </span>
-                </span>
-                <span className="border-l pl-5 border-border">
-                  Total Gross:{" "}
-                  <span className="font-bold text-green-700 dark:text-green-400">
-                    {formatCurrency(footerStats.totalGross)}
-                  </span>
-                </span>
-              </div>
-            </div>
-          )}
+          {footerStats && <DealsFooterBar footerStats={footerStats} />}
 
           <div className="flex items-center justify-end">
             <span className="text-xs text-muted-foreground">

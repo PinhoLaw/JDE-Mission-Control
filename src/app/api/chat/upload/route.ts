@@ -1,9 +1,11 @@
-// CRUZE UPGRADE — OMNISCIENT MODE
-// File upload endpoint for drag & drop chat attachments
-// Accepts CSV, Excel, PDF, and images — returns parsed preview data
+// CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026
+// File upload endpoint for drag & drop chat attachments.
+// When an XLSX is detected, auto-scans for JDE standardized sheets
+// and returns a structured preview with import-ready metadata.
 
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { scanXLSXForCruze } from "@/lib/cruze/xlsx-import";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
@@ -42,8 +44,52 @@ export async function POST(req: NextRequest) {
     let textContent = "";
     let base64Data: string | null = null;
 
-    // Parse based on file type
-    if (fileType === "text/csv" || fileName.endsWith(".csv")) {
+    // ── CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026 ──────────
+    // Detect XLSX files and auto-scan for JDE standardized sheets
+    const isExcel =
+      fileType.includes("spreadsheet") ||
+      fileType.includes("excel") ||
+      fileName.endsWith(".xlsx") ||
+      fileName.endsWith(".xls");
+
+    if (isExcel) {
+      const arrayBuffer = await file.arrayBuffer();
+      base64Data = Buffer.from(arrayBuffer).toString("base64");
+
+      // Scan for standardized JDE sheets
+      try {
+        const scanResult = await scanXLSXForCruze(arrayBuffer, fileName);
+
+        analysis = {
+          type: "excel",
+          fileName,
+          fileSize,
+          // CRUZE STANDARDIZED XLSX FULL IMPORT — MARCH 2026
+          isStandardizedSheet: scanResult.isStandardized,
+          importReady: scanResult.sheets.length > 0,
+          sheets: scanResult.sheets.map((s) => ({
+            name: s.name,
+            index: s.index,
+            detectedType: s.detectedType,
+            rowCount: s.rowCount,
+            confidenceScore: s.confidenceScore,
+            autoReady: s.autoReady,
+          })),
+          totalRows: scanResult.totalRows,
+          summary: scanResult.summary,
+        };
+      } catch (scanErr) {
+        console.warn("[Cruze Upload] XLSX scan failed, treating as generic:", scanErr);
+        analysis = {
+          type: "excel",
+          fileName,
+          fileSize,
+          isStandardizedSheet: false,
+          importReady: false,
+          note: "Excel file received. Cruze will analyze the contents.",
+        };
+      }
+    } else if (fileType === "text/csv" || fileName.endsWith(".csv")) {
       textContent = await file.text();
       const lines = textContent.split("\n").filter((l) => l.trim());
       const headers = lines[0]?.split(",").map((h) => h.trim().replace(/^"|"$/g, "")) || [];
@@ -56,21 +102,6 @@ export async function POST(req: NextRequest) {
         rowCount,
         preview,
         columnCount: headers.length,
-      };
-    } else if (
-      fileType.includes("spreadsheet") ||
-      fileType.includes("excel") ||
-      fileName.endsWith(".xlsx") ||
-      fileName.endsWith(".xls")
-    ) {
-      const buffer = await file.arrayBuffer();
-      base64Data = Buffer.from(buffer).toString("base64");
-
-      analysis = {
-        type: "excel",
-        fileName,
-        fileSize,
-        note: "Excel file received. Cruze will analyze the contents.",
       };
     } else if (fileType === "application/pdf" || fileName.endsWith(".pdf")) {
       const buffer = await file.arrayBuffer();
@@ -99,17 +130,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Store file reference in database (cruze_file_uploads table)
-    // Uses `as never` cast since the table types aren't regenerated yet
+    // Store file reference in cruze_file_uploads
     let fileId: string | null = null;
     try {
-      const { data: fileRecord } = await (supabase.from as Function)("cruze_file_uploads")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: fileRecord } = await (supabase.from as any)("cruze_file_uploads")
         .insert({
           user_id: user.id,
           conversation_id: conversationId,
           event_id: eventId,
           file_name: fileName,
-          file_type: analysis.type as string,
+          file_type: (analysis.type as string) || "unknown",
           file_size: fileSize,
           metadata: analysis,
         })
@@ -117,7 +148,6 @@ export async function POST(req: NextRequest) {
         .single();
       fileId = fileRecord?.id || null;
     } catch {
-      // Table may not exist yet if migration hasn't run — continue without storing
       console.warn("[Cruze Upload] cruze_file_uploads table not available, skipping storage");
     }
 
