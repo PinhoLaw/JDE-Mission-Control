@@ -33,6 +33,8 @@ export function detectTabType(sheetName: string): TabType {
   // "Dealer Recap", "Salesperson Washout", "Washout", "Pay Calc", etc.
   if (
     lower.includes("recap") ||
+    lower.includes("things not in") ||
+    lower.includes("not in current") ||
     lower.includes("washout") ||
     lower.includes("pay calc") ||
     lower.includes("commission") ||
@@ -487,7 +489,15 @@ export const DEAL_DB_FIELDS: FieldDef[] = [
  * Best-effort auto-mapping from header text to deal DB field.
  */
 export function autoMapDealColumn(header: string): string {
-  const h = header.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+  // Handle percentage columns BEFORE stripping special chars.
+  // "SP %" must map to salesperson_pct, not "salesperson" (which "sp" would match).
+  const raw = header.toLowerCase().trim();
+  if (/^sp\s*%$/.test(raw)) return "salesperson_pct";
+  if (/^2nd\s*sp\s*%$/.test(raw)) return "second_sp_pct";
+  if (/^sp\s*commission\s*%$/.test(raw)) return "salesperson_pct";
+  if (/^commission\s*%$/.test(raw)) return "salesperson_pct";
+
+  const h = raw.replace(/[^a-z0-9]/g, "");
 
   const exactMap: Record<string, string> = {
     // Deal / sale identification
@@ -581,7 +591,7 @@ export function autoMapDealColumn(header: string): string {
   if (exactMap[h]) return exactMap[h];
 
   // Fuzzy / substring matches
-  const raw = header.toLowerCase().trim();
+  // `raw` already declared at the top of this function
   if (raw.includes("deal") && (raw.includes("#") || raw.includes("no") || raw.includes("num"))) return "deal_number";
   if (raw.includes("stock") && (raw.includes("#") || raw.includes("no") || raw.includes("num"))) return "stock_number";
   if (raw.includes("customer") && raw.includes("name")) return "customer_name";

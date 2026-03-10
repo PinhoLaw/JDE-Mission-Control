@@ -349,6 +349,14 @@ export async function executeXLSXImport(
     for (const sheet of scan.sheets) {
       if (sheetsToImport && !sheetsToImport.includes(sheet.index)) continue;
 
+      // SAFETY: Skip sheets that didn't pass the confidence threshold.
+      // Low-confidence sheets (e.g. "THINGS NOT IN CURRENT DEAL LOG") can
+      // trigger destructive REPLACE-mode importers and wipe real data.
+      if (!sheet.autoReady) {
+        console.log(`[Cruze Import] Skipping "${sheet.name}" (autoReady=false, confidence=${sheet.confidenceScore}%)`);
+        continue;
+      }
+
       let parsed: ParsedSheet;
       try {
         const fd = new FormData();

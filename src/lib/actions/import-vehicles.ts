@@ -264,8 +264,12 @@ export async function scanSpreadsheet(formData: FormData): Promise<ScanResult> {
 
     if (headers.length === 0) continue;
 
-    // Count real data rows (rough estimate — just use rowCount minus header)
-    const dataRowCount = Math.max(0, ws.rowCount - headerRowNum);
+    // Count real data rows by iterating (ws.rowCount includes empty trailing rows)
+    let dataRowCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ws.eachRow({ includeEmpty: false }, (_row: any, rowNumber: number) => {
+      if (rowNumber > headerRowNum) dataRowCount++;
+    });
 
     sheets.push({
       name: String(ws.name ?? `Sheet ${i + 1}`),
@@ -332,6 +336,8 @@ const HEADER_KEYWORDS = new Set([
   "acv", "payoff", "finance", "selling", "store", "zipcode",
   // Campaign tracking keywords
   "zip", "pieces", "sent", "sold", "town", "ups", "closing", "campaign",
+  // Lender keywords
+  "rate", "advance", "buy", "max", "bank", "apr",
 ]);
 
 // ────────────────────────────────────────────────────────
