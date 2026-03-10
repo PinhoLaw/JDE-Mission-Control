@@ -488,8 +488,15 @@ export function ChatWindow() {
 
     try {
       await sendMessage({ text });
-      // Clear attachment after sending
-      setAttachmentSafe(null);
+      // CRUZE IMPORT SESSION FIX — MARCH 2026
+      // Keep import-ready attachments across turns so that CONFIRM IMPORT
+      // on a later turn can still find the file. Only clear non-import
+      // attachments (images, PDFs, CSVs) after sending.
+      const isImportReady = attachment?.uploaded && attachment?.analysis &&
+        (attachment.analysis as Record<string, unknown>).importReady === true;
+      if (!isImportReady) {
+        setAttachmentSafe(null);
+      }
     } catch (err) {
       console.error("[Cruze] sendMessage failed:", err);
       const msg =
