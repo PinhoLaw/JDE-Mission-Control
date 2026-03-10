@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { getLifetimeStats } from "@/lib/actions/lifetime-stats";
-import { formatCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,96 +16,130 @@ import {
 
 /* ═══════════════════════════════════════════════════════════
    MAIN PAGE — Server Component
+   "So easy a caveman could do it"
    ═══════════════════════════════════════════════════════════ */
 
 export default async function DashboardPage() {
   return (
-    <div className="mx-auto max-w-5xl space-y-10 pb-12">
-      {/* ── Hero: Lifetime Per-Day Averages ── */}
+    <div className="mx-auto max-w-7xl space-y-12 pb-16">
+      {/* HERO ROW — IMPROVEMENT 1 */}
       <Suspense fallback={<HeroSkeleton />}>
         <HeroSection />
       </Suspense>
 
-      {/* ── Event Scorecards (sorted by date, most recent first) ── */}
+      {/* EVENT CARDS — IMPROVEMENT 2 + IMPROVEMENT 4 (tabs/search/sort inside) */}
       <Suspense fallback={<ScoreCardsSkeleton />}>
         <EventScoreCards />
       </Suspense>
 
-      {/* ── Quick Start ── */}
+      {/* Quick Start */}
       <QuickStartRow />
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════
-   HERO — All-Time Lifetime Averages
+   HERO ROW — IMPROVEMENT 1
+   Massive hero cards with huge numbers, large icons,
+   generous breathing room, and instant scannability.
    ═══════════════════════════════════════════════════════════ */
+
+/** Currency without cents — clean hero display */
+function heroMoney(n: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
 
 async function HeroSection() {
   const stats = await getLifetimeStats();
 
   const metrics = [
     {
-      label: "Avg Units / Day",
+      label: "Units / Day",
       value: stats.avgUnitsPerDay.toLocaleString(),
       icon: Car,
-      color: "text-blue-600 dark:text-blue-400",
-      bg: "bg-blue-50 dark:bg-blue-950/60",
+      iconBg: "bg-blue-500/20",
+      iconColor: "text-blue-400",
+      valueColor: "text-foreground",
     },
     {
-      label: "Avg Gross / Day",
-      value: formatCurrency(stats.avgGrossPerDay),
+      label: "Gross / Day",
+      value: heroMoney(stats.avgGrossPerDay),
       icon: DollarSign,
-      color: "text-emerald-600 dark:text-emerald-400",
-      bg: "bg-emerald-50 dark:bg-emerald-950/60",
+      iconBg: "bg-emerald-500/20",
+      iconColor: "text-emerald-400",
+      // IMPROVEMENT 3 — strong green for money
+      valueColor: "text-emerald-400",
     },
     {
       label: "Avg PVR",
-      value: formatCurrency(stats.avgPvr),
+      value: heroMoney(stats.avgPvr),
       icon: Target,
-      color: "text-amber-600 dark:text-amber-400",
-      bg: "bg-amber-50 dark:bg-amber-950/60",
+      iconBg: "bg-emerald-500/20",
+      iconColor: "text-emerald-400",
+      // IMPROVEMENT 3 — strong green for money
+      valueColor: "text-emerald-400",
     },
     {
-      label: "Avg Ups / Day",
-      value: stats.avgUpsPerDay > 0 ? stats.avgUpsPerDay.toLocaleString() : "—",
+      label: "Ups / Day",
+      value:
+        stats.avgUpsPerDay > 0 ? stats.avgUpsPerDay.toLocaleString() : "—",
       icon: Users,
-      color: "text-violet-600 dark:text-violet-400",
-      bg: "bg-violet-50 dark:bg-violet-950/60",
+      iconBg: "bg-violet-500/20",
+      iconColor: "text-violet-400",
+      valueColor: "text-foreground",
     },
   ];
 
   return (
     <section>
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
+      {/* Title block with generous spacing */}
+      <div className="mb-10">
+        <h1 className="text-4xl font-black tracking-tight md:text-5xl">
           Mission Control
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          All-time averages across {stats.totalEvents} event
-          {stats.totalEvents !== 1 ? "s" : ""} &middot; {stats.totalDays} selling
-          day{stats.totalDays !== 1 ? "s" : ""}
+        <p className="mt-2 text-base text-muted-foreground">
+          Lifetime averages across{" "}
+          <span className="font-semibold text-foreground">
+            {stats.totalEvents} events
+          </span>
+          {" · "}
+          <span className="font-semibold text-foreground">
+            {stats.totalDays} selling days
+          </span>
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* IMPROVEMENT 1 — Massive metric cards */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 lg:gap-6">
         {metrics.map((m) => (
           <Card
             key={m.label}
-            className="border-0 shadow-sm bg-card/80 backdrop-blur-sm"
+            className="border-0 shadow-lg bg-card/90 backdrop-blur-sm"
           >
-            <CardContent className="flex flex-col items-start gap-3 p-5 md:p-6">
-              <div className={`rounded-lg p-2.5 ${m.bg}`}>
-                <m.icon className={`h-5 w-5 ${m.color}`} />
+            <CardContent className="flex flex-col items-center text-center gap-4 p-6 md:p-8 lg:p-10">
+              {/* Large icon in tinted circle */}
+              <div className={`rounded-2xl p-3.5 md:p-4 ${m.iconBg}`}>
+                <m.icon
+                  className={`h-7 w-7 md:h-9 md:w-9 ${m.iconColor}`}
+                  strokeWidth={2.5}
+                />
               </div>
-              <div>
-                <p className="text-3xl font-bold tracking-tight md:text-4xl">
-                  {m.value}
-                </p>
-                <p className="mt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {m.label}
-                </p>
-              </div>
+
+              {/* MASSIVE number — the hero of each card */}
+              <p
+                className={`text-3xl sm:text-4xl md:text-5xl lg:text-6xl 2xl:text-7xl font-black tracking-tight leading-none ${m.valueColor}`}
+              >
+                {m.value}
+              </p>
+
+              {/* Clean one-line label */}
+              <p className="text-xs md:text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                {m.label}
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -122,7 +155,7 @@ async function HeroSection() {
 function QuickStartRow() {
   return (
     <section>
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         Quick Start
       </h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -153,21 +186,21 @@ function QuickStartRow() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SKELETON LOADERS
+   SKELETON LOADERS (updated for new caveman layout)
    ═══════════════════════════════════════════════════════════ */
 
 function HeroSkeleton() {
   return (
     <section>
-      <Skeleton className="mb-2 h-10 w-56" />
-      <Skeleton className="mb-6 h-4 w-40" />
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <Skeleton className="mb-2 h-12 w-72" />
+      <Skeleton className="mb-10 h-5 w-52" />
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 lg:gap-6">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Card key={i} className="border-0 shadow-sm">
-            <CardContent className="p-5 md:p-6">
-              <Skeleton className="mb-3 h-10 w-10 rounded-lg" />
-              <Skeleton className="mb-2 h-9 w-24" />
-              <Skeleton className="h-3 w-20" />
+          <Card key={i} className="border-0 shadow-lg">
+            <CardContent className="flex flex-col items-center gap-4 p-6 md:p-8 lg:p-10">
+              <Skeleton className="h-16 w-16 rounded-2xl" />
+              <Skeleton className="h-14 w-32" />
+              <Skeleton className="h-4 w-24" />
             </CardContent>
           </Card>
         ))}
@@ -178,24 +211,26 @@ function HeroSkeleton() {
 
 function ScoreCardsSkeleton() {
   return (
-    <section>
-      <Skeleton className="mb-3 h-5 w-24" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <section className="space-y-6">
+      <Skeleton className="h-12 w-72 rounded-md" />
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Skeleton className="h-12 flex-1 rounded-md" />
+        <Skeleton className="h-12 w-48 rounded-md" />
+      </div>
+      <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
         {Array.from({ length: 6 }).map((_, i) => (
-          <Card key={i} className="shadow-sm">
-            <CardContent className="p-5">
-              <Skeleton className="mb-3 h-5 w-40" />
-              <Skeleton className="mb-4 h-3 w-28" />
-              <div className="grid grid-cols-2 gap-3">
-                {Array.from({ length: 4 }).map((_, j) => (
-                  <div key={j} className="flex items-center gap-2">
-                    <Skeleton className="h-8 w-8 rounded-md" />
-                    <div>
-                      <Skeleton className="mb-1 h-5 w-14" />
-                      <Skeleton className="h-2.5 w-12" />
-                    </div>
-                  </div>
-                ))}
+          <Card key={i} className="border-border/50">
+            <CardContent className="p-6 space-y-5">
+              <div className="flex justify-between">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <Skeleton className="h-3 w-48" />
+              <Skeleton className="h-12 w-44" />
+              <Skeleton className="h-2 w-full rounded-full" />
+              <div className="flex justify-between">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-3 w-24" />
               </div>
             </CardContent>
           </Card>
