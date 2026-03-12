@@ -40,7 +40,6 @@ export interface RecapExportData {
   pnl: PnlData;
   marketingCost: number;
   miscExpenses: number;
-  prizeGiveaways: number;
   spSummary: SpSummary[];
   spTotals: { units: number; gross: number; commission: number };
 }
@@ -98,18 +97,15 @@ export async function generateRecapExcel(data: RecapExportData) {
   pnlHeader.getCell(3).font = { bold: true, color: { argb: "FFFFFFFF" } };
 
   const pnlRows: [string, number, boolean?][] = [
-    ["TOTAL COMMISSIONABLE GROSS", data.pnl.totalCommissionableGross],
+    ["TOTAL COMMISSIONABLE GROSS (front + back + F&I + reserve)", data.pnl.totalCommissionableGross],
     [`JDE COMMISSION [${formatPercent(data.pnl.jdePct)}]`, -data.pnl.jdeCommission],
     ["MARKETING COST", -data.marketingCost],
-    ["NON COMM GROSS", data.pnl.nonCommGross],
+    ["MISC EXPENSES (helium, prize giveaways, etc.)", -data.miscExpenses],
+    ["NON COMM GROSS (doc fee × units)", data.pnl.nonCommGross],
     ["TOTAL SALE GROSS", data.pnl.totalSaleGross, true],
     ["REPS COMMISSIONS", -data.pnl.repsCommissions],
     ["VARIABLE NET", data.pnl.variableNet, true],
     ["TOTAL NET", data.pnl.totalNet, true],
-    ["", 0],
-    ["MIS EXPENSES", data.miscExpenses],
-    ["HELIUM / PRIZE GIVEAWAYS", data.prizeGiveaways],
-    ["JDE COMMISSION", data.pnl.jdeCommission],
   ];
 
   for (const [label, amount, isGreen] of pnlRows) {
@@ -245,15 +241,12 @@ function RecapPDFDocument({ data }: { data: RecapExportData }) {
     { label: "TOTAL COMMISSIONABLE GROSS", value: formatCurrency(data.pnl.totalCommissionableGross), type: "normal" },
     { label: `JDE COMMISSION [${formatPercent(data.pnl.jdePct)}]`, value: `- ${formatCurrency(data.pnl.jdeCommission)}`, type: "red" },
     { label: "MARKETING COST", value: `- ${formatCurrency(data.marketingCost)}`, type: "red" },
-    { label: "NON COMM GROSS", value: `+ ${formatCurrency(data.pnl.nonCommGross)}`, type: "green" },
+    { label: "MISC EXPENSES", value: `- ${formatCurrency(data.miscExpenses)}`, type: "red" },
+    { label: "NON COMM GROSS (doc fee × units)", value: `+ ${formatCurrency(data.pnl.nonCommGross)}`, type: "green" },
     { label: "TOTAL SALE GROSS", value: formatCurrency(data.pnl.totalSaleGross), type: "greenRow" },
     { label: "REPS COMMISSIONS", value: `- ${formatCurrency(data.pnl.repsCommissions)}`, type: "red" },
     { label: "VARIABLE NET", value: formatCurrency(data.pnl.variableNet), type: "greenRow" },
     { label: "TOTAL NET", value: formatCurrency(data.pnl.totalNet), type: "greenRow" },
-    { label: "", value: "", type: "sep" },
-    { label: "MIS EXPENSES", value: formatCurrency(data.miscExpenses), type: "normal" },
-    { label: "HELIUM / PRIZE GIVEAWAYS ETC", value: formatCurrency(data.prizeGiveaways), type: "normal" },
-    { label: "JDE COMMISSION", value: formatCurrency(data.pnl.jdeCommission), type: "normal" },
   ];
 
   return createElement(

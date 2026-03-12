@@ -60,8 +60,7 @@ export default function RecapPage() {
   // ── Configurable fields (editable) ──
   const [marketingCost, setMarketingCost] = useState(0);
   const [jdeCommissionPct, setJdeCommissionPct] = useState(25); // display value (e.g. 25 for 25%)
-  const [miscExpenses, setMiscExpenses] = useState(0);
-  const [prizeGiveaways, setPrizeGiveaways] = useState(0);
+  const [miscExpenses, setMiscExpenses] = useState(0); // consolidated: helium, prize giveaways, etc.
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
 
@@ -99,11 +98,11 @@ export default function RecapPage() {
       setDailyMetrics(metricsRes.data ?? []);
 
       // Hydrate configurable fields from DB
+      // Consolidate: misc_expenses + prize_giveaways → single MISC EXPENSES field
       if (cfg) {
         setMarketingCost(cfg.marketing_cost ?? 0);
         setJdeCommissionPct((cfg.jde_commission_pct ?? cfg.rep_commission_pct ?? 0.25) * 100);
-        setMiscExpenses(cfg.misc_expenses ?? 0);
-        setPrizeGiveaways(cfg.prize_giveaways ?? 0);
+        setMiscExpenses((cfg.misc_expenses ?? 0) + (cfg.prize_giveaways ?? 0));
       }
       setLoading(false);
     });
@@ -149,10 +148,11 @@ export default function RecapPage() {
   const defaultRate = config?.rep_commission_pct ?? 0.25;
 
   // ── P&L Calculations ──
+  // Waterfall: COMMISSIONABLE + NONCOMM = TOTAL SALE GROSS
+  //   → VARIABLE NET = totalSaleGross - jde - reps
+  //   → TOTAL NET = variableNet - marketing - misc
   const pnl = useMemo(() => {
     const docFee = config?.doc_fee ?? 0;
-    const packNew = config?.pack_new ?? config?.pack ?? 0;
-    const packUsed = config?.pack_used ?? config?.pack ?? 0;
     const includeDocFee = config?.include_doc_fee_in_commission ?? false;
 
     const totalUnits = deals.length;
@@ -166,21 +166,28 @@ export default function RecapPage() {
 
     const totalFrontGross = deals.reduce((s, d) => s + (d.front_gross ?? 0), 0);
     const totalBackGross = deals.reduce((s, d) => s + (d.back_gross ?? 0), 0);
-    const totalCommissionableGross = totalFrontGross + totalBackGross;
+
+    // Commissionable = front + F&I products (reserve, warranty, gap, aft1, aft2)
+    // Excludes doc_fee — that goes to NON COMM GROSS separately
+    const totalCommissionableGross = deals.reduce((s, d) => {
+      const front = d.front_gross ?? 0;
+      const reserve = d.reserve ?? 0;
+      const warranty = d.warranty ?? 0;
+      const gap = d.gap ?? 0;
+      const aft1 = d.aftermarket_1 ?? 0;
+      const aft2 = d.aftermarket_2 ?? 0;
+      return s + front + reserve + warranty + gap + aft1 + aft2;
+    }, 0);
 
     // JDE Commission — flat percentage from local editable state
     const jdePct = jdeCommissionPct / 100;
     const jdeCommission = totalCommissionableGross * jdePct;
 
-    // Non-commissionable gross (doc fees + pack per deal, pack varies by new/used)
-    const nonCommGross = deals.reduce((s, d) => {
-      const pack = d.new_used === "New" ? packNew : packUsed;
-      return s + docFee + pack;
-    }, 0);
+    // Non-commissionable gross = doc fee × total units
+    const nonCommGross = docFee * totalUnits;
 
-    // Total Sale Gross (all expenses deducted)
-    const totalSaleGross =
-      totalCommissionableGross - jdeCommission - marketingCost - miscExpenses - prizeGiveaways + nonCommGross;
+    // Total Sale Gross = all revenue (commissionable + non-comm)
+    const totalSaleGross = totalCommissionableGross + nonCommGross;
 
     // Reps commissions (same logic as commissions page, uses ID-based lookup)
     let repsCommissions = 0;
@@ -207,8 +214,9 @@ export default function RecapPage() {
       }
     }
 
-    const variableNet = totalSaleGross - repsCommissions;
-    const totalNet = variableNet;
+    // Waterfall deductions
+    const variableNet = totalSaleGross - jdeCommission - repsCommissions;
+    const totalNet = variableNet - marketingCost - miscExpenses;
 
     return {
       totalUnits,
@@ -227,7 +235,7 @@ export default function RecapPage() {
       variableNet,
       totalNet,
     };
-  }, [deals, dailyMetrics, config, jdeCommissionPct, marketingCost, miscExpenses, prizeGiveaways, defaultRate, rosterRateMap]);
+  }, [deals, dailyMetrics, config, jdeCommissionPct, marketingCost, miscExpenses, defaultRate, rosterRateMap]);
 
   // ── Salesperson summary (grouped by ID, fallback to name) ──
   const includeDocFee = config?.include_doc_fee_in_commission ?? false;
@@ -310,7 +318,7 @@ export default function RecapPage() {
         marketing_cost: marketingCost,
         jde_commission_pct: jdeCommissionPct / 100,
         misc_expenses: miscExpenses,
-        prize_giveaways: prizeGiveaways,
+        prize_giveaways: 0, // consolidated into misc_expenses
       });
       toast.success("Recap configuration saved");
     } catch (err) {
@@ -318,7 +326,7 @@ export default function RecapPage() {
     } finally {
       setSaving(false);
     }
-  }, [currentEvent, marketingCost, jdeCommissionPct, miscExpenses, prizeGiveaways]);
+  }, [currentEvent, marketingCost, jdeCommissionPct, miscExpenses]);
 
   // ── Export ──
   const handleExport = useCallback(
@@ -338,7 +346,6 @@ export default function RecapPage() {
           pnl,
           marketingCost,
           miscExpenses,
-          prizeGiveaways,
           spSummary,
           spTotals,
         };
@@ -354,7 +361,7 @@ export default function RecapPage() {
         setExporting(null);
       }
     },
-    [currentEvent, pnl, marketingCost, miscExpenses, prizeGiveaways, spSummary, spTotals],
+    [currentEvent, pnl, marketingCost, miscExpenses, spSummary, spTotals],
   );
 
   // ── Derived display values ──
@@ -457,7 +464,10 @@ export default function RecapPage() {
                     {/* TOTAL COMMISSIONABLE GROSS */}
                     <TableRow>
                       <TableCell className="font-medium">
-                        TOTAL COMMISSIONABLE GROSS
+                        TOTAL COMMISSIONABLE GROSS{" "}
+                        <span className="text-muted-foreground text-xs">
+                          (front + back + F&amp;I + reserve)
+                        </span>
                       </TableCell>
                       <TableCell className="text-right font-mono font-bold text-base">
                         {formatCurrency(pnl.totalCommissionableGross)}
@@ -505,9 +515,14 @@ export default function RecapPage() {
                       </TableCell>
                     </TableRow>
 
-                    {/* MISC EXPENSES — editable $ */}
+                    {/* MISC EXPENSES — editable $ (helium, prize giveaways, etc.) */}
                     <TableRow className="bg-muted/30">
-                      <TableCell className="font-medium">MISC EXPENSES</TableCell>
+                      <TableCell className="font-medium">
+                        MISC EXPENSES{" "}
+                        <span className="text-muted-foreground text-xs">
+                          (helium, prize giveaways, etc.)
+                        </span>
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           <span className="text-xs text-red-600 dark:text-red-400">-&nbsp;$</span>
@@ -522,29 +537,12 @@ export default function RecapPage() {
                       </TableCell>
                     </TableRow>
 
-                    {/* HELIUM / PRIZE GIVEAWAYS — editable $ */}
-                    <TableRow className="bg-muted/30">
-                      <TableCell className="font-medium">HELIUM / PRIZE GIVEAWAYS</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <span className="text-xs text-red-600 dark:text-red-400">-&nbsp;$</span>
-                          <Input
-                            type="number"
-                            className="h-7 w-28 text-xs text-right font-mono"
-                            value={prizeGiveaways || ""}
-                            onChange={(e) => setPrizeGiveaways(Number(e.target.value) || 0)}
-                            placeholder="0"
-                          />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-
                     {/* NON COMM GROSS */}
                     <TableRow>
                       <TableCell className="font-medium">
                         NON COMM GROSS{" "}
                         <span className="text-muted-foreground text-xs">
-                          (doc fee + pack per deal)
+                          (doc fee × {pnl.totalUnits} units)
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono text-green-600 dark:text-green-400">
